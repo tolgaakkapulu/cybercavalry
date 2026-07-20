@@ -14,11 +14,14 @@ deploy/
 ├── wheels.py39.lock.txt            ← Lock file for the Python 3.9 wheel set
 ├── wheels.py311.lock.txt           ← Lock file for the Python 3.11 wheel set
 │
-├── linux/                          ← RHEL / AlmaLinux / Rocky 9.x
+├── linux/                          ← RHEL/AlmaLinux/Rocky + Debian/Ubuntu
 │   ├── INSTALL_RHEL.md
 │   ├── install_rhel.sh
 │   ├── update_rhel.sh
-│   └── cybercavalry.service        ← systemd unit
+│   ├── INSTALL_DEBIAN.md
+│   ├── install_debian.sh
+│   ├── update_debian.sh
+│   └── cybercavalry.service        ← systemd unit (shared)
 │
 └── windows/                        ← Windows Server 2019/2022 / Windows 10+
     ├── INSTALL_WINDOWS.md
@@ -29,16 +32,18 @@ deploy/
 
 ## Pick Your Path
 
-| Target                              | Guide                                                 | Runner   | Service manager |
-| ----------------------------------- | ----------------------------------------------------- | -------- | --------------- |
-| **RHEL 9.x / AlmaLinux / Rocky 9**  | [`linux/INSTALL_RHEL.md`](linux/INSTALL_RHEL.md)      | gunicorn | systemd         |
-| **Windows Server 2019 / 2022**      | [`windows/INSTALL_WINDOWS.md`](windows/INSTALL_WINDOWS.md) | waitress | WinSW           |
-| **Windows 10 / 11 (dev + testing)** | [`windows/INSTALL_WINDOWS.md`](windows/INSTALL_WINDOWS.md) | waitress | WinSW (optional) |
+| Target                              | Guide                                                       | Runner   | Service manager | Firewall  |
+| ----------------------------------- | ----------------------------------------------------------- | -------- | --------------- | --------- |
+| **RHEL 9.x / AlmaLinux / Rocky 9**  | [`linux/INSTALL_RHEL.md`](linux/INSTALL_RHEL.md)            | gunicorn | systemd         | firewalld |
+| **Debian 12+ / Ubuntu 22.04+**      | [`linux/INSTALL_DEBIAN.md`](linux/INSTALL_DEBIAN.md)        | gunicorn | systemd         | ufw       |
+| **Windows Server 2019 / 2022**      | [`windows/INSTALL_WINDOWS.md`](windows/INSTALL_WINDOWS.md)  | waitress | WinSW           | Defender  |
+| **Windows 10 / 11 (dev + testing)** | [`windows/INSTALL_WINDOWS.md`](windows/INSTALL_WINDOWS.md)  | waitress | WinSW (optional) | Defender |
 
-Other Linux distros (Debian/Ubuntu, Arch) are not covered by ready-made
-scripts yet, but the manual steps in `linux/INSTALL_RHEL.md` translate
-almost directly — swap `dnf` for `apt`, adjust the SELinux section
-(N/A on Debian family), and the systemd unit works unchanged.
+Arch, Alpine and other Linux distros aren't shipped with ready-made
+scripts, but either `linux/INSTALL_RHEL.md` (SELinux distros) or
+`linux/INSTALL_DEBIAN.md` (systemd + no SELinux) is close enough — swap
+the package manager (`pacman`, `apk`, ...) and adjust the firewall
+tooling to match.
 
 ## Prepare the Offline Bundle (Do This First)
 

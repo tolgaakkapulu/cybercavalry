@@ -210,11 +210,17 @@ Installation artefacts are grouped by target operating system under
 complete, opinionated walkthrough covering venv setup, dependencies,
 SSL, database seeding, service registration and firewall rules.
 
-- **🐧 Linux** (RHEL 9.x / AlmaLinux / Rocky Linux 9.x) — see
+- **🎩 RHEL / AlmaLinux / Rocky Linux 9.x** — see
   [`deploy/linux/INSTALL_RHEL.md`](deploy/linux/INSTALL_RHEL.md). Ships a
   one-shot [`install_rhel.sh`](deploy/linux/install_rhel.sh) plus an
   in-place [`update_rhel.sh`](deploy/linux/update_rhel.sh) and a
-  hardened systemd unit.
+  hardened systemd unit (with SELinux labelling automation).
+- **🌀 Debian 12+ / Ubuntu 22.04+** — see
+  [`deploy/linux/INSTALL_DEBIAN.md`](deploy/linux/INSTALL_DEBIAN.md). Ships a
+  one-shot [`install_debian.sh`](deploy/linux/install_debian.sh) plus an
+  in-place [`update_debian.sh`](deploy/linux/update_debian.sh) — same
+  systemd unit as the RHEL path, with `apt` + `ufw` instead of `dnf` +
+  `firewalld`, and no SELinux step to worry about.
 - **🪟 Windows** (Server 2019 / 2022, Windows 10 / 11) — see
   [`deploy/windows/INSTALL_WINDOWS.md`](deploy/windows/INSTALL_WINDOWS.md).
   Ships a one-shot [`install_windows.ps1`](deploy/windows/install_windows.ps1),
@@ -375,7 +381,7 @@ curl -X POST https://blacklist.example.com/api/report/hash/ \
   -H "Authorization: Token 9c1e0f..." \
   -H "X-Username: edr-connector" \
   -H "Content-Type: application/json" \
-  -d '{"hash": "9b71d224bd62f3785d96d46ad3ea3d73...", "type": "sha512", "reason": "Emotet dropper"}'
+  -d '{"hash": "9b71d224bd62f3785d96d46ad3ea3d73...", "type": "sha512", "reason": "Ransomware"}'
 ```
 
 **Example — pulling the current 24 h blacklist from your firewall (no token, IP allowlist enforced):**
@@ -393,7 +399,7 @@ Full endpoint schemas — including request bodies, response shapes and error co
 
 Deploy artefacts are split by target OS under [`deploy/`](deploy/) — see [`deploy/README.md`](deploy/README.md) for the overview and OS-selection matrix.
 
-### 🐧 Linux (RHEL 9.x / AlmaLinux / Rocky Linux)
+### 🎩 RHEL / AlmaLinux / Rocky Linux 9.x
 
 Runs behind **gunicorn** with native TLS, managed by **systemd**. Includes an offline wheel bundle for air-gapped installs, pre-flight `migrate` + `collectstatic`, and SELinux labelling automation.
 
@@ -403,6 +409,15 @@ Runs behind **gunicorn** with native TLS, managed by **systemd**. Includes an of
 - **[`deploy/linux/cybercavalry.service`](deploy/linux/cybercavalry.service)** — systemd unit
 
 Runs as an unprivileged `cavalry` user, restarts on failure, and applies OS-level hardening (`NoNewPrivileges`, `PrivateTmp`).
+
+### 🌀 Debian 12+ / Ubuntu 22.04+
+
+Same runtime shape as the RHEL path — **gunicorn** + **systemd** + the same shared unit file. Uses `apt` and `ufw` instead of `dnf` and `firewalld`, and skips the SELinux step (Debian's default AppArmor profile is unrestrictive for CYBERCavalry).
+
+- **[`deploy/linux/INSTALL_DEBIAN.md`](deploy/linux/INSTALL_DEBIAN.md)** — step-by-step guide
+- **[`deploy/linux/install_debian.sh`](deploy/linux/install_debian.sh)** — one-shot installer
+- **[`deploy/linux/update_debian.sh`](deploy/linux/update_debian.sh)** — in-place upgrade (with automatic venv-repair pre-flight)
+- **[`deploy/linux/cybercavalry.service`](deploy/linux/cybercavalry.service)** — shared systemd unit
 
 ### 🪟 Windows (Server 2019 / 2022, also Windows 10 / 11)
 
@@ -474,21 +489,6 @@ implementation, refactoring and documentation.
 ## 📄 License
 
 GNU General Public License v3.0 — see [`LICENSE`](LICENSE) for the full text.
-
-You may freely run, study, modify and redistribute this project. If you
-distribute it (in original or modified form), you MUST:
-
-- Release your modifications under GPL v3 as well
-- Provide access to the complete corresponding source code
-- Preserve copyright notices and the GPL v3 license header
-
-Any derivative work — direct fork, patched build, or bundled distribution —
-must remain open source under GPL v3. Closed-source proprietary forks are
-not permitted.
-
-Note: GPL v3 applies to **distribution**. Running a modified copy privately
-(e.g. inside a single organisation) without redistributing binaries does
-not trigger the source-sharing requirement.
 
 ---
 
