@@ -63,6 +63,21 @@ sudo bash deploy/linux/setup.sh install
 sudo bash deploy/linux/setup.sh update
 ```
 
+**Custom install directory / zip source (both actions):**
+```bash
+sudo bash deploy/linux/setup.sh install \
+    --install-dir /opt/cybercavalry \
+    --zip-source  /tmp/releases
+
+sudo bash deploy/linux/setup.sh update \
+    --install-dir /opt/cybercavalry \
+    --zip-source  /tmp/releases
+```
+
+Every knob is a `--flag value` pair — `--install-dir`, `--zip-source`,
+`--rollback-dir`, `--https-port`, `--service-user`, `--service-name`.
+Run `sudo bash deploy/linux/setup.sh --help` for the full list.
+
 Both commands end with a health check — if the service doesn't come up
 you'll see the last 30 lines of `journalctl` in your terminal.
 
@@ -85,6 +100,21 @@ If you keep multiple Python versions on the box, point at the one you want:
 powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 `
     -Action install `
     -PythonExe 'C:\Users\<you>\AppData\Local\Programs\Python\Python311\python.exe'
+```
+
+Every knob is a PowerShell parameter — override as needed:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 `
+    -Action install `
+    -InstallDir 'D:\CYBERCavalry' `
+    -HttpsPort  9443 `
+    -PythonExe  'py -3.11'
+
+powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 `
+    -Action update `
+    -InstallDir  'D:\CYBERCavalry' `
+    -ZipSource   'D:\releases' `
+    -RollbackDir 'D:\CYBERCavalry-rollback'
 ```
 
 The setup script tries three strategies automatically:

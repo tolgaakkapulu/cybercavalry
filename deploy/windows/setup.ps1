@@ -2,33 +2,69 @@
 .SYNOPSIS
     CYBERCavalry -- Windows setup (install + update in one script).
 
+.PARAMETER Action
+    install | update
+
+.PARAMETER InstallDir
+    Deployment root. Default: C:\CYBERCavalry.
+
+.PARAMETER HttpsPort
+    TLS listening port. Default: 8443.
+
+.PARAMETER ZipSource
+    Directory to search for CYBERCavalry_v*.zip during -Action update.
+    Default: %USERPROFILE%\Downloads.
+
+.PARAMETER RollbackDir
+    Where per-update snapshots are written. Default: C:\CYBERCavalry-rollback.
+
+.PARAMETER PythonExe
+    Force a specific Python interpreter (full path or "py -3.X"). Auto-
+    detected against available wheel bundles when omitted.
+
 .EXAMPLE
-    # Fresh install (elevated PowerShell)
+    # Fresh install (elevated PowerShell), all defaults
     powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 -Action install
 
 .EXAMPLE
+    # Custom install dir + non-default zip source
+    powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 `
+        -Action install -InstallDir 'D:\CYBERCavalry' -PythonExe 'py -3.11'
+
+.EXAMPLE
     # In-place update (preserves .env, db, certs, logs)
-    powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 -Action update
+    powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 `
+        -Action update -InstallDir 'D:\CYBERCavalry' -ZipSource 'D:\releases'
 
 .NOTES
     Prerequisites (install once, before running this script):
       - Python 3.11+ on PATH  (python.org installer, "Install for all users" + "Add to PATH")
-      - The project extracted to $InstallDir (default: C:\CYBERCavalry)
-      - WinSW-x64.exe copied to $InstallDir\deploy\windows\CYBERCavalry.exe
-        (download from https://github.com/winsw/winsw/releases)
+      - The project extracted to -InstallDir  (default: C:\CYBERCavalry)
+      - WinSW-x64.exe auto-downloaded on first install when internet is
+        available; otherwise fetch manually from
+        https://github.com/winsw/winsw/releases and drop as
+        CYBERCavalry.exe in deploy\windows\.
 #>
 param(
     [Parameter(Mandatory=$true)][ValidateSet('install','update')]
     [string]$Action,
-    [string]$InstallDir = 'C:\CYBERCavalry',
-    [int]$HttpsPort     = 8443,
+    # Deployment root -- the project's zip is expected to be extracted here
+    # (install) or already living here (update). Default: C:\CYBERCavalry.
+    [string]$InstallDir   = 'C:\CYBERCavalry',
+    # TLS listening port for the WinSW-managed service.
+    [int]   $HttpsPort    = 8443,
+    # Where to look for `CYBERCavalry_v*.zip` during -Action update.
+    # Default: current user's Downloads folder.
+    [string]$ZipSource    = (Join-Path $env:USERPROFILE 'Downloads'),
+    # Where per-update rollback snapshots are written.
+    [string]$RollbackDir  = 'C:\CYBERCavalry-rollback',
     # Force a specific interpreter for venv creation. Two accepted forms:
     #   -PythonExe "C:\Python311\python.exe"     (full path)
     #   -PythonExe "py -3.11"                    (py launcher + version)
     # Left empty (the default) the script tries `py -3.X` for every wheel
     # bundle available under deploy\wheels\ and picks the first that answers
     # `--version`. Falls back to the default `python` on PATH otherwise.
-    [string]$PythonExe  = ''
+    [string]$PythonExe    = ''
 )
 
 # We call a lot of native commands (python, pip, WinSW, icacls, robocopy).
@@ -383,7 +419,7 @@ function Invoke-Update {
 
     # Rollback snapshot
     $stamp    = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $rollback = Join-Path 'C:\CYBERCavalry-rollback' $stamp
+    $rollback = Join-Path $RollbackDir $stamp
     New-Item -ItemType Directory -Force -Path $rollback | Out-Null
     try { & $py manage.py backup_db --force } catch { Warn 'app backup_db failed -- snapshot only' }
     robocopy $InstallDir $rollback /E /XD venv backups __pycache__ | Out-Null
@@ -391,10 +427,11 @@ function Invoke-Update {
 
     Stop-Service $svcName -EA SilentlyContinue
 
-    # Extract new zip (expected to be at $env:USERPROFILE\Downloads or supplied via other means)
-    $zip = Get-ChildItem -Path "$env:USERPROFILE\Downloads" -Filter 'CYBERCavalry_v*.zip' -EA SilentlyContinue |
+    # Extract new zip -- default location is $env:USERPROFILE\Downloads,
+    # overridable with -ZipSource.
+    $zip = Get-ChildItem -Path $ZipSource -Filter 'CYBERCavalry_v*.zip' -EA SilentlyContinue |
            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $zip) { Die 'No CYBERCavalry_v*.zip in Downloads folder.' }
+    if (-not $zip) { Die "No CYBERCavalry_v*.zip in $ZipSource" }
     $tmp = Join-Path $env:TEMP "cc-upd-$stamp"
     Expand-Archive -Path $zip.FullName -DestinationPath $tmp -Force
     $newSrc = Join-Path $tmp 'CYBERCavalry'

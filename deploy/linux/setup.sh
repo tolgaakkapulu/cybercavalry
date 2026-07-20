@@ -3,21 +3,34 @@
 #  CYBERCavalry — Linux setup (RHEL + Debian / Ubuntu)
 #
 #  Usage:
-#    sudo bash deploy/linux/setup.sh install    # fresh install
-#    sudo bash deploy/linux/setup.sh update     # in-place upgrade (keeps .env / db / certs / logs)
+#    sudo bash deploy/linux/setup.sh install [OPTIONS]    # fresh install
+#    sudo bash deploy/linux/setup.sh update  [OPTIONS]    # in-place upgrade
+#
+#  Options (every parameter has a sane default -- override as needed):
+#    --install-dir  PATH   Install/deployment directory  (default: /data/cybercavalry)
+#    --zip-source   PATH   Directory to look for release .zip  (default: /home/cavalry.svc)
+#    --rollback-dir PATH   Where update snapshots land  (default: /data/rollback)
+#    --https-port   N      TLS listening port  (default: 8443)
+#    --service-user NAME   System user that runs the service  (default: cavalry)
+#    --service-name NAME   systemd unit name  (default: cybercavalry)
 #
 #  Prerequisites (install once, before running this script):
 #    - python3.9+ (with python3-venv on Debian family) and unzip
-#    - a CYBERCavalry_v*.zip in ${ZIP_SOURCE}
+#    - a CYBERCavalry_v*.zip inside --zip-source
+#
+#  Examples:
+#    sudo bash deploy/linux/setup.sh install
+#    sudo bash deploy/linux/setup.sh install --install-dir /opt/cybercavalry --zip-source /tmp
+#    sudo bash deploy/linux/setup.sh update  --install-dir /opt/cybercavalry --zip-source /tmp
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-# ── Config ─────────────────────────────────────────────────────────
+# ── Defaults (overridable via --flag) ──────────────────────────────
 INSTALL_DIR="/data/cybercavalry"
 SERVICE_USER="cavalry"
 SERVICE_NAME="cybercavalry"
 HTTPS_PORT=8443
-ZIP_SOURCE="/home/cavalry.svc"      # where the release .zip lives
+ZIP_SOURCE="/home/cavalry.svc"
 ROLLBACK_DIR="/data/rollback"
 
 # ── Helpers ────────────────────────────────────────────────────────
@@ -28,11 +41,42 @@ warn() { echo "${C_WARN}[!]${C_END} $*"; }
 die()  { echo "${C_ERR}[X]${C_END} $*" >&2; exit 1; }
 
 FAMILY=$(command -v apt >/dev/null 2>&1 && echo debian || echo rhel)
+
+# ── Parse arguments: first positional = command, rest = --flag value pairs
 CMD="${1:-}"
+shift 2>/dev/null || true
+
+# --help works BEFORE any pre-flight so a non-root user can still discover
+# the flags without hitting `Run as root: ...` first.
+if [[ "$CMD" == "-h" || "$CMD" == "--help" ]]; then
+    sed -n '/^# ─\+$/,/^# ─\+$/p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+fi
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --install-dir)    INSTALL_DIR="$2";    shift 2 ;;
+        --install-dir=*)  INSTALL_DIR="${1#*=}";  shift ;;
+        --zip-source)     ZIP_SOURCE="$2";     shift 2 ;;
+        --zip-source=*)   ZIP_SOURCE="${1#*=}";   shift ;;
+        --rollback-dir)   ROLLBACK_DIR="$2";   shift 2 ;;
+        --rollback-dir=*) ROLLBACK_DIR="${1#*=}"; shift ;;
+        --https-port)     HTTPS_PORT="$2";     shift 2 ;;
+        --https-port=*)   HTTPS_PORT="${1#*=}";   shift ;;
+        --service-user)   SERVICE_USER="$2";   shift 2 ;;
+        --service-user=*) SERVICE_USER="${1#*=}"; shift ;;
+        --service-name)   SERVICE_NAME="$2";   shift 2 ;;
+        --service-name=*) SERVICE_NAME="${1#*=}"; shift ;;
+        -h|--help)
+            sed -n '/^# ─\+$/,/^# ─\+$/p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0 ;;
+        *) die "Unknown option: $1  (see: bash $0 --help)" ;;
+    esac
+done
 
 # ── Pre-flight ─────────────────────────────────────────────────────
 [[ $EUID -eq 0 ]] || die "Run as root: sudo bash $0 $CMD"
-case "$CMD" in install|update) ;; *) die "Usage: sudo bash $0 {install|update}" ;; esac
+case "$CMD" in install|update) ;; *) die "Usage: sudo bash $0 {install|update} [--install-dir PATH] [--zip-source PATH] ...  (or --help)" ;; esac
 command -v python3 >/dev/null || die "python3 not installed"
 command -v unzip   >/dev/null || die "unzip not installed"
 
@@ -158,8 +202,15 @@ do_install() {
         --comment "CYBERCavalry" "$SERVICE_USER"
 
     rm -rf "$INSTALL_DIR"
-    unzip -q "$zip" -d /data/
-    [[ -d /data/CYBERCavalry ]] && mv /data/CYBERCavalry "$INSTALL_DIR"
+    local parent; parent=$(dirname "$INSTALL_DIR")
+    mkdir -p "$parent"
+    unzip -q "$zip" -d "$parent/"
+    # The zip's top-level folder is always "CYBERCavalry"; rename it into
+    # the caller-chosen INSTALL_DIR (basename may differ, e.g. --install-dir
+    # /opt/cyberc or /srv/cybercavalry-prod).
+    if [[ -d "$parent/CYBERCavalry" && "$parent/CYBERCavalry" != "$INSTALL_DIR" ]]; then
+        mv "$parent/CYBERCavalry" "$INSTALL_DIR"
+    fi
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
     chmod 750 "$INSTALL_DIR"
     install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 \
@@ -183,7 +234,17 @@ do_install() {
     apply_selinux
     open_firewall
 
-    cp "$INSTALL_DIR/deploy/linux/cybercavalry.service" /etc/systemd/system/
+    # Substitute the caller-chosen INSTALL_DIR / SERVICE_USER / HTTPS_PORT
+    # into the systemd unit before installing it. The template ships with
+    # the defaults (/data/cybercavalry, cavalry, 8443); without this a
+    # non-default --install-dir would leave gunicorn looking in the wrong
+    # place and the service would fail on start.
+    sed -e "s|/data/cybercavalry|$INSTALL_DIR|g" \
+        -e "s|^User=cavalry$|User=$SERVICE_USER|" \
+        -e "s|^Group=cavalry$|Group=$SERVICE_USER|" \
+        -e "s|--bind 0.0.0.0:8443|--bind 0.0.0.0:$HTTPS_PORT|" \
+        "$INSTALL_DIR/deploy/linux/cybercavalry.service" \
+        > "/etc/systemd/system/${SERVICE_NAME}.service"
     systemctl daemon-reload
     systemctl enable --now "$SERVICE_NAME" >/dev/null
     sleep 3
