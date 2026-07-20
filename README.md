@@ -125,7 +125,7 @@ At-a-glance operational view: 30 d / 24 h / whitelist counts, hit-count trends, 
 
 ### IP Blacklist
 
-Every active IP with its group (24 h / 30 d / no-group), AbuseIPDB score, source, reporter and rolling 7-day hit count. Sortable columns, inline search, bulk actions and per-row score refresh — all governed by role.
+Every active IP with its group (24 h / 30 d / no-group), AbuseIPDB score, source, reporter and rolling 30-day hit count. Sortable columns, inline search, bulk actions and per-row score refresh — all governed by role.
 
 ![IP Blacklist](images/ip_blacklist.png)
 
