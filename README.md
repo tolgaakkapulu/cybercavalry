@@ -1,10 +1,12 @@
 <div align="center">
 
-# 🛡️ CYBERCavalry
+<img src="static/img/logo.png" alt="CYBERCavalry logo" width="120" />
+
+# CYBERCavalry
 
 **A self-hosted threat intelligence & blacklist management platform**
 
-Aggregate, score and distribute IP / hash blocklists from a single Django control plane.
+Aggregate, score and distribute IP / hash blacklists from a single Django control plane.
 
 ![Python](https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12-blue.svg)
 ![Django](https://img.shields.io/badge/django-4.2%20LTS-092E20.svg)
@@ -19,7 +21,7 @@ Aggregate, score and distribute IP / hash blocklists from a single Django contro
 
 ## ✨ Overview
 
-CYBERCavalry is a batteries-included blocklist management platform for SOC and network teams. It ingests IP / file-hash indicators from your own tooling (SIEM, honeypots, firewall alerts) or external feeds, cross-checks each indicator against **AbuseIPDB** and **VirusTotal**, buckets it by confidence into short-term (24 h) and long-term (30 d) publish groups, and serves the resulting blocklists back to your enforcement points over a simple HTTP API.
+CYBERCavalry is a batteries-included blacklist management platform for SOC and network teams. It ingests IP / file-hash indicators from your own tooling (SIEM, honeypots, firewall alerts) or external feeds, cross-checks each indicator against **AbuseIPDB** and **VirusTotal**, buckets it by confidence into short-term (24 h) and long-term (30 d) publish groups, and serves the resulting blacklists back to your enforcement points over a simple HTTP API.
 
 Everything runs behind a clean web UI with role-based access, activity auditing, syslog forwarding and a full alerting story for quota and API-rate anomalies.
 
@@ -390,7 +392,7 @@ Most operational settings live in the **Settings** page and are stored in the DB
 Two authentication modes, applied per endpoint:
 
 - **Token + username** *(POST endpoints)* — headers `Authorization: Token <token>` and `X-Username: <user>` are both required. The token must belong to that user, the user must have the **API User** role, AND the requesting IP must be on the allowlist under Settings → Source IPs. Tokens are minted by an admin under **Accounts → User Management**.
-- **Source IP only** *(GET endpoints)* — no token or username header. The requesting IP simply has to be on the allowlist. This lets firewalls, SIEMs and proxies pull the current blocklists without credential management.
+- **Source IP only** *(GET endpoints)* — no token or username header. The requesting IP simply has to be on the allowlist. This lets firewalls, SIEMs and proxies pull the current blacklists without credential management.
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
@@ -405,7 +407,7 @@ Two authentication modes, applied per endpoint:
 **Example — reporting an IP from a honeypot:**
 
 ```bash
-curl -X POST https://blocklist.example.com/api/report/ip/ \
+curl -X POST https://blacklist.example.com/api/report/ip/ \
   -H "Authorization: Token 9c1e0f...redacted" \
   -H "X-Username: honeypot-01" \
   -H "Content-Type: application/json" \
@@ -427,17 +429,17 @@ Response:
 **Example — reporting a SHA-512 hash:**
 
 ```bash
-curl -X POST https://blocklist.example.com/api/report/hash/ \
+curl -X POST https://blacklist.example.com/api/report/hash/ \
   -H "Authorization: Token 9c1e0f..." \
   -H "X-Username: edr-connector" \
   -H "Content-Type: application/json" \
   -d '{"hash": "9b71d224bd62f3785d96d46ad3ea3d73...", "type": "sha512", "reason": "Emotet dropper"}'
 ```
 
-**Example — pulling the current 24 h blocklist from your firewall (no token, IP allowlist enforced):**
+**Example — pulling the current 24 h blacklist from your firewall (no token, IP allowlist enforced):**
 
 ```bash
-curl https://blocklist.example.com/api/blacklist/24h/ \
+curl https://blacklist.example.com/api/blacklist/24h/ \
   | jq -r '.entries[].cidr' > /etc/firewall/deny_24h.txt
 ```
 
@@ -559,6 +561,6 @@ not trigger the source-sharing requirement.
 
 <div align="center">
 
-**Built with ❤️ for SOC and network teams who want blocklist plumbing that just works.**
+**Built with ❤️ for SOC and network teams who want blacklist plumbing that just works.**
 
 </div>
