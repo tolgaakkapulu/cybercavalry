@@ -48,9 +48,11 @@
 param(
     [Parameter(Mandatory=$true)][ValidateSet('install','update')]
     [string]$Action,
-    # Deployment root -- the project's zip is expected to be extracted here
-    # (install) or already living here (update). Default: C:\CYBERCavalry.
-    [string]$InstallDir   = 'C:\CYBERCavalry',
+    # Deployment root. Left empty (the default) the script auto-derives it
+    # from its own location -- so `git clone; cd CYBERCavalry;
+    # .\deploy\windows\setup.ps1 -Action install` just works with no flags.
+    # Override to install to a different directory (e.g. 'D:\CYBERCavalry').
+    [string]$InstallDir   = '',
     # TLS listening port for the WinSW-managed service.
     [int]   $HttpsPort    = 8443,
     # Where to look for `CYBERCavalry_v*.zip` during -Action update.
@@ -84,7 +86,20 @@ function Die  { param($m) Write-Host "[X]  $m" -ForegroundColor Red; exit 1 }
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]'Administrator')
 if (-not $isAdmin)                                     { Die 'Run from elevated PowerShell (Administrator).' }
 if (-not (Get-Command python -EA SilentlyContinue))    { Die 'python not on PATH. Install Python 3.11+ first.' }
-if (-not (Test-Path $InstallDir))                      { Die "$InstallDir not found. Extract the release zip there first." }
+
+# Resolve $InstallDir. Explicit -InstallDir wins. Otherwise derive from the
+# script's own location (project root = script's grandparent) so a
+# `git clone; cd CYBERCavalry; .\deploy\windows\setup.ps1 -Action install`
+# flow works without any extra flag.
+if (-not $InstallDir) {
+    if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot '..\..\requirements.txt'))) {
+        $InstallDir = (Get-Item (Join-Path $PSScriptRoot '..\..')).FullName.TrimEnd('\')
+        Log "auto-detected project root: $InstallDir"
+    } else {
+        $InstallDir = 'C:\CYBERCavalry'
+    }
+}
+if (-not (Test-Path $InstallDir)) { Die "$InstallDir not found. Clone the repo (git clone ...) or extract the release zip first, then re-run." }
 
 Set-Location $InstallDir
 $svcName = 'CYBERCavalry'

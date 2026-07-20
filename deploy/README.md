@@ -51,15 +51,29 @@ python deploy/prepare_offline_bundle.py --py 312  # add 3.12 to the bundle
 ## 🐧 Linux — RHEL / Debian / Ubuntu
 
 The script auto-detects your distro (RHEL vs Debian family) and handles
-`dnf`/`apt`, `firewalld`/`ufw`, SELinux (RHEL only) accordingly.
+`dnf`/`apt`, `firewalld`/`ufw`, SELinux (RHEL only) accordingly. It also
+auto-detects whether it's being run from a **git clone** (dev/eval flow)
+or against a **release zip** in `--zip-source` (air-gapped production).
 
-**Fresh install:**
+**Fresh install from a git clone:**
 ```bash
+git clone https://github.com/tolgaakkapulu/CYBERCavalry.git
+cd CYBERCavalry
+sudo bash deploy/linux/setup.sh install
+```
+The script rsyncs the checkout into `/data/cybercavalry` (default) and
+takes it from there. Pass `--install-dir /opt/cybercavalry` (or any
+path) to install to a different location.
+
+**Fresh install from a release zip (air-gapped / production):**
+```bash
+# Drop CYBERCavalry_v*.zip into /home/cavalry.svc/ first
 sudo bash deploy/linux/setup.sh install
 ```
 
 **Update (preserves `.env`, database, certificates, logs, backups):**
 ```bash
+cd CYBERCavalry           # inside the git checkout
 sudo bash deploy/linux/setup.sh update
 ```
 
@@ -95,10 +109,15 @@ install; on re-runs the existing user is preserved.
 
 ## 🪟 Windows — Server 2019 / 2022 / Windows 10 / 11
 
-**One-shot install (elevated PowerShell):**
+**One-shot install from a git clone (elevated PowerShell):**
 ```powershell
+git clone https://github.com/tolgaakkapulu/CYBERCavalry.git
+cd CYBERCavalry
 powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 -Action install
 ```
+When `-InstallDir` is omitted the script auto-detects the project root
+from its own location, so the checkout you just cloned is what gets
+installed — no extra flag needed.
 
 If you keep multiple Python versions on the box, point at the one you want:
 ```powershell

@@ -82,6 +82,27 @@ command -v unzip   >/dev/null || die "unzip not installed"
 
 find_zip() { ls -t "$ZIP_SOURCE"/CYBERCavalry_v*.zip 2>/dev/null | head -1; }
 
+# Locate a CYBERCavalry source in one of two modes:
+#   zip  -- packaged release zip lives in $ZIP_SOURCE (production airgapped)
+#   clone -- script is running from a git checkout (dev/eval flow)
+# Writes SOURCE_MODE + SOURCE_PATH; dies if neither is present.
+detect_source() {
+    local zip; zip=$(find_zip)
+    if [[ -n "$zip" ]]; then
+        SOURCE_MODE="zip"
+        SOURCE_PATH="$zip"
+        return
+    fi
+    local script_dir; script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+    local project_root; project_root="$(cd "$script_dir/../.." 2>/dev/null && pwd || true)"
+    if [[ -n "$project_root" && -f "$project_root/requirements.txt" && -d "$project_root/apps" ]]; then
+        SOURCE_MODE="clone"
+        SOURCE_PATH="$project_root"
+        return
+    fi
+    die "No CYBERCavalry source found. Either drop a CYBERCavalry_v*.zip under $ZIP_SOURCE, or run this script from a git clone (script must live at <root>/deploy/linux/setup.sh)."
+}
+
 # ── Shared: venv + offline dependencies ────────────────────────────
 install_deps() {
     local py="$INSTALL_DIR/venv/bin/python"
@@ -191,9 +212,8 @@ open_firewall() {
 
 # ── install: fresh setup ───────────────────────────────────────────
 do_install() {
-    log "install ($FAMILY, python $(python3 -V 2>&1 | awk '{print $2}'))"
-    local zip; zip=$(find_zip)
-    [[ -n "$zip" ]] || die "No CYBERCavalry_v*.zip under $ZIP_SOURCE"
+    detect_source
+    log "install ($FAMILY, python $(python3 -V 2>&1 | awk '{print $2}'), mode $SOURCE_MODE)"
 
     id "$SERVICE_USER" &>/dev/null || useradd --system \
         --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin \
@@ -201,21 +221,41 @@ do_install() {
         useradd --system --home-dir "$INSTALL_DIR" --shell /sbin/nologin \
         --comment "CYBERCavalry" "$SERVICE_USER"
 
-    rm -rf "$INSTALL_DIR"
-    local parent; parent=$(dirname "$INSTALL_DIR")
-    mkdir -p "$parent"
-    unzip -q "$zip" -d "$parent/"
-    # The zip's top-level folder is always "CYBERCavalry"; rename it into
-    # the caller-chosen INSTALL_DIR (basename may differ, e.g. --install-dir
-    # /opt/cyberc or /srv/cybercavalry-prod).
-    if [[ -d "$parent/CYBERCavalry" && "$parent/CYBERCavalry" != "$INSTALL_DIR" ]]; then
-        mv "$parent/CYBERCavalry" "$INSTALL_DIR"
+    if [[ "$SOURCE_MODE" == "zip" ]]; then
+        rm -rf "$INSTALL_DIR"
+        local parent; parent=$(dirname "$INSTALL_DIR")
+        mkdir -p "$parent"
+        unzip -q "$SOURCE_PATH" -d "$parent/"
+        # The zip's top-level folder is always "CYBERCavalry"; rename it into
+        # the caller-chosen INSTALL_DIR (basename may differ, e.g.
+        # --install-dir /opt/cyberc or /srv/cybercavalry-prod).
+        if [[ -d "$parent/CYBERCavalry" && "$parent/CYBERCavalry" != "$INSTALL_DIR" ]]; then
+            mv "$parent/CYBERCavalry" "$INSTALL_DIR"
+        fi
+        ok "extracted to $INSTALL_DIR"
+    else
+        # Clone mode: source is the git checkout at $SOURCE_PATH. If the
+        # user picked --install-dir equal to the checkout, no copy needed
+        # (in-place install). Otherwise rsync into INSTALL_DIR while
+        # skipping the git/venv/runtime dirs.
+        if [[ "$SOURCE_PATH" == "$INSTALL_DIR" ]]; then
+            log "clone mode: using $INSTALL_DIR in place"
+        else
+            log "clone mode: copying $SOURCE_PATH -> $INSTALL_DIR"
+            rm -rf "$INSTALL_DIR"
+            mkdir -p "$INSTALL_DIR"
+            command -v rsync >/dev/null || die "rsync is required for clone mode (dnf/apt install rsync)"
+            rsync -a \
+                --exclude '.git' --exclude 'venv' --exclude 'logs/*' \
+                --exclude 'backups/*' --exclude '__pycache__' \
+                --exclude 'staticfiles' --exclude '*.pyc' \
+                "$SOURCE_PATH/" "$INSTALL_DIR/"
+        fi
     fi
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
     chmod 750 "$INSTALL_DIR"
     install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 \
         "$INSTALL_DIR/logs" "$INSTALL_DIR/certs"
-    ok "extracted to $INSTALL_DIR"
 
     create_venv
     write_env
