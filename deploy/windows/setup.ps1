@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    CYBERCavalry — Windows setup (install + update in one script).
+    CYBERCavalry -- Windows setup (install + update in one script).
 
 .EXAMPLE
     # Fresh install (elevated PowerShell)
@@ -26,13 +26,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# ── Helpers ────────────────────────────────────────────────────────
+# -- Helpers --------------------------------------------------------
 function Log  { param($m) Write-Host "[*]  $m" -ForegroundColor Cyan }
 function Ok   { param($m) Write-Host "[OK] $m" -ForegroundColor Green }
 function Warn { param($m) Write-Host "[!]  $m" -ForegroundColor Yellow }
 function Die  { param($m) Write-Host "[X]  $m" -ForegroundColor Red; exit 1 }
 
-# ── Pre-flight ─────────────────────────────────────────────────────
+# -- Pre-flight -----------------------------------------------------
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]'Administrator')
 if (-not $isAdmin)                                     { Die 'Run from elevated PowerShell (Administrator).' }
 if (-not (Get-Command python -EA SilentlyContinue))    { Die 'python not on PATH. Install Python 3.11+ first.' }
@@ -43,9 +43,9 @@ $svcName = 'CYBERCavalry'
 $py  = Join-Path $InstallDir 'venv\Scripts\python.exe'
 $pip = Join-Path $InstallDir 'venv\Scripts\pip.exe'
 
-# ── Shared helpers ─────────────────────────────────────────────────
+# -- Shared helpers -------------------------------------------------
 function Install-Deps {
-    # NOTE: avoid Python f-strings — PS 5.1 native-arg parser strips inner "
+    # NOTE: avoid Python f-strings -- PS 5.1 native-arg parser strips inner "
     $tag = 'py' + (& $py -c "import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))").Trim()
     $wheels = Join-Path $InstallDir "deploy\wheels\$tag"
     if (-not (Test-Path $wheels)) { Die "Wheel bundle missing: $wheels" }
@@ -109,7 +109,7 @@ function Install-Service {
     return $false
 }
 
-# ── install ────────────────────────────────────────────────────────
+# -- install --------------------------------------------------------
 function Invoke-Install {
     Log "install  (python $(python --version 2>&1 | ForEach-Object { $_.Split(' ')[1] }))"
 
@@ -148,16 +148,16 @@ function Invoke-Install {
     Write-Host "      cd $InstallDir; .\venv\Scripts\python.exe manage.py createsuperuser"
 }
 
-# ── update ─────────────────────────────────────────────────────────
+# -- update ---------------------------------------------------------
 function Invoke-Update {
     Log 'update'
-    if (-not (Test-Path "$InstallDir\venv")) { Die "venv missing — run '$($MyInvocation.MyCommand.Name) -Action install' first." }
+    if (-not (Test-Path "$InstallDir\venv")) { Die "venv missing -- run '$($MyInvocation.MyCommand.Name) -Action install' first." }
 
     # Rollback snapshot
     $stamp    = Get-Date -Format 'yyyyMMdd_HHmmss'
     $rollback = Join-Path 'C:\CYBERCavalry-rollback' $stamp
     New-Item -ItemType Directory -Force -Path $rollback | Out-Null
-    try { & $py manage.py backup_db --force } catch { Warn 'app backup_db failed — snapshot only' }
+    try { & $py manage.py backup_db --force } catch { Warn 'app backup_db failed -- snapshot only' }
     robocopy $InstallDir $rollback /E /XD venv backups __pycache__ | Out-Null
     Ok "snapshot: $rollback"
 
@@ -172,7 +172,7 @@ function Invoke-Update {
     $newSrc = Join-Path $tmp 'CYBERCavalry'
     if (-not (Test-Path $newSrc)) { Die 'unexpected zip layout' }
 
-    # Sync — preserve .env, venv, certs, logs, backups, db
+    # Sync -- preserve .env, venv, certs, logs, backups, db
     $roboArgs = @($newSrc, $InstallDir, '/MIR',
         '/XF', '.env', 'cybercavalry.db', 'cybercavalry.db-wal', 'cybercavalry.db-shm',
         '/XD', "$InstallDir\venv", "$InstallDir\certs", "$InstallDir\logs", "$InstallDir\backups")
@@ -181,11 +181,11 @@ function Invoke-Update {
     Remove-Item -Recurse -Force $tmp
     Ok 'code synced'
 
-    # venv health pre-flight (broken shebangs / stale interpreter → rebuild)
+    # venv health pre-flight (broken shebangs / stale interpreter -> rebuild)
     $pipOk = $true
     try { & $pip --version 2>&1 | Out-Null; if ($LASTEXITCODE -ne 0) { $pipOk = $false } } catch { $pipOk = $false }
     if (-not $pipOk) {
-        Warn 'venv broken — rebuilding'
+        Warn 'venv broken -- rebuilding'
         Remove-Item -Recurse -Force "$InstallDir\venv"
         New-Venv
     } else {
@@ -207,7 +207,7 @@ function Invoke-Update {
     Ok "update complete (rollback: $rollback)"
 }
 
-# ── Dispatch ───────────────────────────────────────────────────────
+# -- Dispatch -------------------------------------------------------
 switch ($Action) {
     'install' { Invoke-Install }
     'update'  { Invoke-Update  }

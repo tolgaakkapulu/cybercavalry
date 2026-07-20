@@ -209,7 +209,7 @@ One script per platform, one command each. Full walkthrough (including
 prerequisites and the offline wheel bundle) lives at
 [`deploy/README.md`](deploy/README.md).
 
-**🐧 Linux — RHEL / AlmaLinux / Rocky / Debian / Ubuntu**
+**🐧 Linux — RHEL / Debian / Ubuntu**
 ```bash
 sudo bash deploy/linux/setup.sh install     # first time
 sudo bash deploy/linux/setup.sh update      # in-place upgrade
@@ -397,7 +397,7 @@ management, update flow, rollback — lives at
 
 | Platform | Runner | Service | Installer / Updater |
 |---|---|---|---|
-| RHEL 9.x · AlmaLinux · Rocky · Debian 12+ · Ubuntu 22.04+ | gunicorn | systemd ([`cybercavalry.service`](deploy/linux/cybercavalry.service)) | [`deploy/linux/setup.sh install\|update`](deploy/linux/setup.sh) |
+| RHEL 9.x · Debian 12+ · Ubuntu 22.04+ | gunicorn | systemd ([`cybercavalry.service`](deploy/linux/cybercavalry.service)) | [`deploy/linux/setup.sh install\|update`](deploy/linux/setup.sh) |
 | Windows Server 2019 / 2022 · Windows 10 / 11 | waitress | WinSW ([`cybercavalry-service.xml`](deploy/windows/cybercavalry-service.xml)) | [`deploy/windows/setup.ps1 -Action install\|update`](deploy/windows/setup.ps1) |
 
 Both platforms preserve `.env`, database, TLS certificates, logs and

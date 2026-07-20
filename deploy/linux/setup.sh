@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────
-#  CYBERCavalry — Linux setup (RHEL / AlmaLinux / Rocky + Debian / Ubuntu)
+#  CYBERCavalry — Linux setup (RHEL + Debian / Ubuntu)
 #
 #  Usage:
 #    sudo bash deploy/linux/setup.sh install    # fresh install

@@ -12,7 +12,7 @@ Universal bundle: wheel sets for both Python 3.9 (RHEL 9 default) and
 Python 3.11 (RHEL 9 AppStream) are prepared in a single pass.
 
 Target:
-  - RHEL 9.x / AlmaLinux 9.x / Rocky Linux 9.x (glibc 2.34)
+  - RHEL 9.x (glibc 2.34)
   - Python 3.9 or 3.11
   - x86_64
 

@@ -38,7 +38,7 @@ python deploy/prepare_offline_bundle.py --py 311  # 3.11 only
 
 ---
 
-## 🐧 Linux — RHEL / AlmaLinux / Rocky / Debian / Ubuntu
+## 🐧 Linux — RHEL / Debian / Ubuntu
 
 The script auto-detects your distro (RHEL vs Debian family) and handles
 `dnf`/`apt`, `firewalld`/`ufw`, SELinux (RHEL only) accordingly.
