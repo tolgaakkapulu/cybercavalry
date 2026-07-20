@@ -554,35 +554,10 @@ git push origin feat/short-description
 
 ## 🤝 Acknowledgments
 
-CYBERCavalry was designed and built in close collaboration with
-**[Claude](https://claude.ai)** by Anthropic. This project is an
-intentional experiment in transparent, AI-assisted open source
-development — the reality of how a lot of software gets written in
-2026 — so it's called out here rather than hidden.
-
-**What Claude helped with:**
-- Iterating on the domain model (blacklist groups, promotion rules,
-  quota-aware key rotation, cache/session/rate-limit layering)
-- Generating and refactoring Django code across the apps, templates,
-  admin UI, and management commands
-- Diagnosing production issues (SELinux labelling, venv shebang
-  rot after directory rename, VirusTotal quota misclassification)
-- Drafting documentation — this README, the RHEL/Windows deployment
-  guides, and inline code commentary
-- Adversarial review of edge cases in the promotion / demotion,
-  quota alerting and API-token flows
-
-**What I own end-to-end:**
-- The product vision and roadmap
-- Every architectural and licensing decision
-- All testing on real systems (RHEL 9.5 production, Windows dev)
-- Every commit that goes into `main` — the code shipped here has been
-  read, understood and taken responsibility for by a human
-- Support, security response and long-term maintenance
-
-If you're using this project, you're using code that was **co-written
-with an AI** but **reviewed, tested and maintained by a person**. Bug
-reports and PRs go to that person, not to the model.
+Built as a collaboration between the developer — guiding security,
+performance and design decisions — and **[Claude](https://claude.ai)**
+by Anthropic, contributing as a pair-programming partner across
+implementation, refactoring and documentation.
 
 ---
 
