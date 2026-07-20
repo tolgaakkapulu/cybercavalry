@@ -217,8 +217,8 @@ def cmd_setup(_args):
     log("  Setup complete!", GREEN + BOLD)
     log("=" * 55, BOLD)
     log("", RESET)
-    log("  Create an admin user:", RESET)
-    log(f"    {py} manage.py createsuperuser", BOLD)
+    log("  Default administrator:  admin / admin", RESET)
+    log("    (log in and change the password IMMEDIATELY)", YELLOW)
     log("", RESET)
     log("  Start the server:", RESET)
     log("    python manage_server.py start", BOLD)
@@ -405,9 +405,9 @@ def cmd_clean(args):
     log("  Reset complete. Next steps:", CYAN + BOLD)
     log("=" * 55, BOLD)
     if args.full:
-        log("  0. python manage_server.py setup   (venv yeniden kurulur)", YELLOW)
-    log("  1. venv\\Scripts\\python.exe manage.py createsuperuser", RESET)
-    log("  2. python manage_server.py start", RESET)
+        log("  0. python manage_server.py setup   (rebuilds the venv)", YELLOW)
+    log("  1. python manage_server.py start", RESET)
+    log("     Then log in with: admin / admin  (change the password immediately)", RESET)
     print()
     pause()
 

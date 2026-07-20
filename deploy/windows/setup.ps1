@@ -407,9 +407,8 @@ function Invoke-Install {
     Write-Host ''
     Ok 'install complete'
     Write-Host "    Access:      https://${env:COMPUTERNAME}:$HttpsPort/"
+    Write-Host '    Login:       admin / admin  (change the password immediately in Settings)'
     Write-Host "    Service:     Get-Service $svcName"
-    Write-Host '    Create superuser:'
-    Write-Host "      cd $InstallDir; .\venv\Scripts\python.exe manage.py createsuperuser"
 }
 
 # -- update ---------------------------------------------------------

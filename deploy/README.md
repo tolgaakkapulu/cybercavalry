@@ -81,10 +81,15 @@ Run `sudo bash deploy/linux/setup.sh --help` for the full list.
 Both commands end with a health check — if the service doesn't come up
 you'll see the last 30 lines of `journalctl` in your terminal.
 
-**After first install** — create the superuser (interactive):
-```bash
-sudo -u cavalry /data/cybercavalry/venv/bin/python /data/cybercavalry/manage.py createsuperuser
-```
+**After first install** — a default administrator is seeded automatically:
+
+| username | password | role  |
+| -------- | -------- | ----- |
+| `admin`  | `admin`  | admin |
+
+Log in at `https://<server-ip>:8443/` and change the password **immediately** under
+your profile → *Change password*. The `seed_initial_data` step runs on every
+install; on re-runs the existing user is preserved.
 
 ---
 
@@ -142,11 +147,9 @@ Get-ChildItem -Path .\deploy\ -Recurse | Unblock-File
 (`Unblock-File` strips the "downloaded from internet" tag `git clone`
 adds — needed once for `RemoteSigned` to accept the scripts.)
 
-**After first install** — create the superuser:
-```powershell
-cd C:\CYBERCavalry
-.\venv\Scripts\python.exe manage.py createsuperuser
-```
+**After first install** — a default administrator is seeded automatically
+(`admin` / `admin`). Log in at `https://<server-ip>:8443/` and change the
+password **immediately** under your profile → *Change password*.
 
 ---
 

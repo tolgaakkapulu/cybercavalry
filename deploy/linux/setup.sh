@@ -255,10 +255,9 @@ do_install() {
 
     echo
     ok "install complete"
-    echo "    Access:  https://$(hostname -I | awk '{print $1}'):$HTTPS_PORT/"
-    echo "    Logs:    sudo journalctl -u $SERVICE_NAME -f"
-    echo "    Create superuser:"
-    echo "      sudo -u $SERVICE_USER $INSTALL_DIR/venv/bin/python $INSTALL_DIR/manage.py createsuperuser"
+    echo "    Access:      https://$(hostname -I | awk '{print $1}'):$HTTPS_PORT/"
+    echo "    Login:       admin / admin  (change the password immediately in Settings)"
+    echo "    Service log: sudo journalctl -u $SERVICE_NAME -f"
 }
 
 # ── update: refresh code, preserve state ───────────────────────────

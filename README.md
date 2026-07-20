@@ -243,11 +243,12 @@ source venv/bin/activate
 
 pip install -r requirements.txt
 cp .env.example .env          # then fill in the secrets
-python manage_server.py setup # migrate + seed + createsuperuser + collectstatic
+python manage_server.py setup # migrate + seed default admin + collectstatic
 python manage_server.py start # → https://127.0.0.1:8443
 ```
 
-First login uses the superuser you created during `setup`. From there:
+A default administrator is seeded automatically: **`admin` / `admin`** — log in
+and change the password **immediately** under your profile. From there:
 
 1. **Settings → Threat Intelligence** — paste your AbuseIPDB / VirusTotal keys, click *Check Key*
 2. **Settings → LDAP** *(optional)* — wire your directory, click *Test LDAP*
