@@ -422,7 +422,7 @@ function Invoke-Install {
     Write-Host ''
     Ok 'install complete'
     Write-Host "    Access:      https://${env:COMPUTERNAME}:$HttpsPort/"
-    Write-Host '    Login:       admin / admin  (change the password immediately in Settings)'
+    Write-Host '    Login:       admin / admin  (change the password immediately in Users)'
     Write-Host "    Service:     Get-Service $svcName"
 }
 

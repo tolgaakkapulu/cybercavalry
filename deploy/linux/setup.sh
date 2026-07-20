@@ -296,7 +296,7 @@ do_install() {
     echo
     ok "install complete"
     echo "    Access:      https://$(hostname -I | awk '{print $1}'):$HTTPS_PORT/"
-    echo "    Login:       admin / admin  (change the password immediately in Settings)"
+    echo "    Login:       admin / admin  (change the password immediately in Users)"
     echo "    Service log: sudo journalctl -u $SERVICE_NAME -f"
 }
 
