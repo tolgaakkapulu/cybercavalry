@@ -205,33 +205,27 @@ CYBERCavalry/
 
 ## ⚙️ Installation
 
-Installation artefacts are grouped by target operating system under
-[`deploy/`](deploy/). Pick the guide that matches your host — each is a
-complete, opinionated walkthrough covering venv setup, dependencies,
-SSL, database seeding, service registration and firewall rules.
+One script per platform, one command each. Full walkthrough (including
+prerequisites and the offline wheel bundle) lives at
+[`deploy/README.md`](deploy/README.md).
 
-- **🎩 RHEL / AlmaLinux / Rocky Linux 9.x** — see
-  [`deploy/linux/INSTALL_RHEL.md`](deploy/linux/INSTALL_RHEL.md). Ships a
-  one-shot [`install_rhel.sh`](deploy/linux/install_rhel.sh) plus an
-  in-place [`update_rhel.sh`](deploy/linux/update_rhel.sh) and a
-  hardened systemd unit (with SELinux labelling automation).
-- **🌀 Debian 12+ / Ubuntu 22.04+** — see
-  [`deploy/linux/INSTALL_DEBIAN.md`](deploy/linux/INSTALL_DEBIAN.md). Ships a
-  one-shot [`install_debian.sh`](deploy/linux/install_debian.sh) plus an
-  in-place [`update_debian.sh`](deploy/linux/update_debian.sh) — same
-  systemd unit as the RHEL path, with `apt` + `ufw` instead of `dnf` +
-  `firewalld`, and no SELinux step to worry about.
-- **🪟 Windows** (Server 2019 / 2022, Windows 10 / 11) — see
-  [`deploy/windows/INSTALL_WINDOWS.md`](deploy/windows/INSTALL_WINDOWS.md).
-  Ships a one-shot [`install_windows.ps1`](deploy/windows/install_windows.ps1),
-  an [`update_windows.ps1`](deploy/windows/update_windows.ps1) with
-  rollback snapshots, and a WinSW service definition.
+**🐧 Linux — RHEL / AlmaLinux / Rocky / Debian / Ubuntu**
+```bash
+sudo bash deploy/linux/setup.sh install     # first time
+sudo bash deploy/linux/setup.sh update      # in-place upgrade
+```
+The script auto-detects your distro family and handles `dnf`/`apt`,
+`firewalld`/`ufw`, and SELinux (RHEL only) automatically.
 
-The overview and OS-selection matrix live at
-[`deploy/README.md`](deploy/README.md). Both paths share the same
-cross-platform offline wheel bundle produced by
-[`deploy/prepare_offline_bundle.py`](deploy/prepare_offline_bundle.py) —
-handy for air-gapped installs.
+**🪟 Windows Server 2019 / 2022, Windows 10 / 11**
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 -Action install
+powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 -Action update
+```
+
+Both platforms preserve `.env`, database, TLS certificates, logs and
+backups across updates, and write a rollback snapshot before touching
+anything.
 
 ### Quick Start — Developer / Evaluation
 
@@ -397,36 +391,18 @@ Full endpoint schemas — including request bodies, response shapes and error co
 
 ## 🏭 Production Deployment
 
-Deploy artefacts are split by target OS under [`deploy/`](deploy/) — see [`deploy/README.md`](deploy/README.md) for the overview and OS-selection matrix.
+Full walkthrough — prerequisites, offline wheel bundle, service
+management, update flow, rollback — lives at
+[`deploy/README.md`](deploy/README.md). At a glance:
 
-### 🎩 RHEL / AlmaLinux / Rocky Linux 9.x
+| Platform | Runner | Service | Installer / Updater |
+|---|---|---|---|
+| RHEL 9.x · AlmaLinux · Rocky · Debian 12+ · Ubuntu 22.04+ | gunicorn | systemd ([`cybercavalry.service`](deploy/linux/cybercavalry.service)) | [`deploy/linux/setup.sh install\|update`](deploy/linux/setup.sh) |
+| Windows Server 2019 / 2022 · Windows 10 / 11 | waitress | WinSW ([`cybercavalry-service.xml`](deploy/windows/cybercavalry-service.xml)) | [`deploy/windows/setup.ps1 -Action install\|update`](deploy/windows/setup.ps1) |
 
-Runs behind **gunicorn** with native TLS, managed by **systemd**. Includes an offline wheel bundle for air-gapped installs, pre-flight `migrate` + `collectstatic`, and SELinux labelling automation.
-
-- **[`deploy/linux/INSTALL_RHEL.md`](deploy/linux/INSTALL_RHEL.md)** — step-by-step guide
-- **[`deploy/linux/install_rhel.sh`](deploy/linux/install_rhel.sh)** — one-shot installer
-- **[`deploy/linux/update_rhel.sh`](deploy/linux/update_rhel.sh)** — in-place upgrade (with automatic venv-repair pre-flight)
-- **[`deploy/linux/cybercavalry.service`](deploy/linux/cybercavalry.service)** — systemd unit
-
-Runs as an unprivileged `cavalry` user, restarts on failure, and applies OS-level hardening (`NoNewPrivileges`, `PrivateTmp`).
-
-### 🌀 Debian 12+ / Ubuntu 22.04+
-
-Same runtime shape as the RHEL path — **gunicorn** + **systemd** + the same shared unit file. Uses `apt` and `ufw` instead of `dnf` and `firewalld`, and skips the SELinux step (Debian's default AppArmor profile is unrestrictive for CYBERCavalry).
-
-- **[`deploy/linux/INSTALL_DEBIAN.md`](deploy/linux/INSTALL_DEBIAN.md)** — step-by-step guide
-- **[`deploy/linux/install_debian.sh`](deploy/linux/install_debian.sh)** — one-shot installer
-- **[`deploy/linux/update_debian.sh`](deploy/linux/update_debian.sh)** — in-place upgrade (with automatic venv-repair pre-flight)
-- **[`deploy/linux/cybercavalry.service`](deploy/linux/cybercavalry.service)** — shared systemd unit
-
-### 🪟 Windows (Server 2019 / 2022, also Windows 10 / 11)
-
-Runs behind **waitress** (pure-Python WSGI, Windows-friendly), managed by **WinSW** as a native Windows service. Uses the same offline wheel bundle as the Linux path.
-
-- **[`deploy/windows/INSTALL_WINDOWS.md`](deploy/windows/INSTALL_WINDOWS.md)** — step-by-step guide
-- **[`deploy/windows/install_windows.ps1`](deploy/windows/install_windows.ps1)** — one-shot PowerShell installer
-- **[`deploy/windows/update_windows.ps1`](deploy/windows/update_windows.ps1)** — in-place upgrade with rollback snapshot
-- **[`deploy/windows/cybercavalry-service.xml`](deploy/windows/cybercavalry-service.xml)** — WinSW service definition
+Both platforms preserve `.env`, database, TLS certificates, logs and
+backups across updates; the Linux service runs as an unprivileged
+`cavalry` user with `NoNewPrivileges` + `PrivateTmp` hardening.
 
 **Minimum production checklist:**
 
