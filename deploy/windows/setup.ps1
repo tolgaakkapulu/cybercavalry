@@ -306,7 +306,19 @@ function Install-Service {
         return $false
     }
 
-    if (-not (Test-Path $svcXml)) { Copy-Item $srcXml $svcXml }
+    # Materialise the service XML with THIS deployment's paths + port.
+    # The template ships with the default C:\CYBERCavalry and port 8443
+    # placeholders; if the user picked a non-default -InstallDir or
+    # -HttpsPort we have to substitute those or WinSW will look for
+    # python.exe in the wrong place and fail with "Sistem belirtilen
+    # dosyayi bulamiyor" / "The system cannot find the file specified".
+    # Overwrite every time so re-runs pick up path/port changes.
+    $xmlContent = Get-Content $srcXml -Raw
+    $xmlContent = $xmlContent.Replace('C:\CYBERCavalry', $InstallDir)
+    $xmlContent = $xmlContent.Replace('--port=8443', "--port=$HttpsPort")
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($svcXml, $xmlContent, $utf8NoBom)
+
     & $svcExe uninstall 2>$null | Out-Null
     & $svcExe install
     & $svcExe start
