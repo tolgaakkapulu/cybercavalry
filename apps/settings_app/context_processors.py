@@ -48,9 +48,9 @@ def platform_settings(request):
         brand_color_glow_dark  = f'rgba({_r},{_g},{_b},0.18)'   # :root + dark theme
         brand_color_glow_light = f'rgba({_r},{_g},{_b},0.12)'   # light theme (subtler)
         # Admin-configurable default theme; users can still toggle per-browser via localStorage.
-        default_theme = (SettingsCache.get('general.default_theme', 'light') or 'light').strip().lower()
+        default_theme = (SettingsCache.get('general.default_theme', 'dark') or 'dark').strip().lower()
         if default_theme not in ('light', 'dark'):
-            default_theme = 'light'
+            default_theme = 'dark'
     except Exception:
         from django.templatetags.static import static as _static
         platform_primary        = 'CYBER'
@@ -65,7 +65,7 @@ def platform_settings(request):
             brand_logo_url       = '/static/img/logo.svg'
             brand_background_url = '/static/img/background.svg'
         brand_login_url = ''
-        default_theme = 'light'
+        default_theme = 'dark'
         brand_color = '#ee5356'
         brand_color_glow_dark  = 'rgba(238,83,86,0.18)'
         brand_color_glow_light = 'rgba(238,83,86,0.12)'
