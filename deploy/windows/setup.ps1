@@ -100,7 +100,7 @@ function Install-Deps {
         if (-not $available) { $available = 'none' }
         Warn "No wheel bundle for $tag (available: $available). Installing directly from PyPI."
         $rc = Invoke-Pip install --disable-pip-version-check `
-            -r "$InstallDir\requirements.txt" waitress
+            -r "$InstallDir\requirements.txt" hypercorn
         if ($rc -ne 0) { Die "pip install from PyPI failed (exit $rc). Check internet connectivity and package availability." }
         Ok "dependencies from PyPI ($tag)"
         return
@@ -108,12 +108,12 @@ function Install-Deps {
 
     $rc = Invoke-Pip install --disable-pip-version-check `
         --no-index --find-links "$wheels\" `
-        -r "$InstallDir\requirements.txt" waitress
+        -r "$InstallDir\requirements.txt" hypercorn
     if ($rc -ne 0) {
         Warn 'offline install incomplete (Linux-only wheel bundle?) -- retrying with PyPI as fallback'
         $rc = Invoke-Pip install --disable-pip-version-check `
             --find-links "$wheels\" `
-            -r "$InstallDir\requirements.txt" waitress
+            -r "$InstallDir\requirements.txt" hypercorn
         if ($rc -ne 0) { Die "pip install failed even with PyPI fallback (exit $rc). Check network + package availability." }
         Ok "dependencies: $tag bundle + PyPI fallback"
     } else {
@@ -315,7 +315,8 @@ function Install-Service {
     # Overwrite every time so re-runs pick up path/port changes.
     $xmlContent = Get-Content $srcXml -Raw
     $xmlContent = $xmlContent.Replace('C:\CYBERCavalry', $InstallDir)
-    $xmlContent = $xmlContent.Replace('--port=8443', "--port=$HttpsPort")
+    # Hypercorn bind form: --bind 0.0.0.0:PORT
+    $xmlContent = $xmlContent.Replace('0.0.0.0:8443', "0.0.0.0:$HttpsPort")
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($svcXml, $xmlContent, $utf8NoBom)
 

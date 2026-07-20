@@ -233,7 +233,7 @@ For local development on any OS, `manage_server.py` skips the full
 production dance:
 
 ```bash
-git clone https://github.com/<your-user>/CYBERCavalry.git
+git clone https://github.com/tolgaakkapulu/CYBERCavalry.git
 cd CYBERCavalry
 python -m venv venv
 # Linux / macOS

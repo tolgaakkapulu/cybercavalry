@@ -9,9 +9,10 @@ reportlab>=4.2
 svglib>=1.5,<1.6
 whitenoise>=6,<7
 
-# ── WSGI runners (installed per OS via environment markers) ─────────
-# gunicorn is Unix-only (needs fork()); waitress is the Windows equivalent.
-# Both are listed in the deploy scripts too, but keeping them here makes
-# a plain `pip install -r requirements.txt` on any host self-sufficient.
+# ── HTTP server per OS (environment markers) ────────────────────────
+# Unix: gunicorn with native TLS (fork-based, does not run on Windows).
+# Windows: hypercorn -- ASGI server with native TLS on Windows (waitress
+# would work for plain HTTP but has no TLS support, and our deployment
+# expects self-signed HTTPS on 8443 without a reverse proxy).
 gunicorn>=22,<23 ; sys_platform != "win32"
-waitress>=3     ; sys_platform == "win32"
+hypercorn>=0.17 ; sys_platform == "win32"
