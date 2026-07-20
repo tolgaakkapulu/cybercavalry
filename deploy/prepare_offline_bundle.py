@@ -111,7 +111,7 @@ def download_for(py_ver: str):
     for p in TARGET_PLATFORMS:
         platform_args.extend(['--platform', p])
 
-    # ---- Asama 1: tum paketleri wheel olarak indir (svglib haric) ----
+    # ---- Stage 1: download every package as a wheel (except svglib) ----
     tmp_reqs_lines = []
     for line in REQS.read_text(encoding='utf-8').splitlines():
         stripped = line.strip()
@@ -135,13 +135,13 @@ def download_for(py_ver: str):
         '-r', str(tmp_reqs),
         *EXTRA_PACKAGES,
     ]
-    log(f'  Asama 1: pip download (cp{py_ver}, manylinux2014)')
+    log(f'  Stage 1: pip download (cp{py_ver}, manylinux2014)')
     try:
         subprocess.run(cmd1, check=True)
     finally:
         tmp_reqs.unlink(missing_ok=True)
 
-    # ---- Asama 2: svglib sdist -> wheel (saf Python, py3-none-any) ----
+    # ---- Stage 2: svglib sdist -> wheel (pure Python, py3-none-any) ----
     cmd2 = [
         sys.executable, '-m', 'pip', 'wheel',
         '--wheel-dir', str(wheels_dir),
@@ -149,16 +149,16 @@ def download_for(py_ver: str):
         '--no-cache-dir',
         'svglib>=1.5,<1.6',
     ]
-    log(f'  Asama 2: pip wheel svglib (saf Python -> any)')
+    log(f'  Stage 2: pip wheel svglib (pure Python -> any)')
     subprocess.run(cmd2, check=True)
 
-    # ---- Lock dosyasi ----
+    # ---- Lock file ----
     wheels = sorted(p.name for p in wheels_dir.glob('*.whl'))
     lock_file.write_text('\n'.join(wheels) + '\n', encoding='utf-8')
 
     total_bytes = sum(p.stat().st_size for p in wheels_dir.iterdir() if p.is_file())
     log(f'  -> {len(wheels)} wheel, {total_bytes / 1024 / 1024:.1f} MB')
-    log(f'  -> Kilit: {lock_file.relative_to(BASE_DIR)}')
+    log(f'  -> Lock: {lock_file.relative_to(BASE_DIR)}')
     return len(wheels), total_bytes
 
 
@@ -176,10 +176,10 @@ def main():
     targets = args.py or SUPPORTED_PYTHONS
 
     if not REQS.exists():
-        sys.exit(f'[!] requirements.txt bulunamadi: {REQS}')
+        sys.exit(f'[!] requirements.txt not found: {REQS}')
 
     log(f'CYBER Cavalry -- Offline wheel bundler')
-    log(f'Hedefler: Python {", ".join(targets)} / RHEL 9.x / x86_64')
+    log(f'Targets: Python {", ".join(targets)} / RHEL 9.x / x86_64')
 
     total_w = 0
     total_b = 0
@@ -190,11 +190,11 @@ def main():
 
     print()
     log('=' * 60)
-    log(f'  Tum hedefler tamamlandi.')
+    log(f'  All targets completed.')
     log(f'  Toplam: {total_w} wheel  |  {total_b / 1024 / 1024:.1f} MB')
     log('=' * 60)
     print()
-    log('Hedef RHEL\'de kurulum:')
+    log('Install on the target RHEL host:')
     log('  PY=py$(python3 -c "import sys; print(f\'{sys.version_info.major}{sys.version_info.minor}\')")')
     log('  ./venv/bin/pip install --no-index --find-links deploy/wheels/$PY/ \\')
     log('      -r requirements.txt gunicorn')
