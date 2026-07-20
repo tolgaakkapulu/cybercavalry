@@ -87,7 +87,12 @@ Ok 'venv created.'
 # ── 2. Wheel-set detection ─────────────────────────────────────────
 Step '2/8 Python version + wheel set'
 $py = '.\venv\Scripts\python.exe'
-$pyTag = 'py' + (& $py -c 'import sys; print(f"{sys.version_info.major}{sys.version_info.minor}")').Trim()
+# NOTE: Avoid Python f-strings here — PowerShell 5.1's native-command
+# argument parser strips double-quotes even inside single-quoted PS
+# strings, so `f"{...}"` reaches Python as `f{...}` and blows up as a
+# SyntaxError. Plain str() concatenation with double-quoted PS wrapping
+# is safe on both PowerShell 5.1 and 7.
+$pyTag = 'py' + (& $py -c "import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))").Trim()
 $wheelsDir = Join-Path $InstallDir "deploy\wheels\$pyTag"
 if (-not (Test-Path $wheelsDir)) {
     Fail "Wheel bundle not found: $wheelsDir  (available: $(Get-ChildItem "$InstallDir\deploy\wheels" -ErrorAction SilentlyContinue | ForEach-Object Name))"
@@ -108,15 +113,15 @@ Step '4/8 .env'
 if ((Test-Path '.env') -and ((Get-Item '.env').Length -gt 0)) {
     Info 'Existing .env preserved.'
 } else {
+    # `secrets.token_urlsafe(64)` gives us ~85 chars of URL-safe base64
+    # entropy — same practical strength as the custom character-set
+    # approach, but as a single-liner that avoids PowerShell here-string
+    # quoting hazards on 5.1.
     function New-RandomKey {
-        & $py -c @"
-import secrets, string
-chars = string.ascii_letters + string.digits + '!@#$%^&*(-_=+)'
-print(''.join(secrets.choice(chars) for _ in range(64)))
-"@
+        (& $py -c "import secrets; print(secrets.token_urlsafe(64))").Trim()
     }
-    $secretKey = (New-RandomKey).Trim()
-    $fieldKey  = (New-RandomKey).Trim()
+    $secretKey = New-RandomKey
+    $fieldKey  = New-RandomKey
     $serverIp  = (Get-NetIPAddress -AddressFamily IPv4 -PrefixOrigin Dhcp, Manual `
                   -ErrorAction SilentlyContinue |
                   Where-Object { $_.IPAddress -notlike '169.254*' } |

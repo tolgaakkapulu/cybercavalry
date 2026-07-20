@@ -142,7 +142,8 @@ if (-not $pipHealthy) {
     Ok 'venv rebuilt.'
 }
 
-$pyTag = 'py' + (& $py -c 'import sys; print(f"{sys.version_info.major}{sys.version_info.minor}")').Trim()
+# NOTE: See install_windows.ps1 for why we avoid Python f-strings here.
+$pyTag = 'py' + (& $py -c "import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))").Trim()
 $wheelsDir = Join-Path $InstallDir "deploy\wheels\$pyTag"
 if (Test-Path $wheelsDir) {
     & $pip install --no-index --find-links "$wheelsDir\" `

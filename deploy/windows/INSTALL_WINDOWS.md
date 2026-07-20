@@ -194,7 +194,7 @@ Set-Location C:\CYBERCavalry
 python -m venv venv
 
 # Detect Python major.minor so we pick the right wheel bundle (py39 / py311)
-$PyTag = "py" + (& .\venv\Scripts\python.exe -c "import sys; print(f'{sys.version_info.major}{sys.version_info.minor}')").Trim()
+$PyTag = "py" + (& .\venv\Scripts\python.exe -c "import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))").Trim()
 $WheelsDir = "C:\CYBERCavalry\deploy\wheels\$PyTag"
 
 Write-Host "Wheel set: $PyTag  (from $WheelsDir)"
@@ -226,18 +226,12 @@ if (-not (Test-Path $WheelsDir)) {
 ## 4. `.env` Configuration
 
 ```powershell
-# Create a fresh SECRET_KEY and FIELD_ENCRYPTION_KEY
-$SecretKey = & .\venv\Scripts\python.exe -c @"
-import secrets, string
-chars = string.ascii_letters + string.digits + '!@#$%^&*(-_=+)'
-print(''.join(secrets.choice(chars) for _ in range(64)))
-"@
-
-$FieldKey = & .\venv\Scripts\python.exe -c @"
-import secrets, string
-chars = string.ascii_letters + string.digits + '!@#$%^&*(-_=+)'
-print(''.join(secrets.choice(chars) for _ in range(64)))
-"@
+# Create a fresh SECRET_KEY and FIELD_ENCRYPTION_KEY.
+# secrets.token_urlsafe(64) → ~85 chars of URL-safe base64 entropy;
+# same practical strength as a custom character-set but avoids
+# PowerShell 5.1 here-string quoting hazards.
+$SecretKey = (& .\venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(64))").Trim()
+$FieldKey  = (& .\venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(64))").Trim()
 
 $ServerIP = (Get-NetIPAddress -AddressFamily IPv4 -PrefixOrigin Dhcp,Manual `
               | Where-Object { $_.IPAddress -notlike '169.254*' } `
@@ -396,6 +390,7 @@ Start-Service CYBERCavalry
 | CSRF 403 in the browser                              | Check `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS` in `.env` |
 | `File ... cannot be loaded because running scripts is disabled` | See §1.4 — either run once with `powershell -ExecutionPolicy Bypass -File .\install_windows.ps1`, or `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` for a persistent per-user allow |
 | `File ... is not digitally signed` (after `RemoteSigned`) | Zone.Identifier tag from git clone / web download. Fix: `Get-ChildItem -Path deploy\ -Recurse \| Unblock-File`, then re-run the script (see §1.4) |
+| `SyntaxError: Perhaps you forgot a comma?` on a Python `-c` call | PowerShell 5.1 strips `"` from single-quoted PS strings when calling native `.exe`. If you edited the scripts and wrote `python -c 'print(f"{x}")'`, rewrite as `python -c "import ...; print(str(x)+str(y))"` — outer double quotes, no f-strings. |
 | `No matching distribution found`                     | Make sure step 0 ran with the same Python major.minor as the target host |
 
 ---
