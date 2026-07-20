@@ -130,10 +130,33 @@ create_venv() {
 
 write_env() {
     local py="$INSTALL_DIR/venv/bin/python"
-    local k1 k2 ip
+    local k1 k2 host_short host_fqdn ip_list
     k1=$(sudo -u "$SERVICE_USER" "$py" -c "import secrets; print(secrets.token_urlsafe(64))")
     k2=$(sudo -u "$SERVICE_USER" "$py" -c "import secrets; print(secrets.token_urlsafe(64))")
-    ip=$(hostname -I | awk '{print $1}')
+    # Gather every reachable name/IP so the user can hit the box via any of
+    # them without Django's 400/DisallowedHost rejecting the request.
+    host_short=$(hostname 2>/dev/null || echo "")
+    host_fqdn=$(hostname -f 2>/dev/null || echo "")
+    # All IPv4 addrs on the box, skipping link-local (169.254.*) and loopback.
+    ip_list=$(hostname -I 2>/dev/null | tr ' ' '\n' | \
+              grep -Ev '^(169\.254\.|127\.|$)' | sort -u)
+    # Build ALLOWED_HOSTS: localhost + loopback + hostname (short & FQDN) + every IP.
+    local allowed_hosts csrf_origins entry
+    allowed_hosts="localhost,127.0.0.1"
+    csrf_origins="https://localhost:${HTTPS_PORT},https://127.0.0.1:${HTTPS_PORT}"
+    for entry in "$host_short" "$host_fqdn"; do
+        [[ -n "$entry" && ",$allowed_hosts," != *",$entry,"* ]] && {
+            allowed_hosts="$allowed_hosts,$entry"
+            csrf_origins="$csrf_origins,https://${entry}:${HTTPS_PORT}"
+        }
+    done
+    while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        [[ ",$allowed_hosts," != *",$entry,"* ]] && {
+            allowed_hosts="$allowed_hosts,$entry"
+            csrf_origins="$csrf_origins,https://${entry}:${HTTPS_PORT}"
+        }
+    done <<< "$ip_list"
     # Full-parameter template matching .env.example -- generated once on
     # fresh install. Delete .env and re-run setup to regenerate.
     sudo -u "$SERVICE_USER" tee "$INSTALL_DIR/.env" >/dev/null <<EOF
@@ -147,8 +170,8 @@ write_env() {
 # -- Core Django ----------------------------------------------
 SECRET_KEY=$k1
 DEBUG=False
-ALLOWED_HOSTS=$ip,127.0.0.1
-CSRF_TRUSTED_ORIGINS=https://${ip}:${HTTPS_PORT},https://127.0.0.1:${HTTPS_PORT}
+ALLOWED_HOSTS=$allowed_hosts
+CSRF_TRUSTED_ORIGINS=$csrf_origins
 # Set to True when a reverse proxy (nginx/Caddy) terminates TLS in front.
 SECURE_SSL_REDIRECT=False
 

@@ -251,10 +251,27 @@ function New-Venv {
 function Write-Env {
     $k1 = (& $py -c "import secrets; print(secrets.token_urlsafe(64))").Trim()
     $k2 = (& $py -c "import secrets; print(secrets.token_urlsafe(64))").Trim()
-    $ip = (Get-NetIPAddress -AddressFamily IPv4 -PrefixOrigin Dhcp,Manual -EA SilentlyContinue |
-           Where-Object { $_.IPAddress -notlike '169.254*' } |
-           Select-Object -First 1).IPAddress
-    if (-not $ip) { $ip = '127.0.0.1' }
+
+    # Gather every reachable name/IP so the user can hit the box via any of
+    # them without Django's 400/DisallowedHost rejecting the request.
+    $hostShort = try { [System.Net.Dns]::GetHostName() } catch { $env:COMPUTERNAME }
+    $hostFqdn  = try { [System.Net.Dns]::GetHostEntry($hostShort).HostName } catch { $hostShort }
+    # All IPv4 addrs across every adapter, skipping link-local + loopback.
+    $ipList = @(Get-NetIPAddress -AddressFamily IPv4 -EA SilentlyContinue |
+                Where-Object { $_.IPAddress -notlike '169.254*' -and $_.IPAddress -ne '127.0.0.1' } |
+                Select-Object -ExpandProperty IPAddress -Unique)
+
+    # Build ALLOWED_HOSTS + CSRF_TRUSTED_ORIGINS as ordered, deduplicated lists.
+    $allowedList = [System.Collections.Generic.List[string]]::new()
+    $csrfList    = [System.Collections.Generic.List[string]]::new()
+    foreach ($h in @('localhost', '127.0.0.1', $hostShort, $hostFqdn) + $ipList) {
+        if ($h -and -not $allowedList.Contains($h)) {
+            $allowedList.Add($h)
+            $csrfList.Add("https://${h}:$HttpsPort")
+        }
+    }
+    $allowedHosts = $allowedList -join ','
+    $csrfOrigins  = $csrfList -join ','
     # Pulled out to avoid needing to escape the many double-quotes inside a
     # PS double-quoted here-string.
     $ldapAttrMap = '{"first_name": "givenName", "last_name": "sn", "email": "mail"}'
@@ -270,8 +287,8 @@ function Write-Env {
 # -- Core Django ----------------------------------------------
 SECRET_KEY=$k1
 DEBUG=False
-ALLOWED_HOSTS=$ip,127.0.0.1
-CSRF_TRUSTED_ORIGINS=https://${ip}:$HttpsPort,https://127.0.0.1:$HttpsPort
+ALLOWED_HOSTS=$allowedHosts
+CSRF_TRUSTED_ORIGINS=$csrfOrigins
 
 # -- Database (SQLite by default; use postgres://user:pass@host/db in prod)
 DATABASE_URL=sqlite:///cybercavalry.db
