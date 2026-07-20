@@ -126,6 +126,42 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 The relaxation dies with the window.
 
+#### "File is not digitally signed" after `RemoteSigned` (Zone.Identifier)
+
+If you already set `RemoteSigned` via Option B and still see:
+
+```
+File install_windows.ps1 cannot be loaded. The file ... is not
+digitally signed. You cannot run this script on the current system.
+```
+
+...then the script files were downloaded from the internet (git
+clone from GitHub, direct download, or copy from a network share).
+Windows tagged them with a `Zone.Identifier` alternate data stream
+that marks them as coming from Zone 3 (Internet). Under `RemoteSigned`,
+only *locally created* scripts run unsigned — anything tagged as
+"from the internet" still needs a signature.
+
+Two fixes:
+
+```powershell
+# Fix 1 (recommended) — strip the Zone.Identifier from every script
+# under deploy\ so RemoteSigned is happy with them.
+Get-ChildItem -Path C:\CYBERCavalry\deploy -Recurse | Unblock-File
+.\install_windows.ps1
+```
+
+`Unblock-File` only removes the "downloaded from the internet" tag;
+it does not weaken your execution policy or grant blanket trust —
+it just tells Windows "I've reviewed these files locally". Safe to
+run over the whole `deploy\` tree.
+
+```powershell
+# Fix 2 — Option A from above always works because Bypass ignores
+# Zone.Identifier entirely:
+powershell -ExecutionPolicy Bypass -File .\install_windows.ps1
+```
+
 ---
 
 ## 2. Deploy the Project
@@ -359,6 +395,7 @@ Start-Service CYBERCavalry
 | Admin page returns 404                               | Update `ADMIN_ALLOWED_IPS` in `.env` |
 | CSRF 403 in the browser                              | Check `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS` in `.env` |
 | `File ... cannot be loaded because running scripts is disabled` | See §1.4 — either run once with `powershell -ExecutionPolicy Bypass -File .\install_windows.ps1`, or `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` for a persistent per-user allow |
+| `File ... is not digitally signed` (after `RemoteSigned`) | Zone.Identifier tag from git clone / web download. Fix: `Get-ChildItem -Path deploy\ -Recurse \| Unblock-File`, then re-run the script (see §1.4) |
 | `No matching distribution found`                     | Make sure step 0 ran with the same Python major.minor as the target host |
 
 ---
