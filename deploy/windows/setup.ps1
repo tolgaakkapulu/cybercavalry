@@ -266,16 +266,46 @@ function Open-Firewall {
     Ok "firewall: TCP/$HttpsPort opened"
 }
 
+function Get-WinSW {
+    # Fetch WinSW-x64.exe from the winsw project's GitHub Releases and drop
+    # it in deploy\windows\CYBERCavalry.exe (WinSW binds config-file to its
+    # own basename, so the .exe must be renamed to CYBERCavalry.exe to
+    # match the sibling CYBERCavalry.xml). Skips the download when the
+    # binary is already present.
+    # We pin v2.12.0 because WinSW v3+ switched the config format to YAML
+    # and this project ships an XML service definition.
+    $svcExe = Join-Path $InstallDir 'deploy\windows\CYBERCavalry.exe'
+    if (Test-Path $svcExe) { return $true }
+    $url = 'https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe'
+    Log "WinSW binary missing -- downloading v2.12.0 from GitHub..."
+    try {
+        # PS 5.1 defaults to TLS 1.0/1.1 which GitHub Releases no longer accepts.
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $url -OutFile $svcExe -UseBasicParsing
+    } catch {
+        Warn "WinSW download failed: $($_.Exception.Message)"
+        return $false
+    }
+    if (Test-Path $svcExe) { Ok "WinSW installed at $svcExe"; return $true }
+    return $false
+}
+
 function Install-Service {
     $svcExe = Join-Path $InstallDir 'deploy\windows\CYBERCavalry.exe'
     $svcXml = Join-Path $InstallDir 'deploy\windows\CYBERCavalry.xml'
     $srcXml = Join-Path $InstallDir 'deploy\windows\cybercavalry-service.xml'
-    if (-not (Test-Path $svcExe)) {
-        Warn "WinSW binary missing at $svcExe."
-        Warn 'Download WinSW-x64.exe from https://github.com/winsw/winsw/releases,'
-        Warn "rename to CYBERCavalry.exe, place at $svcExe, then re-run this script."
+
+    if (-not (Get-WinSW)) {
+        Warn "Cannot register the Windows service without WinSW."
+        Warn "Manual fallback:"
+        Warn "  1. Download https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe"
+        Warn "  2. Rename to CYBERCavalry.exe and place at $svcExe"
+        Warn "  3. Re-run this setup script (install), or manually:"
+        Warn "       Copy-Item '$srcXml' '$svcXml'"
+        Warn "       & '$svcExe' install; & '$svcExe' start"
         return $false
     }
+
     if (-not (Test-Path $svcXml)) { Copy-Item $srcXml $svcXml }
     & $svcExe uninstall 2>$null | Out-Null
     & $svcExe install
