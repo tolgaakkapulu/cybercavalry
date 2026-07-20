@@ -21,7 +21,14 @@ param(
     [Parameter(Mandatory=$true)][ValidateSet('install','update')]
     [string]$Action,
     [string]$InstallDir = 'C:\CYBERCavalry',
-    [int]$HttpsPort     = 8443
+    [int]$HttpsPort     = 8443,
+    # Force a specific interpreter for venv creation. Two accepted forms:
+    #   -PythonExe "C:\Python311\python.exe"     (full path)
+    #   -PythonExe "py -3.11"                    (py launcher + version)
+    # Left empty (the default) the script tries `py -3.X` for every wheel
+    # bundle available under deploy\wheels\ and picks the first that answers
+    # `--version`. Falls back to the default `python` on PATH otherwise.
+    [string]$PythonExe  = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,16 +63,21 @@ function Install-Deps {
 Wheel bundle missing: $wheels
 Your Python is $tag but only these bundles ship in this release: $available.
 
-Fix — install a matching Python version and rerun. On Windows, use the py
-launcher to keep multiple versions side by side:
-    winget install Python.Python.3.11    # or python.org installer
-    py -3.11 --version                    # verify
-    Remove-Item -Recurse -Force '$InstallDir\venv'
-    `$env:PATH = 'C:\Python311;C:\Python311\Scripts;' + `$env:PATH
-    # then re-run this script.
+Fix (Windows) -- install a matching Python side by side, then either:
+
+  a) Let the script auto-detect it via the py launcher (no flags needed):
+       winget install Python.Python.3.11        # or python.org installer
+       py -3.11 --version                       # verify
+       Remove-Item -Recurse -Force '$InstallDir\venv'
+       powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 -Action install
+
+  b) Or point at it explicitly:
+       powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 ``
+           -Action install -PythonExe 'py -3.11'
 
 Alternatively, on a connected workstation regenerate the bundle with the
-target Python major.minor:
+target Python major.minor (requires 3.9-3.12; newer versions may lack
+prebuilt wheels for cryptography/lxml):
     python deploy\prepare_offline_bundle.py --py $($tag.Substring(2))
 "@
     }
@@ -75,9 +87,48 @@ target Python major.minor:
     Ok "dependencies from $tag"
 }
 
+function Get-BundleVersions {
+    # Return e.g. @('3.11','3.9') for bundles found under deploy\wheels\pyXY\
+    Get-ChildItem "$InstallDir\deploy\wheels" -Directory -Name -EA SilentlyContinue |
+        Where-Object { $_ -match '^py(\d)(\d+)$' } |
+        ForEach-Object {
+            if ($_ -match '^py(\d)(\d+)$') { "$($Matches[1]).$($Matches[2])" }
+        }
+}
+
+function Resolve-Python {
+    # 1. Honour explicit -PythonExe if provided
+    if ($PythonExe) { return $PythonExe }
+    # 2. Try to match `py -3.X` against every wheel bundle we have
+    $bundleVersions = Get-BundleVersions
+    foreach ($v in $bundleVersions) {
+        try {
+            $out = & py "-$v" --version 2>&1
+            if ($LASTEXITCODE -eq 0 -and $out -match "Python $v") {
+                Log "matched wheel bundle py$($v -replace '\.','') -> py -$v"
+                return "py -$v"
+            }
+        } catch { }
+    }
+    # 3. Fall back to whatever `python` is on PATH
+    Log 'no bundle-matching Python found via py launcher; using default `python` on PATH'
+    return 'python'
+}
+
+function Invoke-Python {
+    param([string]$Chooser, [Parameter(ValueFromRemainingArguments=$true)] $Args)
+    if ($Chooser -like 'py -*') {
+        $ver = ($Chooser -split ' ',2)[1]
+        & py $ver @Args
+    } else {
+        & $Chooser @Args
+    }
+}
+
 function New-Venv {
-    python -m venv "$InstallDir\venv"
-    if (-not (Test-Path $py)) { Die 'venv creation failed.' }
+    $chooser = Resolve-Python
+    Invoke-Python $chooser -m venv "$InstallDir\venv"
+    if (-not (Test-Path $py)) { Die "venv creation failed (chooser=$chooser)." }
     Install-Deps
 }
 

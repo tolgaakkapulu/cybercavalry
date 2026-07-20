@@ -46,13 +46,31 @@ REQS        = BASE_DIR / 'requirements.txt'
 
 # RHEL 9 = glibc 2.34. manylinux2014 (glibc 2.17) wheels are forward-compatible.
 TARGET_PLATFORMS  = ['manylinux2014_x86_64', 'manylinux_2_28_x86_64']
-SUPPORTED_PYTHONS = ['39', '311']
+
+# The two versions we ship a ready-made bundle for out of the box. The `--py`
+# argument accepts any 2- or 3-digit CPython major+minor (e.g. `39`, `310`,
+# `311`, `312`, `313`); anything outside the DEFAULT_PYTHONS list is still
+# allowed but PyPI may not have wheels for cryptography / lxml on bleeding-edge
+# CPython yet, so the download can fail. See the CLI --help for details.
+DEFAULT_PYTHONS = ['39', '311']
 
 # pip interprets a bare --python-version like "39" as 3.9.0, which trips
 # Requires-Python markers such as cryptography's "!=3.9.0,!=3.9.1". Pass a
 # realistic patch-level version (RHEL 9 ships >= these) so markers evaluate
 # correctly. The wheel ABI tag stays cp39/cp311 regardless of patch level.
-_PIP_PYVERSION = {'39': '3.9.18', '311': '3.11.9'}
+# For versions not in this map, we fall back to the plain "X.Y" form which
+# pip treats as "X.Y.0" -- fine unless a package has a `!=X.Y.0` marker.
+_PIP_PYVERSION = {'39': '3.9.18', '310': '3.10.14', '311': '3.11.9', '312': '3.12.6'}
+
+
+def _pip_pyversion(tag: str) -> str:
+    """Return an appropriate `--python-version` value for a `pyXY` tag."""
+    if tag in _PIP_PYVERSION:
+        return _PIP_PYVERSION[tag]
+    # Fallback: split major (first char) from minor (rest) -> "3.14", "3.10", ...
+    if len(tag) >= 2 and tag.isdigit():
+        return f'{tag[0]}.{tag[1:]}'
+    return tag
 
 # EXTRA_PACKAGES: packages that are not in requirements.txt, or that pip
 # download skips because they are marker-conditional.
@@ -126,7 +144,7 @@ def download_for(py_ver: str):
     cmd1 = [
         sys.executable, '-m', 'pip', 'download',
         '--dest', str(wheels_dir),
-        '--python-version', _PIP_PYVERSION.get(py_ver, py_ver),
+        '--python-version', _pip_pyversion(py_ver),
         *platform_args,
         '--abi', abi,
         '--implementation', 'cp',
@@ -168,12 +186,21 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        '--py', choices=SUPPORTED_PYTHONS, action='append',
-        help='Target Python version (39 or 311). May be repeated; '
-             'both versions are prepared when omitted.',
+        '--py', action='append', metavar='XY',
+        help='Target Python version as major+minor digits (e.g. 39, 310, '
+             '311, 312). May be repeated. Defaults to '
+             f'{"+".join(DEFAULT_PYTHONS)} when omitted. Very new Python '
+             'releases (3.13/3.14+) may lack prebuilt wheels for '
+             'cryptography or lxml on PyPI, in which case the download '
+             'step will fail with `No matching distribution found`.',
     )
     args = parser.parse_args()
-    targets = args.py or SUPPORTED_PYTHONS
+    targets = args.py or list(DEFAULT_PYTHONS)
+
+    # Validate the shape without hard-limiting the version list
+    bad = [t for t in targets if not (t.isdigit() and 2 <= len(t) <= 3 and t[0] == '3')]
+    if bad:
+        sys.exit(f'[!] Invalid --py value(s): {bad}. Expected e.g. 39, 310, 311, 312.')
 
     if not REQS.exists():
         sys.exit(f'[!] requirements.txt not found: {REQS}')
