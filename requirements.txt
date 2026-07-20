@@ -1,0 +1,10 @@
+Django>=4.2.20,<4.3
+ldap3==2.9.1
+django-environ==0.11.2
+cryptography>=44.0.1
+abuseipdb-wrapper==0.1.6
+APScheduler==3.10.4
+redis>=4.6
+reportlab>=4.2
+svglib>=1.5,<1.6
+whitenoise>=6,<7

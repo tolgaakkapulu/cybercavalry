@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Add IP Blacklist{% endblock %}
+{% block topbar_title %}Add IP Blacklist{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Add</h1>
+  <a href="{% url 'blacklist:list' %}" class="btn btn-ghost">Back</a>
+</div>
+<div class="card" style="max-width:640px;">
+  <div class="card-body">
+    <form method="post">
+      {% csrf_token %}
+      <div class="form-group">
+        <label class="form-label">IP Addresses / CIDRs <span class="required">*</span></label>
+        <textarea name="ip_list" class="form-input font-mono" rows="12"
+                  placeholder="One IP or CIDR per line:&#10;192.168.1.1&#10;10.0.0.0/24&#10;203.0.113.5">{{ form.ip_list.value|default:'' }}</textarea>
+        {% if form.ip_list.errors %}<p class="form-error">{{ form.ip_list.errors.0 }}</p>{% endif %}
+        <p class="form-help">Maximum 500 entries per submission.</p>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Group <span class="required">*</span></label>
+          {{ form.group }}
+        </div>
+        <div class="form-group">
+          <label class="form-label">Reason (optional)</label>
+          <input type="text" name="reason" class="form-input" value="{{ form.reason.value|default:'' }}"
+                 placeholder="Reason...">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <a href="{% url 'blacklist:list' %}" class="btn btn-ghost">Cancel</a>
+        <button type="submit" class="btn btn-primary">Import Entries</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

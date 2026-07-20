@@ -1,0 +1,11 @@
+<style nonce="{{ csp_nonce }}">
+  :root,
+  [data-theme="dark"] {
+    --brand-suffix:      {{ brand_color }};
+    --brand-suffix-glow: {{ brand_color_glow_dark }};
+  }
+  [data-theme="light"] {
+    --brand-suffix:      {{ brand_color }};
+    --brand-suffix-glow: {{ brand_color_glow_light }};
+  }
+</style>

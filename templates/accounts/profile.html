@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Profile{% endblock %}
+{% block topbar_title %}My Profile{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">PROFILE</h1>
+  </div>
+</div>
+
+{% if not profile.role and not request.user.is_superuser %}
+<div class="alert alert-warning" style="margin-bottom:20px;">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+  Your account has no role assigned yet. Please contact an administrator to gain access. Until then, only this page is accessible.
+</div>
+{% endif %}
+
+<!-- Top grid: Account Info + Stats -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;align-items:stretch;">
+
+  <!-- Account Info -->
+  <div class="card" style="display:flex;flex-direction:column;">
+    <div class="card-header"><span class="card-title">Account Information</span></div>
+    <div class="card-body" style="flex:1;">
+      <table style="width:100%;border-collapse:collapse;">
+        <tr>
+          <td class="text-muted" style="padding:9px 0;width:42%;"><b>Username</b></td>
+          <td><span class="badge badge-teal" style="text-transform:none;letter-spacing:0;">{{ profile.user.username }}</span></td>
+        </tr>
+        <tr>
+          <td class="text-muted" style="padding:9px 0;"><b>Full Name</b></td>
+          <td>
+            {% with fn=profile.user.get_full_name %}
+            {% if fn %}<span class="badge badge-blue" >{{ fn }}</span>{% else %}<span class="text-muted">—</span>{% endif %}
+            {% endwith %}
+          </td>
+        </tr>
+        <tr>
+          <td class="text-muted" style="padding:9px 0;"><b>E-mail</b></td>
+          <td>
+            {% if profile.user.email %}<span class="badge badge-blue" >{{ profile.user.email }}</span>{% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+        </tr>
+        <tr>
+          <td class="text-muted" style="padding:9px 0;"><b>Auth Method</b></td>
+          <td><span class="badge badge-blue">{{ profile.get_auth_source_display }}</span></td>
+        </tr>
+        <tr>
+          <td class="text-muted" style="padding:9px 0;"><b>Role</b></td>
+          <td>
+            {% if profile.role %}
+            <span class="role-badge role-{{ profile.role.name }}">{{ profile.role.get_name_display }}</span>
+            {% else %}<span class="text-muted">No role assigned</span>{% endif %}
+          </td>
+        </tr>
+        <tr>
+          <td class="text-muted" style="padding:9px 0;"><b>Member Since</b></td>
+          <td><span class="badge badge-yellow">{{ profile.user.date_joined|date:"Y-m-d"|default:"—" }}</span></td>
+        </tr>
+        <tr>
+          <td class="text-muted" style="padding:9px 0;"><b>Last Login</b></td>
+          <td><span class="badge badge-yellow">{{ profile.user.last_login|date:"Y-m-d H:i"|default:"—" }}</span></td>
+        </tr>
+        <tr>
+          <td class="text-muted" style="padding:9px 0;"><b>Last Login IP</b></td>
+          <td><span class="badge badge-yellow">{{ last_login_ip|default:"—" }}</span></td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- Account Statistics -->
+  <div class="card" style="display:flex;flex-direction:column;">
+    <div class="card-header">
+      <span class="card-title">Account Statistics</span>
+      <span class="text-muted text-sm" style="text-align: right;">Entries added by <b>{{ profile.user.username }}{% if profile.user.get_full_name %} ({{ profile.user.get_full_name }}){% endif %}</b></span>
+    </div>
+    <div class="card-body" style="flex:1;display:flex;flex-direction:column;gap:10px;">
+
+      <!-- 3 category columns -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;flex:1;">
+
+        <!-- IP Blacklist -->
+        <div style="background:var(--bg-elevated);border-radius:var(--radius);padding:16px;display:flex;flex-direction:column;align-items:center;text-align:center;">
+          <br><div class="text-xs fw-600" style="color:var(--text-muted);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:14px;">IP Blacklist</div>
+          <div style="font-size:30px;font-weight:700;color:#E37D89;line-height:1;">{{ blacklist_active }}</div>
+          <div class="text-xs text-muted" style="margin-top:4px;margin-bottom:12px;">Active</div>
+          <div style="width:100%;border-top:1px solid var(--border);padding-top:12px;">
+            <div style="font-size:22px;font-weight:700;color:var(--text-secondary);line-height:1;">{{ blacklist_inactive }}</div>
+            <div class="text-xs text-muted" style="margin-top:4px;">Inactive</div>
+          </div>
+        </div>
+
+        <!-- IP Whitelist -->
+        <div style="background:var(--bg-elevated);border-radius:var(--radius);padding:16px;display:flex;flex-direction:column;align-items:center;text-align:center;">
+          <br><div class="text-xs fw-600" style="color:var(--text-muted);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:14px;">IP Whitelist</div>
+          <div style="font-size:30px;font-weight:700;color:#E37D89;line-height:1;">{{ whitelist_active }}</div>
+          <div class="text-xs text-muted" style="margin-top:4px;margin-bottom:12px;">Active</div>
+          <div style="width:100%;border-top:1px solid var(--border);padding-top:12px;">
+            <div style="font-size:22px;font-weight:700;color:var(--text-secondary);line-height:1;">{{ whitelist_inactive }}</div>
+            <div class="text-xs text-muted" style="margin-top:4px;">Inactive</div>
+          </div>
+        </div>
+
+        <!-- Hash Blacklist -->
+        <div style="background:var(--bg-elevated);border-radius:var(--radius);padding:16px;display:flex;flex-direction:column;align-items:center;text-align:center;">
+          <br><div class="text-xs fw-600" style="color:var(--text-muted);letter-spacing:0.6px;text-transform:uppercase;margin-bottom:14px;">Hash Blacklist</div>
+          <div style="font-size:30px;font-weight:700;color:#E37D89;line-height:1;">{{ hashlist_active }}</div>
+          <div class="text-xs text-muted" style="margin-top:4px;margin-bottom:12px;">Active</div>
+          <div style="width:100%;border-top:1px solid var(--border);padding-top:12px;">
+            <div style="font-size:22px;font-weight:700;color:var(--text-secondary);line-height:1;">{{ hashlist_inactive }}</div>
+            <div class="text-xs text-muted" style="margin-top:4px;">Inactive</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Total Logged Actions -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div style="background:var(--bg-elevated);border-radius:var(--radius);padding:16px;display:flex;align-items:center;justify-content:center;">
+          <span class="fw-600" style="color:var(--text-secondary);letter-spacing:0.3px;">Total Logged Actions</span>
+        </div>
+        <div style="background:var(--bg-elevated);border-radius:var(--radius);padding:16px;display:flex;align-items:center;justify-content:center;">
+          <span style="font-size:36px;font-weight:700;color:#E37D89;">{{ total_actions }}</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+
+
+{% endblock %}

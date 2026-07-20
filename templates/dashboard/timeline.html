@@ -1,0 +1,268 @@
+{% load static %}
+{% comment %}
+Dashboard timeline — IP + hash blacklist additions over a selectable window
+(Chart.js line chart, bundled locally at static/js/chart.umd.min.js for offline).
+
+The range (7 days … 12 months) and granularity (daily / monthly) are chosen in
+the card header; changing either fetches dashboard:timeline_api?days=&bucket=
+and redraws. The first paint uses the json_script payload (timeline_init from
+dashboard.views.index, default 30 days daily) so there is no load-time flash.
+
+TO REMOVE THIS SECTION ENTIRELY: delete the single timeline include line
+(include "dashboard/timeline.html") in dashboard/index.html.
+The context variables / api view in views.py are harmless if left in place.
+{% endcomment %}
+<style>
+.db-tl-card { margin-top:24px; }
+.db-tl-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.db-tl-controls { display:inline-flex; gap:8px; align-items:center; }
+.db-tl-select {
+  font-size:12px; padding:5px 9px; border-radius:var(--radius);
+  background:var(--bg-surface); color:var(--text-primary);
+  border:1px solid var(--border); cursor:pointer;
+}
+.db-tl-seg { display:inline-flex; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+.db-tl-seg button {
+  font-size:12px; padding:5px 12px; border:0; cursor:pointer;
+  background:var(--bg-surface); color:var(--text-secondary);
+}
+.db-tl-seg button + button { border-left:1px solid var(--border); }
+.db-tl-seg button:hover { color:var(--text-primary); }
+/* Active button uses the danger style (.btn-danger). */
+.db-tl-seg button.active { background:var(--brand-suffix-glow); color:var(--brand-suffix); font-weight:600; }
+.db-tl-seg button.active:hover { color:var(--brand-suffix); }
+[data-theme="dark"] .db-tl-seg button.active { color:color-mix(in srgb, var(--brand-suffix) 55%, white); }
+[data-theme="dark"] .db-tl-seg button.active:hover { color:color-mix(in srgb, var(--brand-suffix) 55%, white); }
+.db-tl-canvas { position:relative; height:240px; }
+@media (max-width:680px) { .db-tl-canvas { height:200px; } }
+</style>
+
+<div class="card db-tl-card">
+  <div class="card-header db-tl-head">
+    <span class="card-title">Blacklist Timeline</span>
+    <div class="db-tl-controls">
+      <select id="tl-range" class="db-tl-select" aria-label="Time range">
+        <option value="60min" selected>Last 60 minutes</option>
+        <option value="1">Last 24 hours</option>
+        <option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option>
+        <option value="90">Last 90 days</option>
+        <option value="180">Last 6 months</option>
+        <option value="365">Last 12 months</option>
+      </select>
+      <div class="db-tl-seg" id="tl-bucket">
+        <button type="button" data-bucket="minute" class="active">Minutely</button>
+        <button type="button" data-bucket="hour">Hourly</button>
+        <button type="button" data-bucket="day">Daily</button>
+        <button type="button" data-bucket="month">Monthly</button>
+      </div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="db-tl-canvas"><canvas id="ch-timeline"></canvas></div>
+    {{ timeline_init|json_script:"d-timeline" }}
+  </div>
+</div>
+
+<script src="{% static 'js/chart.umd.min.js' %}" nonce="{{ csp_nonce }}"></script>
+<script nonce="{{ csp_nonce }}">
+(function () {
+  if (typeof Chart === 'undefined') return;
+  window.__dbCharts = window.__dbCharts || {};
+
+  var API_URL    = '{% url "dashboard:timeline_api" %}';
+  var IP_COLOR   = '#d3737a';   // matches the "high" score colour
+  var HASH_COLOR = '#6c9bd2';
+
+  // Current selection (kept in sync with the controls; used by auto-refresh).
+  // curDays drives hour/day/month buckets; curMinutes drives the minute bucket.
+  // The range <select> uses the sentinel string "60min" for the minutely option.
+  // Defaults mirror the markup above (Minutely / Last 60 minutes).
+  var curDays = 30, curBucket = 'minute', curMinutes = 60;
+
+  function cssVar(name, fallback) {
+    var v = (getComputedStyle(document.documentElement).getPropertyValue(name) || '').trim();
+    return v || fallback;
+  }
+
+  // Public: (re)draw the timeline from a {labels, ip, hash} payload. Called on
+  // load, after each fetch, and on theme switch (axis/grid colours re-read).
+  window.dbRenderTimeline = function (data) {
+    if (!data || !data.labels) return;
+    window.__dbTimelineData = data;
+    var cv = document.getElementById('ch-timeline');
+    if (!cv) return;
+
+    var tick = cssVar('--text-muted', '#888');
+    var grid = cssVar('--border', 'rgba(128,128,128,.2)');
+    var legendClr = cssVar('--text-secondary', '#bbb');
+
+    // Y-axis headroom so the peak line doesn't kiss the chart's top edge.
+    // ~10% padding above the highest point, with a +1 floor so even peaks of
+    // 1–2 leave a visible gap; ticks stay integers via `precision: 0` below.
+    var peak = 0;
+    [data.ip, data.hash].forEach(function (arr) {
+      (arr || []).forEach(function (v) {
+        if (typeof v === 'number' && v > peak) peak = v;
+      });
+    });
+    var suggestedMax = peak > 0 ? Math.ceil(peak * 1.1) + 1 : 5;
+
+    if (window.__dbCharts.timeline) { window.__dbCharts.timeline.destroy(); }
+
+    window.__dbCharts.timeline = new Chart(cv, {
+      type: 'line',
+      data: {
+        labels: data.labels,
+        datasets: [
+          {
+            label: 'IP Blacklist',
+            data: data.ip,
+            borderColor: IP_COLOR,
+            backgroundColor: 'rgba(211,115,122,.12)',
+            borderWidth: 2, tension: 0.3, fill: true,
+            pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 8,
+            pointBackgroundColor: IP_COLOR
+          },
+          {
+            label: 'Hash Blacklist',
+            data: data.hash,
+            borderColor: HASH_COLOR,
+            backgroundColor: 'rgba(108,155,210,.12)',
+            borderWidth: 2, tension: 0.3, fill: true,
+            pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 8,
+            pointBackgroundColor: HASH_COLOR
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 250 },
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: true, position: 'top',
+                    labels: { color: legendClr, boxWidth: 12, boxHeight: 12,
+                              usePointStyle: true, padding: 16 } }
+        },
+        scales: {
+          x: { grid: { color: grid }, ticks: { color: tick, maxRotation: 0,
+                 autoSkip: true, maxTicksLimit: 12 } },
+          y: { beginAtZero: true, suggestedMax: suggestedMax,
+               grid: { color: grid },
+               ticks: { color: tick, precision: 0 } }
+        }
+      }
+    });
+  };
+
+  // Fetch the timeline for the current selection and redraw.
+  function loadTimeline() {
+    var url;
+    if (curBucket === 'minute') {
+      url = API_URL + '?bucket=minute&minutes=' + encodeURIComponent(curMinutes);
+    } else {
+      url = API_URL + '?days=' + encodeURIComponent(curDays) + '&bucket=' + encodeURIComponent(curBucket);
+    }
+    fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      .then(function (r) { return r.json(); })
+      .then(function (data) { window.dbRenderTimeline(data); })
+      .catch(function () {});
+  }
+  // Exposed so the dashboard auto-refresh redraws with the current selection.
+  window.dbRefreshTimeline = loadTimeline;
+
+  // ── Controls ──
+  var rangeSel = document.getElementById('tl-range');
+  var seg = document.getElementById('tl-bucket');
+
+  function setBucket(b) {
+    curBucket = b;
+    if (seg) {
+      seg.querySelectorAll('button').forEach(function (btn) {
+        btn.classList.toggle('active', btn.dataset.bucket === b);
+      });
+    }
+  }
+  function setRange(value) {
+    // Accepts either an int (days) or the literal string "60min" for the
+    // minutely window. Keeps the <select> visually in sync.
+    if (value === '60min') {
+      curMinutes = 60;
+      if (rangeSel) rangeSel.value = '60min';
+    } else {
+      curDays = parseInt(value, 10) || 1;
+      if (rangeSel) rangeSel.value = String(curDays);
+    }
+  }
+
+  // Each range selects a sensible default granularity (user can still override):
+  //   60min → Minutely,  24h → Hourly,  7d/30d → Daily,  90d/6mo/12mo → Monthly.
+  function bucketForRange(rangeValue) {
+    if (rangeValue === '60min') return 'minute';
+    var d = parseInt(rangeValue, 10) || 1;
+    if (d <= 1)  return 'hour';
+    if (d >= 90) return 'month';
+    return 'day';
+  }
+
+  if (rangeSel) {
+    rangeSel.addEventListener('change', function () {
+      var v = rangeSel.value;
+      if (v === '60min') {
+        curMinutes = 60;
+      } else {
+        curDays = parseInt(v, 10) || 1;
+      }
+      setBucket(bucketForRange(v));
+      loadTimeline();
+    });
+  }
+  if (seg) {
+    seg.addEventListener('click', function (e) {
+      var btn = e.target.closest('button[data-bucket]');
+      if (!btn || btn.dataset.bucket === curBucket) return;
+      var b = btn.dataset.bucket;
+      setBucket(b);
+      // Each bucket switch picks a sensible default window for that granularity
+      // so the user isn't left looking at an inappropriate range (e.g. Minutely
+      // with a 30-day window). The user can still override via the select.
+      if (b === 'minute') {
+        setRange('60min');      // Minutely ⇒ Last 60 minutes
+      } else if (b === 'hour') {
+        setRange(1);            // Hourly  ⇒ Last 24 hours
+      } else if (b === 'month') {
+        setRange(180);          // Monthly ⇒ Last 6 months
+      } else if (curDays === 1 || rangeSel.value === '60min') {
+        setRange(30);           // Daily   ⇒ Last 30 days (only when leaving a sub-day window)
+      }
+      loadTimeline();
+    });
+  }
+
+  // Initial paint from the json_script payload (default 24h hourly — see
+  // dashboard.views.index). For the minute bucket the payload carries `minutes`
+  // and we set the range select to its sentinel "60min" value.
+  var ds = document.getElementById('d-timeline');
+  if (ds) {
+    try {
+      var init = JSON.parse(ds.textContent);
+      setBucket(init.bucket || 'day');
+      if (init.bucket === 'minute') {
+        curMinutes = init.minutes || 60;
+        if (rangeSel) rangeSel.value = '60min';
+      } else {
+        setRange(init.days || 30);
+      }
+      window.dbRenderTimeline(init);
+    } catch (e) {}
+  }
+
+  // Redraw on theme switch so axis/grid colours match the new theme.
+  if (window.MutationObserver) {
+    new MutationObserver(function () {
+      if (window.__dbTimelineData) window.dbRenderTimeline(window.__dbTimelineData);
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
+})();
+</script>

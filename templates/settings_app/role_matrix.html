@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Role Matrix{% endblock %}
+{% block topbar_title %}Role Matrix{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">ROLE MATRIX</h1>
+  <a href="{% url 'settings_app:index' %}" class="btn btn-info">Back to Settings</a>
+</div>
+
+<div class="table-wrapper">
+  <table class="matrix-table">
+    <thead>
+      <tr>
+        <th style="text-align:left;min-width:220px;">Permission</th>
+        <th>Admin</th><th>Operator</th><th>Viewer</th><th>API User</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for group, perms in permission_matrix.items %}
+      <tr style="background:var(--bg-elevated);">
+        <td colspan="5" class="text-xs fw-600" style="padding:8px 16px;color:var(--text-muted);letter-spacing:0.8px;text-transform:uppercase;">{{ group }}</td>
+      </tr>
+      {% for perm, access in perms.items %}
+      <tr>
+        <td style="text-align:left;">{{ perm }}</td>
+        <td>{% if access.admin %}<span class="matrix-check">✓</span>{% else %}<span class="matrix-cross">✗</span>{% endif %}</td>
+        <td>{% if access.operator %}<span class="matrix-check">✓</span>{% else %}<span class="matrix-cross">✗</span>{% endif %}</td>
+        <td>{% if access.viewer %}<span class="matrix-check">✓</span>{% else %}<span class="matrix-cross">✗</span>{% endif %}</td>
+        <td>{% if access.api_user %}<span class="matrix-check">✓</span>{% else %}<span class="matrix-cross">✗</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      {% endfor %}
+
+      {% comment %}Static matrix since permissions are code-defined{% endcomment %}
+      {% if not permission_matrix %}
+
+      <!-- ── Dashboard ── -->
+      <tr style="background:var(--bg-elevated);"><td colspan="5" class="text-xs fw-600" style="padding:8px 16px;color:var(--text-muted);letter-spacing:0.8px;text-transform:uppercase;">Dashboard</td></tr>
+      <tr><td style="text-align:left;">View Dashboard</td>                             <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Download PDF Overview</td>                      <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td></tr>
+
+      <!-- ── IP Blacklist ── -->
+      <tr style="background:var(--bg-elevated);"><td colspan="5" class="text-xs fw-600" style="padding:8px 16px;color:var(--text-muted);letter-spacing:0.8px;text-transform:uppercase;">IP Blacklist</td></tr>
+      <tr><td style="text-align:left;">View IP Blacklist</td>                          <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Add / Edit / Delete</td>                        <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Bulk Import (CSV)</td>                          <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Export CSV</td>                                 <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">AbuseIPDB Score (single / bulk)</td>            <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Pin / Unpin Entry</td>                          <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Download PDF Report</td>                        <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+
+      <!-- ── IP Whitelist ── -->
+      <tr style="background:var(--bg-elevated);"><td colspan="5" class="text-xs fw-600" style="padding:8px 16px;color:var(--text-muted);letter-spacing:0.8px;text-transform:uppercase;">IP Whitelist</td></tr>
+      <tr><td style="text-align:left;">View IP Whitelist</td>                          <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Add / Edit / Delete</td>                        <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Bulk Import (CSV)</td>                          <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Export CSV</td>                                 <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Download PDF Report</td>                        <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+
+      <!-- ── Hash Blacklist ── -->
+      <tr style="background:var(--bg-elevated);"><td colspan="5" class="text-xs fw-600" style="padding:8px 16px;color:var(--text-muted);letter-spacing:0.8px;text-transform:uppercase;">Hash Blacklist</td></tr>
+      <tr><td style="text-align:left;">View Hash Blacklist</td>                        <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Add / Edit / Delete</td>                        <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Bulk Import (CSV)</td>                          <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Export CSV</td>                                 <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">VirusTotal Score (single / bulk)</td>           <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Download PDF Report</td>                        <td><span class="matrix-check">✓</span></td><td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+
+      <!-- ── Settings & Administration ── -->
+      <tr style="background:var(--bg-elevated);"><td colspan="5" class="text-xs fw-600" style="padding:8px 16px;color:var(--text-muted);letter-spacing:0.8px;text-transform:uppercase;">Settings &amp; Administration</td></tr>
+      <tr><td style="text-align:left;">View / Edit Settings</td>                       <td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">User Management</td>                            <td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Allowed Source IP</td>                          <td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Activity Log (view)</td>                        <td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Activity Log Export (CSV)</td>                  <td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">AbuseIPDB Bulk Refresh</td>                     <td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">VirusTotal Bulk Refresh</td>                    <td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+
+      <!-- ── API ── -->
+      <tr style="background:var(--bg-elevated);"><td colspan="5" class="text-xs fw-600" style="padding:8px 16px;color:var(--text-muted);letter-spacing:0.8px;text-transform:uppercase;">API</td></tr>
+      <tr><td style="text-align:left;">Manage Users' API Tokens</td>                   <td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">View API Reference Page</td>                    <td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-check">✓</span></td></tr>
+      <tr><td style="text-align:left;">Download API Reference PDF</td>                 <td><span class="matrix-check">✓</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-check">✓</span></td></tr>
+      <tr><td style="text-align:left;">Report IP (POST /api/v1/report/ip/)</td>        <td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-check">✓</span></td></tr>
+      <tr><td style="text-align:left;">Report Hash (POST /api/v1/report/hash/)</td>    <td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-check">✓</span></td></tr>
+      <tr><td style="text-align:left;">Status Check (GET /api/v1/status/)</td>         <td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-check">✓</span></td></tr>
+      <tr><td style="text-align:left;">Fetch IP Blacklist (GET /api/v1/blacklist/)</td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      <tr><td style="text-align:left;">Fetch Hash Blacklist (GET /api/v1/hashlist/)</td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td><td><span class="matrix-cross">✗</span></td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top:20px;">
+  <div class="card-header"><span class="card-title">API Authentication Model</span></div>
+  <div class="card-body">
+    <p class="text-sm text-muted" style="margin-bottom:16px;">
+      API endpoints use a two-factor authentication model combining a per-user token with source IP allowlisting.
+    </p>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px;">
+      <div style="background:var(--bg-elevated);border-radius:var(--radius);padding:16px;">
+        <div class="text-xs fw-600" style="color:var(--text-muted);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:8px;">Token Auth</div>
+        <p class="text-sm" style="margin-bottom:6px;">Each <strong>API User</strong> has their own token generated by an <strong>Admin</strong>.</p>
+        <p class="text-sm text-muted" style="margin:0;">Both <code style="font-family:var(--font-mono);color:var(--accent);font-size:11px;">Authorization: Token &lt;token&gt;</code> and <code style="font-family:var(--font-mono);color:var(--accent);font-size:11px;">X-Username: &lt;username&gt;</code> headers are required. The token must belong to the user in <code style="font-family:var(--font-mono);color:var(--accent);font-size:11px;">X-Username</code>.</p>
+      </div>
+      <div style="background:var(--bg-elevated);border-radius:var(--radius);padding:16px;">
+        <div class="text-xs fw-600" style="color:var(--text-muted);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:8px;">Source IP</div>
+        <p class="text-sm" style="margin-bottom:6px;">All endpoints additionally require the caller's IP to be in the <strong>Allowed Source IP</strong> list.</p>
+        <p class="text-sm text-muted" style="margin:0;">Configure via <strong>Settings → Allowed Source IP</strong>. Requests from unlisted IPs are rejected with 403 regardless of token validity.</p>
+      </div>
+      <div style="background:var(--bg-elevated);border-radius:var(--radius);padding:16px;">
+        <div class="text-xs fw-600" style="color:var(--text-muted);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:8px;">IP Blacklist Feed</div>
+        <p class="text-sm" style="margin-bottom:6px;"><code style="font-family:var(--font-mono);color:var(--accent);font-size:11px;">GET /api/v1/blacklist/</code> uses <strong>source IP only</strong> — no token required.</p>
+        <p class="text-sm text-muted" style="margin:0;">Designed for firewalls and SIEM systems that pull the list automatically without managing user credentials.</p>
+      </div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border);">
+          <th style="text-align:left;padding:8px 4px;">Endpoint</th>
+          <th style="text-align:center;padding:8px 12px;">Token + Username</th>
+          <th style="text-align:center;padding:8px 12px;">Source IP</th>
+          <th style="text-align:center;padding:8px 12px;">Required Role</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:8px 4px;"><code style="font-family:var(--font-mono);color:var(--accent);font-size:11px;">POST /api/v1/report/ip/</code></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="matrix-check">✓</span></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="matrix-check">✓</span></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="role-badge role-api_user" style="font-size:11px;">API User</span></td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:8px 4px;"><code style="font-family:var(--font-mono);color:var(--accent);font-size:11px;">POST /api/v1/report/hash/</code></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="matrix-check">✓</span></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="matrix-check">✓</span></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="role-badge role-api_user" style="font-size:11px;">API User</span></td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:8px 4px;"><code style="font-family:var(--font-mono);color:var(--accent);font-size:11px;">GET /api/v1/status/</code></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="matrix-check">✓</span></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="matrix-check">✓</span></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="role-badge role-api_user" style="font-size:11px;">API User</span></td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:8px 4px;"><code style="font-family:var(--font-mono);color:var(--accent);font-size:11px;">GET /api/v1/blacklist/</code></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="matrix-cross">✗</span></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="matrix-check">✓</span></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="text-muted text-xs">Any (source IP only)</span></td>
+        </tr>
+        <tr>
+          <td style="padding:8px 4px;"><code style="font-family:var(--font-mono);color:var(--accent);font-size:11px;">GET /api/v1/hashlist/</code></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="matrix-cross">✗</span></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="matrix-check">✓</span></td>
+          <td style="text-align:center;padding:8px 12px;"><span class="text-muted text-xs">Any (source IP only)</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

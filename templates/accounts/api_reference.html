@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}API Reference{% endblock %}
+{% block topbar_title %}API Reference{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">API REFERENCE</h1>
+  </div>
+  <div class="page-actions" style="display:flex;align-items:center;gap:10px;">
+    <span class="badge badge-blue" style="font-size:12px;padding:6px 12px;">Base URL: https://&lt;host&gt;:8443/api/v1</span>
+  </div>
+</div>
+
+<div class="card" x-data="{ tab: '{{ endpoints.0.tab_id }}' }">
+
+  <!-- Tab bar -->
+  <div style="display:flex;align-items:center;gap:2px;padding:0 12px 0 20px;border-bottom:1px solid var(--border);background:var(--bg-surface);">
+    {% for ep in endpoints %}
+    <button @click="tab='{{ ep.tab_id }}'" :class="tab==='{{ ep.tab_id }}' ? 'api-tab active' : 'api-tab'">
+      {{ ep.tab_label }}
+    </button>
+    {% endfor %}
+    <div style="flex:1;"></div>
+    <button id="ar-pdf-btn" type="button" class="btn btn-info btn-sm tip tip-below-end" data-tip="Download PDF" style="margin-bottom:2px;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    </button>
+  </div>
+
+  <div class="card-body" style="padding-top:20px;">
+
+    {% for ep in endpoints %}
+    <div x-show="tab==='{{ ep.tab_id }}'">
+
+      <!-- Header row -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        {% if ep.method == 'GET' %}
+        <span class="badge badge-green" style="font-size:11px;font-weight:700;">GET</span>
+        {% else %}
+        <span class="badge badge-yellow" style="font-size:11px;font-weight:700;">POST</span>
+        {% endif %}
+        <code class="api-path">{{ ep.path }}</code>
+        <span class="text-muted text-xs">— {{ ep.description }}</span>
+      </div>
+
+      <!-- Authentication -->
+      <div class="api-section-label">Authentication</div>
+      <p class="text-sm text-muted" style="margin-bottom:12px;">{{ ep.auth_html|safe }}</p>
+      {% if ep.auth == 'token' %}
+      <div class="api-code-block" style="margin-bottom:12px;">Authorization: Token &lt;api_user-token&gt;
+X-Username: &lt;api_user-username&gt;</div>
+      {% endif %}
+
+      <!-- Sections -->
+      {% for section in ep.sections %}
+        {% if section.type == 'code' %}
+          {% if section.label %}<div class="api-section-label" style="margin-top:16px;">{{ section.label }}</div>{% endif %}
+          <div class="api-code-block">{{ section.html|safe }}</div>
+        {% elif section.type == 'params' %}
+          <div class="api-section-label" style="margin-top:16px;">{{ section.label }}</div>
+          <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:12px;">
+            {% for row in section.rows %}
+            <tr{% if not forloop.last %} style="border-bottom:1px solid var(--border);"{% endif %}>
+              <td style="padding:8px 4px;">
+                {% if section.badge_col %}
+                  {% if row.badge == 'badge-purple' %}
+                    <span class="badge" style="font-size:11px;background:rgba(139,92,246,.15);color:#8b5cf6;">{{ row.label }}</span>
+                  {% else %}
+                    <span class="badge {{ row.badge }}" style="font-size:11px;">{{ row.label }}</span>
+                  {% endif %}
+                {% else %}
+                  <code class="inline-code">{{ row.label }}</code>
+                {% endif %}
+              </td>
+              <td class="text-muted" style="padding:8px 4px;">{{ row.desc }}</td>
+            </tr>
+            {% endfor %}
+          </table>
+        {% endif %}
+      {% endfor %}
+
+    </div>
+    {% endfor %}
+
+  </div>
+</div>
+
+<style>
+.api-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.api-tab:hover { color: var(--text-primary); }
+.api-tab.active {
+  color: var(--brand-suffix);
+  border-bottom-color: var(--brand-suffix);
+}
+.api-path {
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+}
+.inline-code {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--bg-base);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.api-code-block {
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 12px 14px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  white-space: pre;
+  overflow-x: auto;
+}
+.api-comment { color: var(--text-muted); }
+.api-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  margin-top: 4px;
+}
+@keyframes ar-pdf-spin { to { transform: rotate(360deg); } }
+.ar-pdf-spinner { width:36px;height:36px;border:3px solid var(--border);border-top-color:#8b5cf6;border-radius:50%;animation:ar-pdf-spin .75s linear infinite; }
+</style>
+
+<div id="ar-pdf-loading" style="display:none;position:fixed;inset:0;z-index:1100;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:36px 48px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px;box-shadow:0 8px 40px rgba(0,0,0,0.5);">
+    <div class="ar-pdf-spinner"></div>
+    <div style="color:var(--text-primary);font-weight:600;font-size:14px;">Generating PDF&hellip;</div>
+    <div style="color:var(--text-muted);font-size:12px;">This may take a moment, please wait.</div>
+  </div>
+</div>
+
+<script nonce="{{ csp_nonce }}">
+document.getElementById('ar-pdf-btn').addEventListener('click', function() {
+  window.downloadPdfWithOverlay(
+    '{% url "accounts:api_reference_pdf" %}',
+    'ar-pdf-loading',
+    'api-reference.pdf'
+  );
+});
+</script>
+{% endblock %}

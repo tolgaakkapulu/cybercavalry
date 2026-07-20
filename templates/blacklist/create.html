@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ action|default:"Add" }} IP Blacklist Entry{% endblock %}
+{% block topbar_title %}{{ action|default:"Add" }} IP Blacklist Entry{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">{{ action|default:"Add" }} IP Blacklist Entry</h1>
+  <a href="{% url 'blacklist:list' %}" class="btn btn-secondary">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+    Back to List
+  </a>
+</div>
+<div class="card" style="max-width:560px;">
+  <div class="card-body">
+    <form method="post">
+      {% csrf_token %}
+      <div class="form-group">
+        <label class="form-label">IP Address or CIDR <span class="required">*</span></label>
+        {% if form.ip_input.errors %}
+        <input type="text" name="ip_input" class="form-input" value="{{ form.ip_input.value|default:'' }}"
+               placeholder="192.168.1.1 or 10.0.0.0/24" style="border-color:var(--danger);">
+        <p class="form-error">{{ form.ip_input.errors.0 }}</p>
+        {% else %}
+        <input type="text" name="ip_input" class="form-input" value="{{ form.ip_input.value|default:'' }}"
+               placeholder="192.168.1.1 or 10.0.0.0/24">
+        {% endif %}
+        <p class="form-help">Supports /32 (single IP) and /24 (subnet) notation.</p>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Group <span class="required">*</span></label>
+        {{ form.group }}
+        {% if form.group.errors %}<p class="form-error">{{ form.group.errors.0 }}</p>{% endif %}
+        <p class="form-help">Select the blacklist group. Each group has its own expiry duration.</p>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Reason</label>
+        {{ form.reason }}
+      </div>
+      {% if form.non_field_errors %}
+      <div class="alert alert-error">{{ form.non_field_errors.0 }}</div>
+      {% endif %}
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+        <a href="{% url 'blacklist:list' %}" class="btn btn-ghost">Cancel</a>
+        <button type="submit" class="btn btn-primary">{{ action|default:"Add" }} Entry</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if whitelist_conflict %}
+<!-- Whitelist Conflict Modal -->
+<div id="wl-conflict-modal" style="position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:32px;max-width:460px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2" style="width:28px;height:28px;flex-shrink:0;">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;">IP Whitelisted Address</h2>
+    </div>
+    <p style="color:var(--text-secondary);font-size:14px;margin-bottom:12px;">
+      <strong style="color:var(--text-primary);">{{ whitelist_conflict.cidr }}</strong> could not be added to the IP blacklist because it overlaps with the following IP whitelisted address:
+    </p>
+    <div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:20px;font-family:var(--font-mono);font-size:13px;color:var(--success);">
+      {{ whitelist_conflict.matched }}
+    </div>
+    <p style="color:var(--text-muted);font-size:12px;margin-bottom:20px;">
+      To blacklist this address, first remove it from the IP whitelist.
+    </p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <a href="{% url 'whitelist:list' %}" class="btn btn-secondary btn-sm">Go to IP Whitelist</a>
+      <button data-on-click="removeById('wl-conflict-modal')" class="btn btn-primary btn-sm">OK</button>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

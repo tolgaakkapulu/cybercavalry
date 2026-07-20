@@ -1,0 +1,16 @@
+{{ platform_name }} — API RATE LIMIT ALERT
+{% if is_test %}(TEST MESSAGE — no threshold crossed){% endif %}
+
+{% if is_test %}Preview of the alert that fires when an API caller crosses {{ threshold_pct }}% of the configured per-minute rate limit ({{ limit_rpm }} rpm). Sample below reflects live traffic in the last 60 seconds.{% else %}One or more API callers crossed {{ threshold_pct }}% of the configured per-minute rate limit ({{ limit_rpm }} rpm) in the last 60 seconds.{% endif %}
+
+Threshold:      {{ threshold_pct }}% of {{ limit_rpm }} rpm
+Checked at:     {{ checked_at }}
+Window:         last 60 seconds
+Cooldown:       {{ cooldown_hours }} hour(s) per caller
+
+Callers:
+{% for row in callers %}  {{ row.caller }} — {{ row.requests }} / {{ row.limit_rpm }} ({{ row.usage_pct }}%){% if row.over_threshold %}  ← above threshold{% endif %}
+{% empty %}  (no API activity in the last 60 seconds){% endfor %}
+
+Manage this alert: Settings → Actions → API Rate Limit Alert
+{% if platform_email %}Contact: {{ platform_email }}{% endif %}

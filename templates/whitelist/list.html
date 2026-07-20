@@ -1,0 +1,681 @@
+{% extends "base.html" %}
+{% block title %}IP Whitelist{% endblock %}
+{% block topbar_title %}IP Whitelist{% endblock %}
+
+{% block content %}
+<style>
+/* Critical layout — see blacklist/list.html for the rationale. */
+.page-content { overflow: hidden; display: flex; flex-direction: column; }
+.page-header  { flex-shrink: 0; }
+#wl-main-form { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#wl-main-form .table-wrapper {
+  flex: 1; min-height: 0; overflow: auto;
+  contain: layout style;
+}
+.pagination { flex-shrink: 0; }
+</style>
+<div class="page-header">
+  <div>
+    <h1 class="page-title">IP WHITELIST</h1>
+  </div>
+</div>
+
+{% if request.user.profile.role.can_manage_whitelist or request.user.is_superuser %}
+<!-- Import CSV hidden form -->
+<form method="post" action="{% url 'whitelist:import_csv' %}" enctype="multipart/form-data" id="import-form-wl" style="display:none;">
+  {% csrf_token %}
+  <input type="file" name="csv_file" id="csv-file-wl" accept=".csv" data-on-change="wlSubmitImportForm()">
+</form>
+{% endif %}
+
+<!-- Status tabs + Search + Action buttons -->
+<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+  <!-- Left: status tabs + search -->
+  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+    <a href="?status=active{% if search %}&search={{ search }}{% endif %}"
+       class="btn btn-sm {% if status == 'active' %}btn-brand{% else %}btn-ghost{% endif %}">Active <span style="opacity:.7;font-size:11px;">{{ count_active }}</span></a>
+    <a href="?status=inactive{% if search %}&search={{ search }}{% endif %}"
+       class="btn btn-sm {% if status == 'inactive' %}btn-brand{% else %}btn-ghost{% endif %}">Inactive <span style="opacity:.7;font-size:11px;">{{ count_inactive }}</span></a>
+    <a href="?status=all{% if search %}&search={{ search }}{% endif %}"
+       class="btn btn-sm {% if status == 'all' %}btn-brand{% else %}btn-ghost{% endif %}">All <span style="opacity:.7;font-size:11px;">{{ count_all }}</span></a>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+    <form method="get" style="display:flex;gap:6px;align-items:center;">
+      <input type="hidden" name="status" value="{{ status }}">
+      <input type="search" name="search" class="form-input" style="height:30px;font-size:12px;padding:4px 16px;"
+             placeholder="Search IP or reason…" value="{{ search }}">
+      <button type="submit" class="btn btn-info btn-sm">Search</button>
+      {% if request.user.profile.role.name == 'admin' or request.user.is_superuser %}
+      <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+    <a href="{% url 'settings_app:activity_log' %}?type=whitelist" class="btn btn-orange btn-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      History
+    </a>
+    {% endif %}
+      {% if search %}<a href="?status={{ status }}" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
+    </form>
+  </div>
+  <!-- Right: History + action buttons -->
+  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+    
+    {% if request.user.profile.role.can_manage_whitelist or request.user.is_superuser %}
+    <a type="button" class="btn btn-brand btn-sm" data-on-click="openWlPdfModal()">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      Report
+    </a>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+    <a href="{% url 'whitelist:export' %}?status={{ status }}{% if search %}&search={{ search }}{% endif %}" class="btn btn-success btn-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export
+    </a>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+    <div class="csv-tooltip-wrap">
+      <a type="button" class="btn btn-success btn-sm" data-on-click="wlTriggerFileInput()">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Import
+      </a>
+      <div class="csv-tooltip">
+        <h4>Import CSV — IP Whitelist</h4>
+        <p>Accepted column names (case-insensitive):</p>
+        <p><strong style="color:var(--text-primary)">IP / CIDR</strong> — required per row<br>
+        <span class="tip-label">cidr · ip · ip_address · address · network · subnet</span></p>
+        <p><strong style="color:var(--text-primary)">Reason</strong> — optional<br>
+        <span class="tip-label">reason · description · note · comment</span></p>
+        <p style="margin-top:10px;color:var(--text-primary);font-weight:600;">Example formats:</p>
+        <code>10.0.0.0/8,Internal network
+192.168.1.50,Trusted host
+172.16.0.0/16</code>
+        <p style="margin-top:6px;color:var(--text-primary);font-weight:600;">Plain IP list (no header):</p>
+        <code>10.10.10.1
+10.10.10.2
+10.10.10.3</code>
+        <p class="tip-label" style="margin-top:8px;">File encoding: UTF-8 · Format: .csv</p>
+      </div>
+    </div>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+    <a type="button" class="btn btn-info btn-sm" data-on-click="openWlAddModal()">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Add
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Bulk action forms -->
+<form method="post" action="{% url 'whitelist:bulk_delete' %}" id="bulk-delete-form-wl">
+  {% csrf_token %}
+  <input type="hidden" name="status" value="{{ status }}">
+  <input type="hidden" name="entry_ids_placeholder">
+</form>
+<form method="post" action="{% url 'whitelist:bulk_deactivate' %}" id="bulk-deactivate-form-wl">
+  {% csrf_token %}
+  <input type="hidden" name="status" value="{{ status }}">
+</form>
+<form method="post" action="{% url 'whitelist:bulk_activate' %}" id="bulk-activate-form-wl">
+  {% csrf_token %}
+  <input type="hidden" name="status" value="{{ status }}">
+</form>
+
+{% if request.user.profile.role.can_manage_whitelist or request.user.is_superuser %}
+<div id="bulk-toolbar-wl" style="display:none;margin-bottom:10px;align-items:center;gap:10px;">
+  <span id="bulk-count-wl" class="text-muted text-sm"></span>
+  {% if status != 'inactive' %}
+  <a type="button" class="btn btn-warning btn-sm" data-on-click="wlConfirmBulkDeactivate()"> <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg> Deactivate</a>
+  {% endif %}
+  {% if status != 'active' %}
+  <a type="button" class="btn btn-success btn-sm" data-on-click="wlConfirmBulkActivate()"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg> Activate</a>
+  {% endif %}
+  <a type="button" class="btn btn-danger btn-sm" data-on-click="wlConfirmBulkRemove()">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+    Remove
+  </a>
+  <a type="button" class="btn btn-ghost btn-sm" data-on-click="clearSelectionWl()">Clear</a>
+</div>
+{% endif %}
+
+<!-- Main table form for checkboxes -->
+<form method="post" id="wl-main-form">
+  {% csrf_token %}
+  <div class="table-wrapper">
+    <table style="text-align:center;min-width:700px;">
+      <thead>
+        <tr>
+          {% if request.user.profile.role.can_manage_whitelist or request.user.is_superuser %}
+          <th style="width:36px;text-align:center;">
+            <input type="checkbox" id="select-all-wl" class="form-checkbox" title="Select all">
+          </th>
+          {% endif %}
+          <th style="width:32px;" title="Row ID — hover the status icon to view, or type the number in the search box."></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=cidr&dir={% if sort == 'cidr' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">CIDR{% if sort == 'cidr' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=prefix&dir={% if sort == 'prefix' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Prefix{% if sort == 'prefix' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;">Status</th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=source&dir={% if sort == 'source' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Source{% if sort == 'source' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;">Reason</th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=added_by&dir={% if sort == 'added_by' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Added By{% if sort == 'added_by' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=added&dir={% if sort == 'added' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Added At{% if sort == 'added' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          {% if request.user.profile.role.can_manage_whitelist or request.user.is_superuser %}<th style="text-align:center;white-space:nowrap;">Actions</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in entries %}
+        <tr>
+          {% if request.user.profile.role.can_manage_whitelist or request.user.is_superuser %}
+          <td>
+            <input type="checkbox" name="entry_ids" value="{{ entry.pk }}" class="form-checkbox row-check-wl">
+          </td>
+          {% endif %}
+          <td style="text-align:center;padding:0 2px;">
+            <span class="tbl-row-icon info-tip" data-tip="ID: {{ entry.pk }}" style="{% if entry.is_active %}background:rgba(157,134,186,.15);color:#9D86BA;{% else %}background:var(--bg-elevated);color:var(--text-muted);{% endif %}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            </span>
+          </td>
+          <td><span class="cidr">{{ entry.cidr }}</span><button type="button" class="copy-btn" data-copy="{{ entry.cidr }}" title="Copy" style="background:none;border:none;cursor:pointer;padding:0 0 0 5px;color:var(--text-muted);vertical-align:middle;line-height:1;opacity:0;transition:opacity .15s;"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></td>
+          <td style="white-space:nowrap;"><span class="badge badge-pink" style="font-size:11px;font-family:var(--font-mono);">/{{ entry.prefix_length }}</span></td>
+          <td style="white-space:nowrap;">
+            {% if entry.is_active %}
+            <span class="badge badge-green badge-dot" style="font-size:11px;">Active</span>
+            {% else %}
+            <span class="badge badge-red badge-dot" style="font-size:11px;">Inactive</span>
+            {% endif %}
+          </td>
+          <td style="white-space:nowrap;">
+            {% if entry.source == 'import' %}
+            <span class="badge badge-yellow">Import</span>
+            {% else %}
+            <span class="badge badge-green">Manual</span>
+            {% endif %}
+          </td>
+          <td class="text-muted text-sm" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;{% if entry.reason %}cursor:default;{% endif %}"
+              {% if entry.reason %}data-reason-tip="{{ entry.reason }}"{% endif %}>{{ entry.reason|default:"—" }}</td>
+          <td class="text-muted text-sm" style="white-space:nowrap;">
+            {% if entry.added_by %}
+              <span class="badge badge-blue">{{ entry.added_by.username }}{% if entry.added_by.get_full_name %} ({{ entry.added_by.get_full_name }}){% endif %}</span>
+            {% else %}<span class="badge badge-blue">—</span>{% endif %}
+          </td>
+          <td class="text-muted text-sm" style="white-space:nowrap;">{{ entry.added_at|date:"Y-m-d H:i" }}</td>
+          {% if request.user.profile.role.can_manage_whitelist or request.user.is_superuser %}
+          <td>
+            <div style="display:flex;gap:4px;justify-content:center;">
+              <a type="button" class="btn btn-orange btn-sm tip wl-edit-btn"
+                      data-edit-url="{% url 'whitelist:edit' entry.pk %}"
+                      data-cidr="{{ entry.cidr }}"
+                      data-reason="{{ entry.reason|default:'' }}"
+                      data-tip="Edit entry" style="padding:4px 7px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </a>
+              {% if entry.is_active %}
+              <a type="button" class="btn btn-warning btn-sm tip wl-deactivate-btn"
+                      data-url="{% url 'whitelist:deactivate_single' entry.pk %}"
+                      data-cidr="{{ entry.cidr }}"
+                      data-tip="Deactivate entry" style="padding:4px 7px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>
+              </a>
+              {% else %}
+              <a type="button" class="btn btn-success btn-sm tip wl-activate-btn"
+                      data-url="{% url 'whitelist:activate_single' entry.pk %}"
+                      data-cidr="{{ entry.cidr }}"
+                      data-tip="Activate entry" style="padding:4px 7px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+              </a>
+              {% endif %}
+              <a type="button" class="btn btn-danger btn-sm tip wl-remove-btn"
+                      data-url="{% url 'whitelist:delete' entry.pk %}"
+                      data-cidr="{{ entry.cidr }}"
+                      data-tip="Remove from whitelist" style="padding:4px 7px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+              </a>
+            </div>
+          </td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr><td colspan="10" class="table-empty">
+          <div class="empty-state">
+            <div class="empty-state-icon">✅</div>
+            <div class="empty-state-title">No whitelist entries</div>
+            <div class="empty-state-text">Add trusted IPs or CIDRs to exclude them from published blacklists.</div>
+          </div>
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</form>
+
+{% with page_obj=entries %}{% include "partials/pagination.html" %}{% endwith %}
+
+<!-- Hidden single action form -->
+<form method="post" id="wl-single-action-form" style="display:none;">
+  {% csrf_token %}
+  <input type="hidden" name="status" value="{{ status }}">
+</form>
+
+<!-- ── Add Entry Modal ───────────────────────────────────────────── -->
+<div id="wl-add-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:520px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);max-height:90vh;overflow-y:auto;">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;">Add to IP Whitelist</h2>
+      <a type="button" data-on-click="closeWlAddModal()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</a>
+    </div>
+
+    <!-- Tabs -->
+    <div style="display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0;">
+      <button type="button" id="wl-tab-single" data-on-click="wlSwitchTab('single')"
+              style="padding:6px 16px;border:none;border-bottom:2px solid var(--accent);background:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);margin-bottom:-1px;">
+        Quick Add
+      </button>
+      <button type="button" id="wl-tab-bulk" data-on-click="wlSwitchTab('bulk')"
+              style="padding:6px 16px;border:none;border-bottom:2px solid transparent;background:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:-1px;">
+        Bulk Add
+      </button>
+    </div>
+
+    <!-- Quick Add -->
+    <div id="wl-panel-single">
+      <form method="post" action="{% url 'whitelist:create' %}">
+        {% csrf_token %}
+        <div class="form-group">
+          <label class="form-label">IP Address or CIDR <span class="required">*</span></label>
+          <input type="text" name="ip_input" class="form-input" placeholder="192.168.1.1 or 10.0.0.0/24" required autocomplete="off">
+        </div>
+        <div class="form-group" style="margin-top:12px;">
+          <label class="form-label">Reason</label>
+          <input type="text" name="reason" class="form-input" placeholder="Optional reason...">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:16px;">
+          <a type="button" data-on-click="closeWlAddModal()" class="btn btn-ghost">Cancel</a>
+          <button type="submit" class="btn btn-info">Add</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Bulk Add -->
+    <div id="wl-panel-bulk" style="display:none;">
+      <form method="post" action="{% url 'whitelist:bulk_create' %}">
+        {% csrf_token %}
+        <div class="form-group">
+          <label class="form-label">IP Addresses / CIDRs <span class="required">*</span></label>
+          <textarea name="ip_list" class="form-input" rows="8"
+                    style="font-family:var(--font-mono);font-size:12px;"
+                    placeholder="One IP or CIDR per line&#10;192.168.1.1&#10;10.0.0.0/8&#10;203.0.113.5" required></textarea>
+          <p class="text-muted text-sm" style="margin-top:4px;">One IP or CIDR per line · Max 500 entries</p>
+        </div>
+        <div class="form-group" style="margin-top:12px;">
+          <label class="form-label">Reason</label>
+          <input type="text" name="reason" class="form-input" placeholder="Optional reason for all entries...">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:16px;">
+          <a type="button" data-on-click="closeWlAddModal()" class="btn btn-ghost">Cancel</a>
+          <button type="submit" class="btn btn-info">Add</button>
+        </div>
+      </form>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Edit Entry Modal ──────────────────────────────────────────── -->
+<div id="wl-edit-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:480px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <div>
+        <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0 0 2px;">Edit IP Whitelist Entry</h2>
+        <p id="wl-edit-subtitle" style="font-size:13px;color:var(--text-muted);margin:0;font-family:var(--font-mono);"></p>
+      </div>
+      <a type="button" data-on-click="closeWlEditModal()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</a>
+    </div>
+
+    <form id="wl-edit-form" method="post">
+      {% csrf_token %}
+      <div class="form-group">
+        <label class="form-label">IP Address or CIDR <span class="required">*</span></label>
+        <input type="text" name="ip_input" id="wl-edit-cidr" class="form-input"
+               placeholder="192.168.1.1 or 10.0.0.0/24" required autocomplete="off">
+      </div>
+      <div class="form-group" style="margin-top:12px;">
+        <label class="form-label">Reason</label>
+        <input type="text" name="reason" id="wl-edit-reason" class="form-input" placeholder="Optional reason...">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:16px;">
+        <a type="button" data-on-click="closeWlEditModal()" class="btn btn-ghost">Cancel</a>
+        <button type="submit" class="btn btn-info">Save</button>
+      </div>
+    </form>
+
+  </div>
+</div>
+
+<!-- ── Confirm Modal ─────────────────────────────────────────────── -->
+<div id="wl-confirm-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:32px;max-width:420px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+      <svg id="wl-confirm-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" style="width:26px;height:26px;flex-shrink:0;">
+        <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>
+      </svg>
+      <h2 id="wl-confirm-title" style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;"></h2>
+    </div>
+    <p id="wl-confirm-body" style="color:var(--text-secondary);font-size:14px;margin-bottom:24px;"></p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <a type="button" data-on-click="wlHideConfirmModal()" class="btn btn-ghost btn-sm">Cancel</a>
+      <a type="button" id="wl-confirm-action-btn" class="btn btn-sm" data-on-click="wlDoAction()">Confirm</a>
+    </div>
+  </div>
+</div>
+
+<script nonce="{{ csp_nonce }}">
+// ── CSP wrapper helpers for complex inline expressions ─────────────
+window.wlSubmitImportForm = function () { document.getElementById('import-form-wl').submit(); };
+window.wlTriggerFileInput = function () { document.getElementById('csv-file-wl').click(); };
+window.wlHideConfirmModal = function () { document.getElementById('wl-confirm-modal').style.display = 'none'; };
+
+// ── Add Modal ──────────────────────────────────────────────────────
+window.openWlAddModal = function () {
+  wlSwitchTab('single');
+  document.getElementById('wl-add-modal').style.display = 'flex';
+};
+window.closeWlAddModal = function () {
+  document.getElementById('wl-add-modal').style.display = 'none';
+};
+window.wlSwitchTab = function (tab) {
+  const isSingle = tab === 'single';
+  document.getElementById('wl-panel-single').style.display = isSingle ? '' : 'none';
+  document.getElementById('wl-panel-bulk').style.display   = isSingle ? 'none' : '';
+  const tSingle = document.getElementById('wl-tab-single');
+  const tBulk   = document.getElementById('wl-tab-bulk');
+  tSingle.style.borderBottomColor = isSingle ? 'var(--accent)' : 'transparent';
+  tSingle.style.color             = isSingle ? 'var(--accent)' : 'var(--text-muted)';
+  tBulk.style.borderBottomColor   = isSingle ? 'transparent' : 'var(--accent)';
+  tBulk.style.color               = isSingle ? 'var(--text-muted)' : 'var(--accent)';
+};
+
+// ── Edit Modal ─────────────────────────────────────────────────────
+window.closeWlEditModal = function () {
+  document.getElementById('wl-edit-modal').style.display = 'none';
+};
+document.getElementById('wl-edit-modal').addEventListener('click', function (e) {
+  if (e.target === this) closeWlEditModal();
+});
+document.querySelectorAll('.wl-edit-btn').forEach(btn => {
+  btn.addEventListener('click', function () {
+    document.getElementById('wl-edit-form').action = this.dataset.editUrl;
+    document.getElementById('wl-edit-cidr').value   = this.dataset.cidr;
+    document.getElementById('wl-edit-reason').value = this.dataset.reason;
+    document.getElementById('wl-edit-subtitle').textContent = this.dataset.cidr;
+    document.getElementById('wl-edit-modal').style.display = 'flex';
+    document.getElementById('wl-edit-cidr').focus();
+  });
+});
+document.getElementById('wl-add-modal').addEventListener('click', function (e) {
+  if (e.target === this) closeWlAddModal();
+});
+
+// ── Checkbox / bulk toolbar ────────────────────────────────────────
+(function () {
+  const selectAll = document.getElementById('select-all-wl');
+  const toolbar   = document.getElementById('bulk-toolbar-wl');
+  const countEl   = document.getElementById('bulk-count-wl');
+
+  function updateToolbar() {
+    const checked = document.querySelectorAll('.row-check-wl:checked');
+    if (checked.length > 0) {
+      toolbar.style.display = 'flex';
+      countEl.textContent = checked.length + ' selected';
+    } else {
+      toolbar.style.display = 'none';
+    }
+  }
+
+  if (selectAll) {
+    selectAll.addEventListener('change', function () {
+      document.querySelectorAll('.row-check-wl').forEach(cb => cb.checked = this.checked);
+      updateToolbar();
+    });
+  }
+
+  document.querySelectorAll('.row-check-wl').forEach(cb => {
+    cb.addEventListener('change', function () {
+      if (!this.checked && selectAll) selectAll.checked = false;
+      updateToolbar();
+    });
+  });
+
+  window.clearSelectionWl = function () {
+    document.querySelectorAll('.row-check-wl').forEach(cb => cb.checked = false);
+    if (selectAll) selectAll.checked = false;
+    updateToolbar();
+  };
+})();
+
+// ── Unified Confirm Modal ──────────────────────────────────────────
+let _wlActionMode   = 'remove';   // 'remove' | 'deactivate' | 'activate' | 'bulk-remove' | 'bulk-deactivate' | 'bulk-activate'
+let _wlActionUrl    = '';
+
+function _syncCheckboxesToBulkForms() {
+  const ids = Array.from(document.querySelectorAll('.row-check-wl:checked')).map(cb => cb.value);
+  ['bulk-deactivate-form-wl', 'bulk-activate-form-wl', 'bulk-delete-form-wl'].forEach(formId => {
+    const form = document.getElementById(formId);
+    // Remove old dynamic inputs
+    form.querySelectorAll('input[name="entry_ids"]').forEach(el => el.remove());
+    ids.forEach(id => {
+      const inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'entry_ids'; inp.value = id;
+      form.appendChild(inp);
+    });
+  });
+}
+
+function showWlConfirm(title, body, actionBtnClass, actionBtnText) {
+  document.getElementById('wl-confirm-title').textContent = title;
+  document.getElementById('wl-confirm-body').textContent  = body;
+  const btn = document.getElementById('wl-confirm-action-btn');
+  btn.className = 'btn btn-sm ' + actionBtnClass;
+  btn.textContent = actionBtnText;
+  const icon = document.getElementById('wl-confirm-icon');
+  icon.setAttribute('stroke', actionBtnClass.includes('danger') ? 'var(--danger)' : actionBtnClass.includes('warning') ? 'var(--warning)' : 'var(--success)');
+  document.getElementById('wl-confirm-modal').style.display = 'flex';
+}
+
+// Single remove
+document.querySelectorAll('.wl-remove-btn').forEach(btn => {
+  btn.addEventListener('click', function () {
+    _wlActionMode = 'remove';
+    _wlActionUrl  = this.dataset.url;
+    showWlConfirm(
+      'Remove IP Whitelist Entry',
+      '"' + this.dataset.cidr + '" will be permanently removed from the whitelist.',
+      'btn-danger', 'Remove'
+    );
+  });
+});
+
+// Single deactivate
+document.querySelectorAll('.wl-deactivate-btn').forEach(btn => {
+  btn.addEventListener('click', function () {
+    _wlActionMode = 'deactivate';
+    _wlActionUrl  = this.dataset.url;
+    showWlConfirm(
+      'Deactivate IP Whitelist Entry',
+      '"' + this.dataset.cidr + '" will be deactivated. It can be re-activated later.',
+      'btn-warning', 'Deactivate'
+    );
+  });
+});
+
+// Single activate
+document.querySelectorAll('.wl-activate-btn').forEach(btn => {
+  btn.addEventListener('click', function () {
+    _wlActionMode = 'activate';
+    _wlActionUrl  = this.dataset.url;
+    showWlConfirm(
+      'Activate IP Whitelist Entry',
+      '"' + this.dataset.cidr + '" will be activated.',
+      'btn-success', 'Activate'
+    );
+  });
+});
+
+// Bulk remove
+window.wlConfirmBulkRemove = function () {
+  const count = document.querySelectorAll('.row-check-wl:checked').length;
+  if (count === 0) return;
+  _wlActionMode = 'bulk-remove';
+  _syncCheckboxesToBulkForms();
+  showWlConfirm(
+    'Remove Entries',
+    count + ' entr' + (count === 1 ? 'y' : 'ies') + ' will be permanently removed from the whitelist.',
+    'btn-danger', 'Remove'
+  );
+};
+
+// Bulk deactivate
+window.wlConfirmBulkDeactivate = function () {
+  const count = document.querySelectorAll('.row-check-wl:checked').length;
+  if (count === 0) return;
+  _wlActionMode = 'bulk-deactivate';
+  _syncCheckboxesToBulkForms();
+  showWlConfirm(
+    'Deactivate Entries',
+    count + ' entr' + (count === 1 ? 'y' : 'ies') + ' will be deactivated.',
+    'btn-warning', 'Deactivate'
+  );
+};
+
+// Bulk activate
+window.wlConfirmBulkActivate = function () {
+  const count = document.querySelectorAll('.row-check-wl:checked').length;
+  if (count === 0) return;
+  _wlActionMode = 'bulk-activate';
+  _syncCheckboxesToBulkForms();
+  showWlConfirm(
+    'Activate Entries',
+    count + ' entr' + (count === 1 ? 'y' : 'ies') + ' will be activated.',
+    'btn-success', 'Activate'
+  );
+};
+
+window.wlDoAction = function () {
+  document.getElementById('wl-confirm-modal').style.display = 'none';
+  const singleForm = document.getElementById('wl-single-action-form');
+  if (_wlActionMode === 'remove') {
+    singleForm.action = _wlActionUrl; singleForm.submit();
+  } else if (_wlActionMode === 'deactivate') {
+    singleForm.action = _wlActionUrl; singleForm.submit();
+  } else if (_wlActionMode === 'activate') {
+    singleForm.action = _wlActionUrl; singleForm.submit();
+  } else if (_wlActionMode === 'bulk-remove') {
+    document.getElementById('bulk-delete-form-wl').submit();
+  } else if (_wlActionMode === 'bulk-deactivate') {
+    document.getElementById('bulk-deactivate-form-wl').submit();
+  } else if (_wlActionMode === 'bulk-activate') {
+    document.getElementById('bulk-activate-form-wl').submit();
+  }
+};
+
+document.getElementById('wl-confirm-modal').addEventListener('click', function (e) {
+  if (e.target === this) this.style.display = 'none';
+});
+</script>
+<style>
+tr:hover .copy-btn { opacity: 1 !important; }
+.copy-btn:hover { color: var(--brand-suffix) !important; }
+</style>
+
+<!-- ── PDF Report Modal ──────────────────────────────────────────────────── -->
+<div id="wl-pdf-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:480px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <h2 style="font-size:15px;font-weight:700;color:var(--text-primary);margin:0;display:flex;align-items:center;gap:7px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--brand-suffix)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        PDF Report | IP Whitelist
+      </h2>
+      <button type="button" data-on-click="closeWlPdfModal()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</button>
+    </div>
+    <form method="get" action="{% url 'whitelist:export_pdf' %}" id="wl-pdf-form">
+      <input type="hidden" name="report_type" value="executive">
+      <div class="form-group">
+        <label class="form-label">Status</label>
+        <select name="status" class="form-select">
+          <option value="active">Active Only</option>
+          <option value="inactive">Inactive Only</option>
+          <option value="all">All Records</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Date Range (Added At)</label>
+        <select name="date_preset" class="form-select" id="wl-pdf-date-preset" data-on-change="wlPdfDatePresetChange()">
+          <option value="">All Time</option>
+          <option value="today">Today</option>
+          <option value="7d">Last 7 Days</option>
+          <option value="30d">Last 30 Days</option>
+          <option value="custom">Custom Range…</option>
+        </select>
+      </div>
+      <div id="wl-pdf-custom-dates" style="display:none;gap:8px;margin-top:-10px;margin-bottom:16px;">
+        <div style="flex:1;"><label class="form-label" style="font-size:11px;">From</label><input type="date" name="date_from" class="form-input form-input-sm" style="width:100%;"></div>
+        <div style="flex:1;"><label class="form-label" style="font-size:11px;">To</label><input type="date" name="date_to" class="form-input form-input-sm" style="width:100%;"></div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+        <button type="button" data-on-click="closeWlPdfModal()" class="btn btn-ghost">Cancel</button>
+        <button type="submit" class="btn btn-brand">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Generate
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+<!-- PDF Loading Overlay -->
+<div id="wl-pdf-loading" style="display:none;position:fixed;inset:0;z-index:1100;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:36px 48px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px;box-shadow:0 8px 40px rgba(0,0,0,0.5);">
+    <div class="pdf-gen-spinner"></div>
+    <div style="color:var(--text-primary);font-weight:600;font-size:14px;">Generating PDF…</div>
+    <div style="color:var(--text-muted);font-size:12px;">This may take a moment, please wait.</div>
+  </div>
+</div>
+<style>
+@keyframes pdf-gen-spin { to { transform: rotate(360deg); } }
+.pdf-gen-spinner { width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--brand-suffix);border-radius:50%;animation:pdf-gen-spin .75s linear infinite; }
+
+/* Match the IP Blacklist page layout: only the table scrolls and the
+   wrapper fills the rest of the viewport, so the empty-state height is
+   identical across all three list pages. */
+.page-content { overflow: hidden; display: flex; flex-direction: column; }
+.page-header  { flex-shrink: 0; }
+#wl-main-form {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#wl-main-form .table-wrapper {
+  flex: 1;
+  /* min-height:0 lets flex:1 actually shrink to fit the form's allotted
+     space — without it the wrapper would refuse to shrink below the
+     calc-based floor and would overflow downward (clipping into the
+     pagination area) when the collapsible filter is open. */
+  min-height: 0;
+  overflow: auto;
+}
+.pagination { flex-shrink: 0; }
+</style>
+<script nonce="{{ csp_nonce }}">
+  window.openWlPdfModal  = function() { document.getElementById('wl-pdf-modal').style.display = 'flex'; };
+  window.closeWlPdfModal = function() { document.getElementById('wl-pdf-modal').style.display = 'none'; document.getElementById('wl-pdf-loading').style.display = 'none'; };
+  window.wlPdfDatePresetChange = function() {
+    var v = document.getElementById('wl-pdf-date-preset').value;
+    document.getElementById('wl-pdf-custom-dates').style.display = v === 'custom' ? 'flex' : 'none';
+  };
+  (function() {
+    var form = document.getElementById('wl-pdf-form');
+    form.addEventListener('submit', function(e) {
+      e.preventDefault();
+      var qs = new URLSearchParams(new FormData(form)).toString();
+      var sep = form.action.indexOf('?') >= 0 ? '&' : '?';
+      var url = form.action + (qs ? sep + qs : '');
+      document.getElementById('wl-pdf-modal').style.display = 'none';
+      window.downloadPdfWithOverlay(url, 'wl-pdf-loading', 'ip-whitelist.pdf');
+    });
+  })();
+</script>
+{% endblock %}

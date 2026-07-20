@@ -1,0 +1,810 @@
+{% extends "base.html" %}
+{% load blacklist_extras %}
+{% block title %}Dashboard{% endblock %}
+{% block topbar_title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">DASHBOARD</h1>
+    <p class="page-subtitle">Welcome back, <b>{{ request.user.get_full_name|default:request.user.username }}</b></p>
+  </div>
+  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span id="db-countdown-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);">
+        <svg id="db-refresh-spinner" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="display:none;animation:db-spin 0.8s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        <span>Next refresh in</span>
+        <span id="db-countdown" style="font-weight:600;color:var(--text-primary);font-family:var(--font-mono);min-width:24px;text-align:right;">{{ dashboard_refresh_seconds|default:60 }}s</span>
+      </span>
+      <button id="db-refresh-btn" type="button" class="btn btn-brand btn-sm" data-on-click="dbRefresh()" title="Refresh now">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/><polyline points="21 3 21 9 15 9"/></svg>
+      </button>
+      <button id="db-pdf-btn" type="button" class="btn btn-brand btn-sm tip tip-below-end" data-tip="Download PDF">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </button>
+    </div>
+    <span id="db-last-updated" style="font-size:11px;color:var(--text-muted);visibility:hidden;">
+      Updated | <span id="db-last-updated-time" style="font-family:var(--font-mono);">--:--:--</span>
+    </span>
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="stats-grid">
+  <div class="stat-card sc-c1 db-widget">
+    <div class="db-bar" id="db-bar-hashlist"></div>
+    <div class="stat-label">
+      <span class="sc-lbl-icon" style="color:#CB5B63;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>
+      <b>Hash Blacklist</b>
+      <span class="info-tip" data-tip="Count: {{ stats.hashlist_total }}" style="margin-left:4px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      </span>
+    </div>
+    <div class="stat-value" id="db-stat-hashlist">{{ stats.hashlist_total|compact_number }}</div>
+    <div class="stat-sub">Active hash entries</div>
+  </div>
+  <div class="stat-card sc-c2 db-widget">
+    <div class="db-bar" id="db-bar-bl30d"></div>
+    <div class="stat-label">
+      <span class="sc-lbl-icon" style="color:#E37D89;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span>
+      <b>30d IP Blacklist</b>
+      <span class="info-tip" data-tip="Count: {{ stats.blacklist_30d }}" style="margin-left:4px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      </span>
+    </div>
+    <div class="stat-value" id="db-stat-bl30d">{{ stats.blacklist_30d|compact_number }}</div>
+    <div class="stat-sub">Active 30 days blacklist entries</div>
+  </div>
+  <div class="stat-card sc-c3 db-widget">
+    <div class="db-bar" id="db-bar-bl24h"></div>
+    <div class="stat-label">
+      <span class="sc-lbl-icon" style="color:#F29DA8;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span>
+      <b>24h IP Blacklist</b>
+      <span class="info-tip" data-tip="Count: {{ stats.blacklist_24h }}" style="margin-left:4px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      </span>
+    </div>
+    <div class="stat-value" id="db-stat-bl24h">{{ stats.blacklist_24h|compact_number }}</div>
+    <div class="stat-sub">Active 24 hours blacklist entries</div>
+  </div>
+  <div class="stat-card sc-c6 db-widget">
+    <div class="db-bar" id="db-bar-whitelist"></div>
+    <div class="stat-label">
+      <span class="sc-lbl-icon" style="color:#9D86BA;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>
+      <b>IP Whitelist</b>
+      <span class="info-tip" data-tip="Count: {{ stats.whitelist_total }}" style="margin-left:4px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      </span>
+    </div>
+    <div class="stat-value" id="db-stat-whitelist">{{ stats.whitelist_total|compact_number }}</div>
+    <div class="stat-sub">Active whitelist entries</div>
+  </div>
+  <div class="stat-card sc-c5 db-widget">
+    <div class="db-bar" id="db-bar-api"></div>
+    <div class="stat-label">
+      <span class="sc-lbl-icon" style="color:#BDAED6;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></span>
+      <b>API Requests</b>
+      <span class="info-tip" data-tip="Count: {{ stats.api_reports }}" style="margin-left:4px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      </span>
+    </div>
+    <div class="stat-value" id="db-stat-api">{{ stats.api_reports|compact_number }}</div>
+    <div class="stat-sub">Successful API reports (Last 24 hours)</div>
+  </div>
+  <div class="stat-card sc-c4 db-widget">
+    <div class="db-bar" id="db-bar-users"></div>
+    <div class="stat-label">
+      <span class="sc-lbl-icon" style="color:#b2a8c3;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+      <b>Users</b>
+      <span class="info-tip info-tip-left" data-tip="Count: {{ stats.users_total }}" style="margin-left:4px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      </span>
+    </div>
+    <div class="stat-value" id="db-stat-users">{{ stats.users_total|compact_number }}</div>
+    <div class="stat-sub">Active accounts</div>
+  </div>
+</div>
+
+{# Dashboard 30-day additions timeline — delete this single line to remove it #}
+{% include 'dashboard/timeline.html' %}
+
+{# Dashboard analytics charts — delete this single line to remove the section #}
+{% include 'dashboard/analytics.html' %}
+
+<div class="dashboard-grid">
+  <!-- Recent Hashlist -->
+  <div class="card db-widget" style="position:relative;overflow:hidden;">
+    <div class="db-bar" id="db-bar-tbl-hashlist"></div>
+    <div class="card-header">
+      <span class="card-title">Recent Hash Blacklist</span>
+      <a href="{% url 'hashlist:list' %}" class="btn btn-brand btn-sm">View All</a>
+    </div>
+    <div class="table-wrapper" style="border:none;border-radius:0;">
+      <table style="text-align:center;min-width:480px;">
+        <thead>
+          <tr>
+            <th style="width:38px;" title="Row ID — hover the status icon to view."></th>
+            <th style="text-align:left;">Hash</th>
+            <th style="text-align:center;white-space:nowrap;">Type</th>
+            <th style="text-align:center;white-space:nowrap;">Source</th>
+            <th style="text-align:center;white-space:nowrap;">Added</th>
+          </tr>
+        </thead>
+        <tbody id="db-tbody-hashlist">
+          {% for entry in recent_hashlist %}
+          <tr>
+            <td style="width:38px;">
+              <span class="tbl-row-icon info-tip" data-tip="ID: {{ entry.pk }}" style="background:rgba(203,91,99,0.13);color:#CB5B63;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+              </span>
+            </td>
+            <td style="text-align:left;max-width:160px;overflow:hidden;">
+              <span class="db-copy-cell db-copy-cell--ellipsis">
+                <span class="cidr" style="font-family:var(--font-mono);cursor:help;border-bottom:1px dotted var(--text-muted);"
+                  data-hash-intel="1"
+                  data-intel-fullhash="{{ entry.hash_value|upper }}"
+                  {% if entry.has_vt_intel %}
+                  data-intel-threat="{{ entry.vt_threat_label }}"
+                  data-intel-filetype="{{ entry.vt_type_description }}"
+                  data-intel-size="{{ entry.vt_size_display }}"
+                  data-intel-filename="{{ entry.vt_meaningful_name }}"
+                  data-intel-firstseen="{{ entry.vt_first_seen|date:'Y-m-d' }}"
+                  data-intel-lastanalysis="{{ entry.vt_last_analysis|date:'Y-m-d' }}"
+                  data-intel-submitted="{{ entry.vt_times_submitted|default:'' }}"{% endif %}>{{ entry.hash_value|upper|slice:":16" }}…</span>
+                <button type="button" class="copy-btn" data-copy="{{ entry.hash_value|upper }}" title="Copy" style="background:none;border:none;cursor:pointer;padding:0;color:var(--text-muted);line-height:1;opacity:0;transition:opacity .15s;flex-shrink:0;"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+                <a class="vt-link" href="https://www.virustotal.com/gui/search?query={{ entry.hash_value }}" target="_blank" rel="noopener noreferrer" title="View on VirusTotal" style="display:inline-flex;align-items:center;padding:0 0 0 2px;color:var(--text-muted);line-height:1;opacity:0;transition:opacity .15s;flex-shrink:0;text-decoration:none;"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+              </span>
+            </td>
+            <td style="white-space:nowrap;">
+              {% if entry.hash_type == 'md5' %}<span class="badge badge-blue">MD5</span>
+              {% elif entry.hash_type == 'sha1' %}<span class="badge badge-yellow">SHA1</span>
+              {% elif entry.hash_type == 'sha256' %}<span class="badge" style="background:rgba(139,92,246,.15);color:#8b5cf6;">SHA256</span>
+              {% elif entry.hash_type == 'sha512' %}<span class="badge badge-pink">SHA512</span>
+              {% else %}<span class="badge">?</span>{% endif %}
+            </td>
+            <td style="white-space:nowrap;">
+              {% if entry.source == 'api' %}<span class="badge badge-blue">{{ entry.get_source_display }}</span>
+              {% elif entry.source == 'import' %}<span class="badge badge-yellow">{{ entry.get_source_display }}</span>
+              {% else %}<span class="badge badge-green">{{ entry.get_source_display }}</span>{% endif %}
+            </td>
+            <td class="text-muted text-sm" style="white-space:nowrap;">{{ entry.added_at|date:"Y-m-d H:i" }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5" class="table-empty">No entries yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Recent Blacklist -->
+  <div class="card db-widget" style="position:relative;overflow:hidden;">
+    <div class="db-bar" id="db-bar-tbl-blacklist"></div>
+    <div class="card-header">
+      <span class="card-title">Recent IP Blacklist</span>
+      <a href="{% url 'blacklist:list' %}" class="btn btn-brand btn-sm">View All</a>
+    </div>
+    <div class="table-wrapper" style="border:none;border-radius:0;">
+      <table style="text-align:center;min-width:480px;">
+        <thead><tr>
+          <th style="width:38px;" title="Row ID — hover the status icon to view."></th>
+          <th style="text-align:center;white-space:nowrap;padding-right:4px;">IP</th>
+          <th style="text-align:center;white-space:nowrap;padding-left:4px;">Group</th>
+          <th style="text-align:center;white-space:nowrap;">Source</th>
+          <th style="text-align:center;white-space:nowrap;">Added</th>
+        </tr></thead>
+        <tbody id="db-tbody-blacklist">
+          {% for entry in recent_blacklist %}
+          <tr>
+            <td style="width:38px;">
+              {% if entry.group.name == '30d' %}
+              <span class="tbl-row-icon info-tip" data-tip="ID: {{ entry.pk }}" style="background:rgba(227,125,137,0.13);color:#E37D89;">
+              {% elif entry.group.name == '24h' %}
+              <span class="tbl-row-icon info-tip" data-tip="ID: {{ entry.pk }}" style="background:rgba(242,157,168,0.13);color:#F29DA8;">
+              {% else %}
+              <span class="tbl-row-icon info-tip" data-tip="ID: {{ entry.pk }}" style="background:rgba(251,191,36,0.13);color:#fbbf24;">
+              {% endif %}
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+              </span>
+            </td>
+            <td style="white-space:nowrap;text-align:center;position:relative;padding-left:32px;padding-right:4px;">
+                <span class="db-flag-slot">
+                  {% if entry.abuse_country_code %}
+                  <img class="db-country-flag" width="16" height="12" src="{{ entry.abuse_country_code|country_flag_url }}" alt="{{ entry.abuse_country_code|upper }}">{% else %}<span class="db-country-flag db-country-flag--empty" aria-hidden="true"></span>{% endif %}
+                </span>
+                <span class="db-ip-cell">
+                <span class="cidr" style="{% if entry.has_abuse_intel %}cursor:help;border-bottom:1px dotted var(--text-muted);{% endif %}"
+                {% if entry.has_abuse_intel %}data-ip-intel="1"
+                data-intel-isp="{{ entry.abuse_isp }}"
+                data-intel-usage="{{ entry.abuse_usage_type }}"
+                data-intel-asn="{{ entry.abuse_asn }}"
+                data-intel-hostnames="{{ entry.abuse_hostnames_display }}"
+                data-intel-domain="{{ entry.abuse_domain }}"
+                data-intel-country="{{ entry.abuse_country_display }}"
+                data-intel-city="{{ entry.abuse_city }}"
+                data-intel-totalreports="{% if entry.abuse_total_reports %}{{ entry.abuse_total_reports }}{% endif %}"
+                data-intel-lastreported="{{ entry.abuse_last_reported_display }}"{% endif %}>{{ entry.ip_address }}</span>
+                <button type="button" class="copy-btn" data-copy="{{ entry.ip_address }}" title="Copy" style="background:none;border:none;cursor:pointer;padding:0;color:var(--text-muted);line-height:1;opacity:0;transition:opacity .15s;flex-shrink:0;"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+                <a class="abuse-link" href="https://www.abuseipdb.com/check/{{ entry.ip_address }}" target="_blank" rel="noopener noreferrer" title="View on AbuseIPDB" style="display:inline-flex;align-items:center;padding:0 0 0 2px;color:var(--text-muted);line-height:1;opacity:0;transition:opacity .15s;flex-shrink:0;text-decoration:none;"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+              </span></td>
+            <td style="white-space:nowrap;padding-left:4px;">
+              {% if entry.group.name == '30d' %}<span class="badge" style="background:rgba(139,92,246,.15);color:#8b5cf6;">{{ entry.group.label }}</span>
+              {% elif entry.group.name == '24h' %}<span class="badge badge-pink">{{ entry.group.label }}</span>
+              {% else %}<span class="badge badge-yellow">{{ entry.group.label }}</span>{% endif %}
+            </td>
+            <td style="white-space:nowrap;">
+              {% if entry.source == 'api' %}<span class="badge badge-blue">{{ entry.get_source_display }}</span>
+              {% elif entry.source == 'import' %}<span class="badge badge-yellow">{{ entry.get_source_display }}</span>
+              {% else %}<span class="badge badge-green">{{ entry.get_source_display }}</span>{% endif %}
+            </td>
+            <td class="text-muted text-sm" style="white-space:nowrap;">{{ entry.added_at|date:"Y-m-d H:i" }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5" class="table-empty">No entries yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Recent Whitelist -->
+  <div class="card db-widget" style="position:relative;overflow:hidden;">
+    <div class="db-bar" id="db-bar-tbl-whitelist"></div>
+    <div class="card-header">
+      <span class="card-title">Recent IP Whitelist</span>
+      <a href="{% url 'whitelist:list' %}" class="btn btn-brand btn-sm">View All</a>
+    </div>
+    <div class="table-wrapper" style="border:none;border-radius:0;">
+      <table style="text-align:center;min-width:480px;">
+        <thead><tr>
+          <th style="width:38px;" title="Row ID — hover the status icon to view."></th>
+          <th style="text-align:center;white-space:nowrap;">CIDR</th>
+          <th style="text-align:center;white-space:nowrap;">Prefix</th>
+          <th style="text-align:center;white-space:nowrap;">Source</th>
+          <th style="text-align:center;white-space:nowrap;">Added</th>
+        </tr></thead>
+        <tbody id="db-tbody-whitelist">
+          {% for entry in recent_whitelist %}
+          <tr>
+            <td style="width:38px;">
+              <span class="tbl-row-icon info-tip" data-tip="ID: {{ entry.pk }}" style="background:rgba(157,134,186,0.13);color:#9D86BA;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              </span>
+            </td>
+            <td style="white-space:nowrap;"><span class="db-copy-cell"><span class="cidr">{{ entry.cidr }}</span><button type="button" class="copy-btn" data-copy="{{ entry.cidr }}" title="Copy" style="background:none;border:none;cursor:pointer;padding:0;color:var(--text-muted);line-height:1;opacity:0;transition:opacity .15s;flex-shrink:0;"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></span></td>
+            <td style="white-space:nowrap;"><span class="badge badge-pink">/{{ entry.prefix_length }}</span></td>
+            <td style="white-space:nowrap;">
+              {% if entry.source == 'import' %}<span class="badge badge-yellow">Import</span>
+              {% else %}<span class="badge badge-green">Manual</span>{% endif %}
+            </td>
+            <td class="text-muted" style="white-space:nowrap;">{{ entry.added_at|date:"Y-m-d H:i" }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5" class="table-empty">No entries yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- API Quick Reference — only for admin and api_user -->
+{% with rn=request.user.profile.role.name|default:'' %}
+{% if rn == 'admin' or rn == 'api_user' or request.user.is_superuser %}
+<div class="card mt-24">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+    <span class="card-title">API Endpoints</span>
+    <a href="{% url 'accounts:api_reference' %}" class="btn btn-brand btn-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;margin-right:4px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      API Reference
+    </a>
+  </div>
+  <div class="card-body">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+      <div>
+        <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">Health check</p>
+        <code class="badge badge-green" style="color:var(--success);">GET</code>
+        <code class="text-mono text-accent"> /api/v1/status/</code>
+      </div>
+      <div>
+        <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">Report a hash</p>
+        <code class="badge badge-yellow" style="color:var(--warning);">POST</code>
+        <code class="text-mono text-accent"> /api/v1/report/hash/</code>
+      </div>
+      <div>
+        <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">Hash blacklist</p>
+        <code class="badge badge-green" style="color:var(--success);">GET</code>
+        <code class="text-mono text-accent"> /api/v1/hashlist/</code>
+      </div>
+      <div>
+        <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">Report an IP</p>
+        <code class="badge badge-yellow" style="color:var(--warning);">POST</code>
+        <code class="text-mono text-accent"> /api/v1/report/ip/</code>
+      </div>
+      <div>
+        <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">Full IP blacklist</p>
+        <code class="badge badge-green" style="color:var(--success);">GET</code>
+        <code class="text-mono text-accent"> /api/v1/blacklist/</code>
+      </div>
+      <div>
+        <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">24h IP blacklist</p>
+        <code class="badge badge-green" style="color:var(--success);">GET</code>
+        <code class="text-mono text-accent"> /api/v1/blacklist/24h/</code>
+      </div>
+      <div>
+        <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">30d IP blacklist</p>
+        <code class="badge badge-green" style="color:var(--success);">GET</code>
+        <code class="text-mono text-accent"> /api/v1/blacklist/30d/</code>
+      </div>
+      <div>
+        <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">Annotation</p>
+        <p class="text-xs text-muted mt-12" style="text-align:left;">Add <b><code class="text-mono">?format=txt</code></b> to blacklist/hashlist endpoints for plain text output.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endwith %}
+
+<style>
+/* ── Stat card label icon (inline, beside the label text) ── */
+.sc-lbl-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.stat-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+/* ── Table row icon ── */
+.tbl-row-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+/* ── Loading bar ── */
+/* Flex column so the table area fills the card; with the grid stretching all
+   cards to equal height, the horizontal scrollbar then sits at the very bottom
+   of every card regardless of how many rows it contains. */
+.db-widget { position: relative; overflow: hidden; display: flex; flex-direction: column; }
+/* Recent panels live in a 3-column grid that auto-equalises card heights.
+   Use a tighter min-height than the global .table-wrapper rule so empty
+   dashboard cards aren't as tall as the standalone list pages (~30% less). */
+.db-widget .table-wrapper { flex: 1 1 auto; min-height: max(280px, calc((100vh - 280px) * 0.7)); }
+/* Country flag rendered next to the IP in the Recent IP Blacklist panel. */
+.db-ip-cell { display: inline-flex; align-items: center; gap: 5px; vertical-align: middle; }
+.db-country-flag { width: 16px; height: 12px; border-radius: 2px; flex-shrink: 0;
+                   object-fit: cover; border: 1px solid var(--border); }
+/* Reserves the flag-column width when no country is known so every IP row
+   in the Recent IP Blacklist panel lines up on the same vertical edge. */
+.db-country-flag--empty { display: inline-block; border: 0; background: transparent; }
+/* Locks the flag to a fixed X-position at the left edge of the Recent IP Blacklist
+   panel's IP cell, so it stays in one column while the IP itself stays centred. */
+.db-flag-slot {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  z-index: 1;
+}
+/* Copy-button host: groups the value span + the (initially hidden) copy
+   button into one inline-flex line. The ellipsis variant lets the value
+   shrink with text-overflow ellipsis inside a max-width:NNNpx cell. */
+.db-copy-cell { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+.db-copy-cell--ellipsis { display: flex; }
+.db-copy-cell--ellipsis > .cidr { flex: 1; min-width: 0; overflow: hidden;
+                                  text-overflow: ellipsis; white-space: nowrap; }
+.db-widget tr:hover .copy-btn,
+.db-widget tr:hover .abuse-link,
+.db-widget tr:hover .vt-link { opacity: 1 !important; }
+.db-widget .copy-btn:hover,
+.db-widget .abuse-link:hover,
+.db-widget .vt-link:hover { color: var(--brand-suffix) !important; }
+.db-bar {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 2px;
+  z-index: 10;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+.db-bar::after {
+  content: '';
+  display: block;
+  position: absolute;
+  top: 0; left: -60%;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: none;
+}
+.db-bar--active {
+  opacity: 1;
+}
+.db-bar--active::after {
+  animation: db-shimmer 1.1s ease-in-out infinite;
+}
+@keyframes db-shimmer {
+  0%   { left: -60%; }
+  100% { left: 120%; }
+}
+@keyframes db-spin {
+  to { transform: rotate(360deg); }
+}
+/* value flash on update */
+.db-flash {
+  animation: db-flash-anim 0.5s ease;
+}
+@keyframes db-flash-anim {
+  0%   { opacity: 0.3; transform: scale(0.97); }
+  60%  { opacity: 1;   transform: scale(1.03); }
+  100% { opacity: 1;   transform: scale(1); }
+}
+</style>
+
+<script nonce="{{ csp_nonce }}">
+(function () {
+  var INTERVAL   = {{ dashboard_refresh_seconds|default:60 }};   // seconds (Settings → General)
+  var API_URL    = '{% url "dashboard:stats_api" %}';
+  var remaining  = INTERVAL;
+  var tickTimer  = null;
+  var autoTimer  = null;
+  var fetching   = false;
+
+  var STAT_BARS  = ['db-bar-hashlist','db-bar-bl30d','db-bar-bl24h',
+                    'db-bar-whitelist','db-bar-api','db-bar-users'];
+  var TABLE_BARS = ['db-bar-tbl-hashlist','db-bar-tbl-blacklist','db-bar-tbl-whitelist'];
+  var ALL_BARS   = STAT_BARS.concat(TABLE_BARS);
+
+  /* ── Helpers ── */
+  function el(id)  { return document.getElementById(id); }
+
+  // HTML-attribute escaping — required because AbuseIPDB enrichment (isp/domain/
+  // hostnames) is external text injected into innerHTML attributes.
+  function escAttr(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Build the data-ip-intel attribute string for a blacklist row (empty if none).
+  function ipIntelAttrs(e) {
+    if (!e.has_intel) return '';
+    return ' data-ip-intel="1"' +
+      ' data-intel-isp="'       + escAttr(e.isp)       + '"' +
+      ' data-intel-usage="'     + escAttr(e.usage)     + '"' +
+      ' data-intel-asn="'       + escAttr(e.asn)       + '"' +
+      ' data-intel-hostnames="' + escAttr(e.hostnames) + '"' +
+      ' data-intel-domain="'    + escAttr(e.domain)    + '"' +
+      ' data-intel-country="'   + escAttr(e.country)   + '"' +
+      ' data-intel-city="'      + escAttr(e.city)      + '"' +
+      ' data-intel-totalreports="' + escAttr(e.totalreports) + '"' +
+      ' data-intel-lastreported="' + escAttr(e.lastreported) + '"';
+  }
+
+  // Build the data-hash-intel attribute string for a hashlist row.
+  // Full hash is always shown; VT enrichment rows are added when present.
+  function hashIntelAttrs(e) {
+    var s = ' data-hash-intel="1" data-intel-fullhash="' + escAttr(e.fullhash) + '"';
+    if (e.has_intel) {
+      s += ' data-intel-threat="'       + escAttr(e.threat)       + '"' +
+           ' data-intel-filetype="'     + escAttr(e.filetype)     + '"' +
+           ' data-intel-size="'         + escAttr(e.size)         + '"' +
+           ' data-intel-filename="'     + escAttr(e.filename)     + '"' +
+           ' data-intel-firstseen="'    + escAttr(e.firstseen)    + '"' +
+           ' data-intel-lastanalysis="' + escAttr(e.lastanalysis) + '"' +
+           ' data-intel-submitted="'    + escAttr(e.submitted)    + '"';
+    }
+    return s;
+  }
+
+  function setBars(on) {
+    ALL_BARS.forEach(function (id) {
+      var b = el(id);
+      if (!b) return;
+      if (on) b.classList.add('db-bar--active');
+      else    b.classList.remove('db-bar--active');
+    });
+    var spinner = el('db-refresh-spinner');
+    if (spinner) spinner.style.display = on ? 'block' : 'none';
+  }
+
+  function flash(elem) {
+    if (!elem) return;
+    elem.classList.remove('db-flash');
+    void elem.offsetWidth; /* reflow */
+    elem.classList.add('db-flash');
+  }
+
+  function setText(id, val) {
+    var node = el(id);
+    if (!node || node.textContent == String(val)) return;
+    node.textContent = val;
+    flash(node);
+  }
+
+  // SI-suffix compact format for the stat cards — mirrors the |compact_number
+  // template filter so the initial server render and live refreshes match.
+  function formatCompact(v) {
+    var n = Number(v);
+    if (!isFinite(n)) return String(v);
+    var sign = n < 0 ? '-' : '';
+    n = Math.abs(n);
+    var units = [[1e9,'B'], [1e6,'M'], [1e3,'K']];
+    for (var i = 0; i < units.length; i++) {
+      if (n >= units[i][0]) {
+        var s = (n / units[i][0]).toFixed(1).replace(/\.0$/, '');
+        return sign + s + units[i][1];
+      }
+    }
+    return sign + n;
+  }
+
+  // Update a stat counter: show the compact form, keep raw value in title.
+  function setStat(id, val) {
+    var node = el(id);
+    if (!node) return;
+    var compact = formatCompact(val);
+    if (node.textContent != compact) {
+      node.textContent = compact;
+      flash(node);
+    }
+    node.title = String(val);
+    // Keep the sibling `.info-tip` (label-row hover icon) in sync so the
+    // exact-count popover doesn't lag behind on auto-refresh. Cards without
+    // an info-tip are silently skipped.
+    var card = node.closest('.stat-card');
+    var tip  = card && card.querySelector('.info-tip');
+    if (tip) tip.setAttribute('data-tip', 'Count: ' + String(val));
+  }
+
+  /* ── Badge builders ── */
+  function hashBadge(type) {
+    var m = {
+      md5:    '<span class="badge badge-blue">MD5</span>',
+      sha1:   '<span class="badge badge-yellow">SHA1</span>',
+      sha256: '<span class="badge" style="background:rgba(139,92,246,.15);color:#8b5cf6;">SHA256</span>',
+      sha512: '<span class="badge badge-pink">SHA512</span>',
+    };
+    return m[type] || '<span class="badge">?</span>';
+  }
+
+  function srcBadge(source, display) {
+    var c = source === 'api' ? 'badge-blue' : source === 'import' ? 'badge-yellow' : 'badge-green';
+    return '<span class="badge ' + c + '">' + display + '</span>';
+  }
+
+  function grpBadge(name, label) {
+    if (name === '30d') return '<span class="badge" style="background:rgba(139,92,246,.15);color:#8b5cf6;">' + label + '</span>';
+    if (name === '24h') return '<span class="badge badge-pink">' + label + '</span>';
+    return '<span class="badge badge-yellow">' + label + '</span>';
+  }
+
+  /* ── DOM update ── */
+  function applyData(data) {
+    // Refresh the analytics pie charts too (defined in analytics.html).
+    if (data.charts && window.dbRenderCharts) window.dbRenderCharts(data.charts);
+    // Refresh the additions timeline with its current range/granularity
+    // selection (self-fetching; defined in timeline.html).
+    if (window.dbRefreshTimeline) window.dbRefreshTimeline();
+
+    var s = data.stats;
+    setStat('db-stat-hashlist',  s.hashlist_total);
+    setStat('db-stat-bl30d',     s.blacklist_30d);
+    setStat('db-stat-bl24h',     s.blacklist_24h);
+    setStat('db-stat-whitelist', s.whitelist_total);
+    setStat('db-stat-api',       s.api_reports);
+    setStat('db-stat-users',     s.users_total);
+
+    var HASH_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>';
+    var BL_ICON   = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>';
+    var WL_ICON   = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
+    var COPY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    var EXT_ICON  = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+
+    function copyBtn(value) {
+      return '<button type="button" class="copy-btn" data-copy="' + escAttr(value) + '" title="Copy" style="background:none;border:none;cursor:pointer;padding:0;color:var(--text-muted);line-height:1;opacity:0;transition:opacity .15s;flex-shrink:0;">' + COPY_ICON + '</button>';
+    }
+
+    function abuseLink(ip) {
+      return '<a class="abuse-link" href="https://www.abuseipdb.com/check/' + encodeURIComponent(ip) + '" target="_blank" rel="noopener noreferrer" title="View on AbuseIPDB" style="display:inline-flex;align-items:center;padding:0 0 0 2px;color:var(--text-muted);line-height:1;opacity:0;transition:opacity .15s;flex-shrink:0;text-decoration:none;">' + EXT_ICON + '</a>';
+    }
+
+    function vtLink(hash) {
+      return '<a class="vt-link" href="https://www.virustotal.com/gui/search?query=' + encodeURIComponent(hash) + '" target="_blank" rel="noopener noreferrer" title="View on VirusTotal" style="display:inline-flex;align-items:center;padding:0 0 0 2px;color:var(--text-muted);line-height:1;opacity:0;transition:opacity .15s;flex-shrink:0;text-decoration:none;">' + EXT_ICON + '</a>';
+    }
+
+    function rowIcon(bg, color, icon, id) {
+      // The status pill doubles as the ID-tooltip trigger: `info-tip` class +
+      // `data-tip="ID: …"` reveals the row's primary key on hover without
+      // claiming a separate column.
+      var tipAttr = id != null ? ' data-tip="ID: ' + id + '"' : '';
+      return '<td style="width:38px;"><span class="tbl-row-icon info-tip"' + tipAttr + ' style="background:' + bg + ';color:' + color + ';">' + icon + '</span></td>';
+    }
+
+    var hTbody = el('db-tbody-hashlist');
+    if (hTbody) {
+      hTbody.innerHTML = data.recent_hashlist.length
+        ? data.recent_hashlist.map(function (e) {
+            var hIntel = hashIntelAttrs(e);
+            var hStyle = 'font-family:var(--font-mono);cursor:help;border-bottom:1px dotted var(--text-muted);';
+            return '<tr>' +
+              rowIcon('rgba(203,91,99,0.13)', '#CB5B63', HASH_ICON, e.id) +
+              '<td style="text-align:left;max-width:160px;overflow:hidden;"><span class="db-copy-cell db-copy-cell--ellipsis">' +
+                '<span class="cidr" style="' + hStyle + '"' + hIntel + '>' + e.hash_prefix + '\u2026</span>' +
+                copyBtn(e.fullhash || '') +
+                vtLink(e.fullhash || '') +
+              '</span></td>' +
+              '<td style="white-space:nowrap;">' + hashBadge(e.hash_type) + '</td>' +
+              '<td style="white-space:nowrap;">' + srcBadge(e.source, e.source_display) + '</td>' +
+              '<td class="text-muted text-sm" style="white-space:nowrap;">' + e.added_at + '</td>' +
+            '</tr>';
+          }).join('')
+        : '<tr><td colspan="5" class="table-empty">No entries yet.</td></tr>';
+    }
+
+    var blTbody = el('db-tbody-blacklist');
+    if (blTbody) {
+      blTbody.innerHTML = data.recent_blacklist.length
+        ? data.recent_blacklist.map(function (e) {
+            var blBg    = e.group_name === '30d' ? 'rgba(227,125,137,0.13)' : e.group_name === '24h' ? 'rgba(242,157,168,0.13)' : 'rgba(251,191,36,0.13)';
+            var blColor = e.group_name === '30d' ? '#E37D89'                 : e.group_name === '24h' ? '#F29DA8'                  : '#fbbf24';
+            var blIntel = ipIntelAttrs(e);
+            var blIpStyle = blIntel ? ' style="cursor:help;border-bottom:1px dotted var(--text-muted);"' : '';
+            var blFlag = e.flag_url
+              ? '<img class="db-country-flag" width="16" height="12" src="' + escAttr(e.flag_url) + '" alt="' + escAttr(e.country_code || '') + '" title="' + escAttr(e.country || '') + '">'
+              : '<span class="db-country-flag db-country-flag--empty" aria-hidden="true"></span>';
+            return '<tr>' +
+              rowIcon(blBg, blColor, BL_ICON, e.id) +
+              '<td style="white-space:nowrap;text-align:center;position:relative;padding-left:32px;">' +
+                '<span class="db-flag-slot">' + blFlag + '</span>' +
+                '<span class="db-ip-cell">' +
+                  '<span class="cidr"' + blIpStyle + blIntel + '>' + e.ip_address + '</span>' +
+                  copyBtn(e.ip_address) +
+                  abuseLink(e.ip_address) +
+                '</span>' +
+              '</td>' +
+              '<td style="white-space:nowrap;">' + grpBadge(e.group_name, e.group_label) + '</td>' +
+              '<td style="white-space:nowrap;">' + srcBadge(e.source, e.source_display) + '</td>' +
+              '<td class="text-muted text-sm" style="white-space:nowrap;">' + e.added_at + '</td>' +
+            '</tr>';
+          }).join('')
+        : '<tr><td colspan="5" class="table-empty">No entries yet.</td></tr>';
+    }
+
+    var wlTbody = el('db-tbody-whitelist');
+    if (wlTbody) {
+      wlTbody.innerHTML = data.recent_whitelist.length
+        ? data.recent_whitelist.map(function (e) {
+            var sb = e.source === 'import'
+              ? '<span class="badge badge-yellow">Import</span>'
+              : '<span class="badge badge-green">Manual</span>';
+            return '<tr>' +
+              rowIcon('rgba(157,134,186,0.13)', '#9D86BA', WL_ICON, e.id) +
+              '<td style="white-space:nowrap;"><span class="db-copy-cell"><span class="cidr">' + e.cidr + '</span>' + copyBtn(e.cidr) + '</span></td>' +
+              '<td style="white-space:nowrap;"><span class="badge badge-pink">/' + e.prefix_length + '</span></td>' +
+              '<td style="white-space:nowrap;">' + sb + '</td>' +
+              '<td class="text-muted" style="white-space:nowrap;">' + e.added_at + '</td>' +
+            '</tr>';
+          }).join('')
+        : '<tr><td colspan="5" class="table-empty">No entries yet.</td></tr>';
+    }
+  }
+
+  /* ── Fetch ── */
+  function doFetch() {
+    if (fetching) return;
+    fetching = true;
+    setBars(true);
+
+    fetch(API_URL, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        applyData(data);
+        fetching = false;
+        setBars(false);
+        updateLastUpdated();
+        resetCountdown();
+      })
+      .catch(function () {
+        fetching = false;
+        setBars(false);
+        resetCountdown();
+      });
+  }
+
+  /* ── Last updated ── */
+  function updateLastUpdated() {
+    var now = new Date();
+    var pad = function (n) { return n < 10 ? '0' + n : n; };
+    var ts  = pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+    var timeEl = el('db-last-updated-time');
+    var wrapEl = el('db-last-updated');
+    if (timeEl) timeEl.textContent = ts;
+    // `visibility:hidden` reserves the row from the start so unhiding it
+    // on the first refresh doesn't push the stats grid down.
+    if (wrapEl) wrapEl.style.visibility = 'visible';
+  }
+
+  /* ── Countdown ── */
+  function resetCountdown() {
+    remaining = INTERVAL;
+    clearInterval(tickTimer);
+    updateCountdownEl();
+    tickTimer = setInterval(function () {
+      remaining = Math.max(0, remaining - 1);
+      updateCountdownEl();
+    }, 1000);
+  }
+
+  function updateCountdownEl() {
+    var node = el('db-countdown');
+    if (node) node.textContent = remaining + 's';
+  }
+
+  /* ── Auto-refresh loop ── */
+  function scheduleNext() {
+    clearTimeout(autoTimer);
+    autoTimer = setTimeout(function () {
+      doFetch();
+      scheduleNext();
+    }, INTERVAL * 1000);
+  }
+
+  /* ── Manual refresh button ── */
+  window.dbRefresh = function () {
+    clearTimeout(autoTimer);
+    clearInterval(tickTimer);
+    doFetch();
+    scheduleNext();
+  };
+
+  /* ── Boot ── */
+  resetCountdown();
+  scheduleNext();
+
+  /* ── Dashboard PDF download ── */
+  document.getElementById('db-pdf-btn').addEventListener('click', function() {
+    // Match the timeline section in the PDF to the user's current UI selection
+    // (range + granularity); falls back to view defaults if not yet rendered.
+    // For the minute bucket we send `minutes` so the PDF mirrors the exact
+    // window the user is looking at (e.g. "Last 60 minutes · Minutely").
+    var pdfUrl = '{% url "dashboard:export_pdf" %}';
+    var t = window.__dbTimelineData;
+    if (t && t.bucket) {
+      var params = ['bucket=' + encodeURIComponent(t.bucket)];
+      if (t.bucket === 'minute' && t.minutes != null) {
+        params.push('minutes=' + encodeURIComponent(t.minutes));
+      } else if (t.days != null) {
+        params.push('days=' + encodeURIComponent(t.days));
+      }
+      pdfUrl += '?' + params.join('&');
+    }
+    window.downloadPdfWithOverlay(pdfUrl, 'db-pdf-loading', 'dashboard.pdf');
+  });
+})();
+</script>
+
+<div id="db-pdf-loading" style="display:none;position:fixed;inset:0;z-index:1100;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:36px 48px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px;box-shadow:0 8px 40px rgba(0,0,0,0.5);">
+    <div class="pdf-gen-spinner"></div>
+    <div style="color:var(--text-primary);font-weight:600;font-size:14px;">Generating PDF&hellip;</div>
+    <div style="color:var(--text-muted);font-size:12px;">This may take a moment, please wait.</div>
+  </div>
+</div>
+<style>
+@keyframes pdf-gen-spin { to { transform: rotate(360deg); } }
+.pdf-gen-spinner { width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--brand-suffix);border-radius:50%;animation:pdf-gen-spin .75s linear infinite; }
+</style>
+{% endblock %}

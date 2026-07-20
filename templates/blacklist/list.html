@@ -1,0 +1,1508 @@
+{% extends "base.html" %}
+{% load blacklist_extras %}
+{% block title %}IP Blacklist{% endblock %}
+{% block topbar_title %}IP Blacklist{% endblock %}
+
+{% block content %}
+<style>
+/* Critical layout — declared before the table markup so the wrapper's flex
+   constraints are in effect from the very first paint. Without this the table
+   briefly renders at full content height (no scroll) on every pagination /
+   filter navigation, then snaps back once the bottom <style> block is parsed. */
+.page-content { overflow: hidden; display: flex; flex-direction: column; }
+.page-header  { flex-shrink: 0; }
+#bl-filter-area { flex-shrink: 0; }
+#bulk-delete-form-bl { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#bulk-delete-form-bl .table-wrapper {
+  flex: 1; min-height: 0; overflow: auto;
+  /* Isolate this subtree's reflow so unrelated DOM changes (Alpine init,
+     tooltip mouseover, etc.) don't trigger a full document relayout. */
+  contain: layout style;
+}
+.pagination { flex-shrink: 0; }
+@keyframes bl-spin { to { transform: rotate(360deg); } }
+</style>
+<div class="page-header">
+  <div>
+    <h1 class="page-title">IP BLACKLIST</h1>
+  </div>
+  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span id="bl-countdown-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);">
+        <svg id="bl-refresh-spinner" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="display:none;animation:bl-spin 0.8s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        <span>Next refresh in</span>
+        <span id="bl-countdown" style="font-weight:600;color:var(--text-primary);font-family:var(--font-mono);min-width:24px;text-align:right;">{{ refresh_seconds }}s</span>
+      </span>
+      <button id="bl-refresh-btn" type="button" class="btn btn-brand btn-sm" data-on-click="blManualRefresh()" title="Refresh now">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/><polyline points="21 3 21 9 15 9"/></svg>
+      </button>
+      <button id="bl-pause-btn" type="button" class="btn btn-warning btn-sm" data-on-click="blTogglePause()" title="Pause auto-refresh">
+        <svg id="bl-pause-icon" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+      </button>
+    </div>
+    <span id="bl-last-updated" style="font-size:11px;color:var(--text-muted);visibility:hidden;">
+      Updated | <span id="bl-last-updated-time" style="font-family:var(--font-mono);">--:--:--</span>
+    </span>
+  </div>
+</div>
+
+<!-- Import CSV hidden form -->
+{% if request.user.profile.role.can_manage_blacklist or request.user.is_superuser %}
+<form enctype="multipart/form-data" id="import-form-bl" style="display:none;">
+  {% csrf_token %}
+  <input type="file" name="csv_file" id="csv-file-bl" accept=".csv">
+</form>
+{% endif %}
+
+<!-- Filters + Status tabs -->
+<div id="bl-filter-area" x-data="{ open: {% if filters.search or filters.group or filters.source %}true{% else %}false{% endif %} }">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+    <!-- Left: status tabs + filters toggle + active badges -->
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+      <a href="?{% if filters.search %}search={{ filters.search }}&{% endif %}{% if filters.group %}group={{ filters.group }}&{% endif %}{% if filters.source %}source={{ filters.source }}&{% endif %}status=active"
+         class="btn btn-sm {% if filters.status == 'active' %}btn-brand{% else %}btn-ghost{% endif %}">Active <span data-bl-count="active" style="opacity:.7;font-size:11px;">{{ count_active }}</span></a>
+      <a href="?{% if filters.search %}search={{ filters.search }}&{% endif %}{% if filters.group %}group={{ filters.group }}&{% endif %}{% if filters.source %}source={{ filters.source }}&{% endif %}status=inactive"
+         class="btn btn-sm {% if filters.status == 'inactive' %}btn-brand{% else %}btn-ghost{% endif %}">Inactive <span data-bl-count="inactive" style="opacity:.7;font-size:11px;">{{ count_inactive }}</span></a>
+      <a href="?{% if filters.search %}search={{ filters.search }}&{% endif %}{% if filters.group %}group={{ filters.group }}&{% endif %}{% if filters.source %}source={{ filters.source }}&{% endif %}status=all"
+         class="btn btn-sm {% if filters.status == 'all' %}btn-brand{% else %}btn-ghost{% endif %}">All <span data-bl-count="all" style="opacity:.7;font-size:11px;">{{ count_all }}</span></a>
+      <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+      <a @click="open = !open" class="btn btn-info btn-sm">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        Filters
+      </a>
+      {% if request.user.profile.role.name == 'admin' or request.user.is_superuser %}
+      <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+      <a href="{% url 'settings_app:activity_log' %}?type=ip_blacklist" class="btn btn-orange btn-sm">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        History
+      </a>
+      {% endif %}
+      {% if filters.search %}<span class="badge badge-blue">Search: {{ filters.search }}</span>{% endif %}
+      {% if filters.group %}<span class="badge badge-blue">Group filtered</span>{% endif %}
+      {% if filters.source %}<span class="badge badge-blue">{{ filters.source|capfirst }}</span>{% endif %}
+    </div>
+    <!-- Right: History + action buttons -->
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+      
+      {% if request.user.profile.role.can_manage_blacklist or request.user.is_superuser %}
+      <a type="button" class="btn btn-brand btn-sm" data-on-click="openBlPdfModal()">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        Report
+      </a>
+      <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+      <a href="{% url 'blacklist:export' %}?status={{ filters.status }}{% if filters.search %}&search={{ filters.search }}{% endif %}{% if filters.group %}&group={{ filters.group }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}" class="btn btn-success btn-sm">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export
+      </a>
+      <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+      <div class="csv-tooltip-wrap">
+        <a type="button" class="btn btn-success btn-sm" data-on-click="blTriggerFileInput()">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Import
+        </a>
+        <div class="csv-tooltip">
+          <h4>Import CSV — IP Blacklist</h4>
+          <p style="color:var(--warning);font-size:11px;margin-bottom:6px;">⚠ Only single IPs allowed. CIDR blocks are skipped and counted as errors.</p>
+          <p>Accepted column names (case-insensitive):</p>
+          <p><strong style="color:var(--text-primary)">IP</strong> — required per row, must be a single IP address<br>
+          <span class="tip-label">cidr · ip · ip_address · address · network · subnet</span></p>
+          <p><strong style="color:var(--text-primary)">Group</strong> — optional, defaults to <em>30d</em><br>
+          <span class="tip-label">group · group_name · list &nbsp;|&nbsp; values: 24h · 30d</span></p>
+          <p><strong style="color:var(--text-primary)">Reason</strong> — optional<br>
+          <span class="tip-label">reason · description · note · comment</span></p>
+          <p style="margin-top:10px;color:var(--text-primary);font-weight:600;">Example formats:</p>
+          <code>192.168.1.100,24h,Suspicious scan
+10.0.0.5,,Known attacker
+203.0.113.42,30d</code>
+          <p style="margin-top:6px;color:var(--text-primary);font-weight:600;">Plain IP list (no header):</p>
+          <code>10.10.10.1
+10.10.10.2
+10.10.10.3</code>
+          <p class="tip-label" style="margin-top:8px;">File encoding: UTF-8 · Format: .csv</p>
+        </div>
+      </div>
+      <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+      <a type="button" class="btn btn-info btn-sm" data-on-click="openBlAddModal()">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add
+      </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <form method="get" x-show="open" style="display:none;margin-bottom:16px;">
+    <input type="hidden" name="status" value="{{ filters.status }}">
+    <div class="filter-bar">
+      <input type="search" name="search" class="form-input form-input-sm" placeholder="Search IP or reason..."
+             value="{{ filters.search }}">
+      <select name="group" class="form-select form-select-sm">
+        <option value="">All Groups</option>
+        {% for g in groups %}<option value="{{ g.pk }}" {% if filters.group == g.pk|stringformat:"s" %}selected{% endif %}>{{ g.label }}</option>{% endfor %}
+      </select>
+      <select name="source" class="form-select form-select-sm">
+        <option value="">All Sources</option>
+        <option value="manual" {% if filters.source == 'manual' %}selected{% endif %}>Manual</option>
+        <option value="api" {% if filters.source == 'api' %}selected{% endif %}>API</option>
+        <option value="import" {% if filters.source == 'import' %}selected{% endif %}>Import</option>
+      </select>
+      <button type="submit" class="btn btn-brand btn-sm">Apply</button>
+      <a href="{% url 'blacklist:list' %}" class="btn btn-ghost btn-sm">Clear</a>
+    </div>
+  </form>
+</div>
+
+<!-- Bulk action form wraps the table -->
+<form method="post" action="{% url 'blacklist:bulk_delete' %}" id="bulk-delete-form-bl">
+  {% csrf_token %}
+  <input type="hidden" name="status" value="{{ filters.status }}" id="bl-bulk-status">
+
+  {% if request.user.profile.role.can_manage_blacklist or request.user.is_superuser %}
+  <div id="bulk-toolbar-bl" style="display:none;margin-bottom:10px;align-items:center;gap:10px;">
+    <span id="bulk-count-bl" class="text-muted text-sm"></span>
+    {% if filters.status == 'inactive' %}
+    <a type="button" class="btn btn-success btn-sm" data-on-click="blConfirm('activate')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg> Activate</a>
+    <a type="button" class="btn btn-danger btn-sm" data-on-click="blConfirm('hard_remove')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg> Remove</a>
+    {% else %}
+    <a type="button" class="btn btn-warning btn-sm" data-on-click="blConfirm('deactivate')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg> Deactivate</a>
+    {% endif %}
+    <a type="button" class="btn btn-orange btn-sm" data-on-click="openBlBulkEditModal()"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> Edit</a>
+    <a type="button" class="btn btn-pink btn-sm" data-on-click="blConfirm('score')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> Query AbuseIPDB</a>
+    <a type="button" class="btn btn-ghost btn-sm" data-on-click="clearSelectionBl()">Clear</a>
+
+  </div>
+  {% endif %}
+
+  <div class="table-wrapper">
+    <table style="text-align:center;min-width:900px;">
+      <thead>
+        <tr>
+          {% if request.user.profile.role.can_manage_blacklist or request.user.is_superuser %}
+          <th style="width:36px;text-align:center;">
+            <input type="checkbox" id="select-all-bl" class="form-checkbox" title="Select all">
+          </th>
+          {% endif %}
+          <th style="width:32px;" title="Row ID — hover the status icon to view, or type the number in the search box."></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;padding-right:4px;"><a href="?{{ sort_qs }}&sort=ip&dir={% if sort == 'ip' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">IP{% if sort == 'ip' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;padding-left:4px;"><a href="?{{ sort_qs }}&sort=group&dir={% if sort == 'group' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Group{% if sort == 'group' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;">
+            <a href="?{{ sort_qs }}&sort=hit_count&dir={% if sort == 'hit_count' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:5px;justify-content:center;">
+              Count
+              <span class="info-tip info-tip-float" data-tip="Number of API reports for this IP in the last {{ promotion_window_days }} day{{ promotion_window_days|pluralize }}.&#10;This value drives the 24h → 30d promotion threshold check.">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              </span>
+              {% if sort == 'hit_count' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}
+            </a>
+          </th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=source&dir={% if sort == 'source' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Source{% if sort == 'source' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;">Reason</th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=score&dir={% if sort == 'score' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">AbuseIPDB{% if sort == 'score' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=checked&dir={% if sort == 'checked' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">AbuseIPDB Checked{% if sort == 'checked' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=added&dir={% if sort == 'added' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Added{% if sort == 'added' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=added_by&dir={% if sort == 'added_by' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Added By{% if sort == 'added_by' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=expires&dir={% if sort == 'expires' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Expires{% if sort == 'expires' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          {% if request.user.profile.role.can_manage_blacklist or request.user.is_superuser %}<th style="text-align:center;white-space:nowrap;">Actions</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody id="bl-tbody">
+        {% include "blacklist/_list_rows.html" %}
+      </tbody>
+    </table>
+  </div>
+</form>
+
+{% with page_obj=entries %}{% include "partials/pagination.html" %}{% endwith %}
+
+<!-- Hidden single-entry action form -->
+<form method="post" id="bl-single-remove-form" style="display:none;">
+  {% csrf_token %}
+  <input type="hidden" name="status" id="bl-single-status" value="{{ filters.status }}">
+</form>
+
+<!-- ── Add Modal ──────────────────────────────────────────────────── -->
+<div id="bl-add-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:520px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);max-height:90vh;overflow-y:auto;">
+
+    <!-- Header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;">Add to IP Blacklist</h2>
+      <button type="button" data-on-click="closeBlAddModal()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</button>
+    </div>
+
+    <!-- Tabs -->
+    <div style="display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0;">
+      <button type="button" id="bl-tab-single" data-on-click="blSwitchTab('single')"
+              style="padding:6px 16px;border:none;border-bottom:2px solid var(--accent);background:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);margin-bottom:-1px;">
+        Quick Add
+      </button>
+      <button type="button" id="bl-tab-bulk" data-on-click="blSwitchTab('bulk')"
+              style="padding:6px 16px;border:none;border-bottom:2px solid transparent;background:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:-1px;">
+        Bulk Add
+      </button>
+    </div>
+
+    <!-- Quick Add (single IP) -->
+    <div id="bl-panel-single">
+      <form method="post" action="{% url 'blacklist:create' %}">
+        {% csrf_token %}
+        <input type="hidden" name="status" value="{{ filters.status }}">
+        <div class="form-group">
+          <label class="form-label">IP Address <span class="required">*</span></label>
+          <input type="text" name="ip_input" class="form-input" placeholder="192.168.1.1" required autocomplete="off">
+          <p class="text-sm" style="margin-top:4px;color:var(--warning);">⚠ CIDR blocks are not accepted. Enter a single IP address.</p>
+        </div>
+        <div class="form-group" style="margin-top:12px;">
+          <label class="form-label">Group <span class="required">*</span></label>
+          <select name="group" class="form-select" required>
+            {% for g in groups %}<option value="{{ g.pk }}">{{ g.label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="form-group" style="margin-top:12px;">
+          <label class="form-label">Reason</label>
+          <input type="text" name="reason" class="form-input" placeholder="Optional reason...">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:16px;">
+          <a type="button" data-on-click="closeBlAddModal()" class="btn btn-ghost">Cancel</a>
+          <button type="submit" class="btn btn-info">Add</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Bulk Add (multiple IPs) -->
+    <div id="bl-panel-bulk" style="display:none;">
+      <form method="post" action="{% url 'blacklist:bulk_create' %}">
+        {% csrf_token %}
+        <input type="hidden" name="status" value="{{ filters.status }}">
+        <div class="form-group">
+          <label class="form-label">IP Addresses <span class="required">*</span></label>
+          <textarea name="ip_list" class="form-input" rows="8"
+                    style="font-family:var(--font-mono);font-size:12px;"
+                    placeholder="One IP per line&#10;192.168.1.1&#10;10.0.0.5&#10;203.0.113.5" required></textarea>
+          <p class="text-muted text-sm" style="margin-top:4px;">
+            One IP per line · Max 500 entries
+          </p>
+          <p class="text-sm" style="margin-top:4px;color:var(--warning);">
+            ⚠ CIDR blocks (e.g. 10.0.0.0/24) are not accepted. Only single IPs are allowed.
+          </p>
+        </div>
+        <div class="form-group" style="margin-top:12px;">
+          <label class="form-label">Group <span class="required">*</span></label>
+          <select name="group" class="form-select" required>
+            {% for g in groups %}<option value="{{ g.pk }}">{{ g.label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="form-group" style="margin-top:12px;">
+          <label class="form-label">Reason</label>
+          <input type="text" name="reason" class="form-input" placeholder="Optional reason for all entries...">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:16px;">
+          <a type="button" data-on-click="closeBlAddModal()" class="btn btn-ghost">Cancel</a>
+          <button type="submit" class="btn btn-info">Add</button>
+        </div>
+      </form>
+    </div>
+
+  </div>
+</div>
+
+<!-- Confirm Modal -->
+<div id="bl-confirm-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:32px;max-width:420px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+      <svg id="bl-modal-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" style="width:26px;height:26px;flex-shrink:0;"></svg>
+      <h2 id="bl-modal-title" style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;"></h2>
+    </div>
+    <p id="bl-modal-body" style="color:var(--text-secondary);font-size:14px;margin-bottom:24px;"></p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button data-on-click="blHideConfirmModal()" class="btn btn-ghost btn-sm">Cancel</button>
+      <button id="bl-modal-confirm-btn" class="btn btn-sm" data-on-click="blDoAction()"></button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Bulk Edit Group Modal ──────────────────────────────────────── -->
+<div id="bl-bulk-edit-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:420px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;">Edit Selected Entries</h2>
+      <button type="button" data-on-click="closeBlBulkEditModal()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</button>
+    </div>
+
+    <p class="text-muted text-sm" style="margin-bottom:16px;">
+      Selected entries will be moved to the chosen group. Expiry will be recalculated based on the group's rules.
+    </p>
+
+    <form method="post" action="{% url 'blacklist:bulk_edit_group' %}" id="bl-bulk-edit-form">
+      {% csrf_token %}
+      <input type="hidden" name="status" id="bl-bulk-edit-status" value="{{ filters.status }}">
+      <!-- entry_ids injected by JS -->
+      <div id="bl-bulk-edit-ids"></div>
+
+      <div class="form-group">
+        <label class="form-label">New Group <span class="required">*</span></label>
+        <select name="group_id" class="form-select" required>
+          {% for g in groups %}
+          <option value="{{ g.pk }}">{{ g.label }}{% if g.default_duration_hours %} — {{ g.duration_display }}{% else %} — Permanent{% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px;border-top:1px solid var(--border);padding-top:16px;">
+        <a type="button" data-on-click="closeBlBulkEditModal()" class="btn btn-ghost">Cancel</a>
+        <button type="submit" class="btn btn-info">Apply</button>
+      </div>
+    </form>
+
+  </div>
+</div>
+
+<!-- ── Edit Entry Modal ───────────────────────────────────────────── -->
+<div id="bl-edit-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:480px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;">Edit Entry</h2>
+      <button type="button" data-on-click="closeBlEditModal()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</button>
+    </div>
+
+    <form method="post" id="bl-edit-form">
+      {% csrf_token %}
+      <input type="hidden" name="status" id="bl-edit-status" value="{{ filters.status }}">
+      <div class="form-group">
+        <label class="form-label">IP Address or CIDR <span class="required">*</span></label>
+        <input type="text" name="ip_input" id="bl-edit-cidr" class="form-input" placeholder="192.168.1.1" required autocomplete="off">
+      </div>
+      <div class="form-group" style="margin-top:12px;">
+        <label class="form-label">Group <span class="required">*</span></label>
+        <select name="group" id="bl-edit-group" class="form-select" required>
+          {% for g in groups %}<option value="{{ g.pk }}">{{ g.label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group" style="margin-top:12px;">
+        <label class="form-label">Reason</label>
+        <input type="text" name="reason" id="bl-edit-reason" class="form-input" placeholder="Optional reason...">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:16px;">
+        <a type="button" data-on-click="closeBlEditModal()" class="btn btn-ghost">Cancel</a>
+        <button type="submit" class="btn btn-info">Save</button>
+      </div>
+    </form>
+
+  </div>
+</div>
+
+<!-- Toast container (data attrs carry threshold values from Django into JS) -->
+<div id="bl-toast-container" data-score-30d="{{ score_30d }}" data-score-24h="{{ score_24h }}"></div>
+
+<script nonce="{{ csp_nonce }}">
+// ── CSP wrapper helpers for complex inline expressions ─────────────
+window.blTriggerFileInput  = function () { document.getElementById('csv-file-bl').click(); };
+window.blHideConfirmModal  = function () { document.getElementById('bl-confirm-modal').style.display = 'none'; };
+window.reloadPage          = function () { window.location.reload(); };
+
+var _blScoreEl = document.getElementById('bl-toast-container');
+var SCORE_30D = parseInt(_blScoreEl.dataset.score30d, 10) || 80;
+var SCORE_24H = parseInt(_blScoreEl.dataset.score24h, 10) || 10;
+
+// ── Toast helper ──────────────────────────────────────────────────
+function showToast(message, type) {
+  const container = document.getElementById('bl-toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'bl-toast bl-toast-' + (type || 'info');
+  toast.textContent = message;
+  container.appendChild(toast);
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () { toast.classList.add('bl-toast-show'); });
+  });
+  setTimeout(function () {
+    toast.classList.remove('bl-toast-show');
+    setTimeout(function () { toast.remove(); }, 300);
+  }, 5000);
+}
+
+// ── Update row score cells after AJAX score ───────────────────────
+function updateRowScore(entryId, score, groupLabel, groupName, expiresAt) {
+  const row = document.querySelector('tr[data-entry-id="' + entryId + '"]');
+  if (!row) return;
+
+  // Score badge
+  const scoreCell = row.querySelector('[data-score-cell]');
+  if (scoreCell) {
+    var cls = score >= SCORE_30D ? 'badge-red' : score >= SCORE_24H ? 'badge-yellow' : 'badge-green';
+    scoreCell.innerHTML = '<span class="badge ' + cls + '">' + score + '</span>';
+  }
+
+  // Checked-at badge (use browser local time formatted as YYYY-MM-DD HH:MM)
+  const checkedCell = row.querySelector('[data-checked-cell]');
+  if (checkedCell) {
+    var now = new Date();
+    var pad = function(n) { return String(n).padStart(2, '0'); };
+    var ts = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate())
+           + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+    var cls2 = score >= SCORE_30D ? 'badge-red' : score >= SCORE_24H ? 'badge-yellow' : 'badge-muted';
+    checkedCell.innerHTML = '<span class="badge ' + cls2 + '">' + ts + '</span>';
+  }
+
+  // Group badge — mirror template colour logic
+  const groupCell = row.querySelector('[data-group-cell]');
+  if (groupCell && groupLabel) {
+    var groupBadge;
+    if (groupName === '30d') {
+      groupBadge = '<span class="badge" style="background:rgba(139,92,246,.15);color:#8b5cf6;">' + groupLabel + '</span>';
+    } else if (groupName === '24h') {
+      groupBadge = '<span class="badge badge-pink">' + groupLabel + '</span>';
+    } else {
+      groupBadge = '<span class="badge badge-yellow">' + groupLabel + '</span>';
+    }
+    groupCell.innerHTML = groupBadge;
+  }
+
+  // Expires-at badge
+  const expiresCell = row.querySelector('[data-expires-cell]');
+  if (expiresCell) {
+    if (expiresAt) {
+      expiresCell.innerHTML = '<span class="badge badge-green">' + expiresAt + '</span>';
+    } else {
+      expiresCell.innerHTML = '<span class="badge badge-yellow">—</span>';
+    }
+  }
+}
+
+// ── Add Modal ──────────────────────────────────────────────────────
+window.openBlAddModal = function () {
+  document.getElementById('bl-add-modal').style.display = 'flex';
+};
+window.closeBlAddModal = function () {
+  document.getElementById('bl-add-modal').style.display = 'none';
+};
+document.getElementById('bl-add-modal').addEventListener('click', function (e) {
+  if (e.target === this) closeBlAddModal();
+});
+window.blSwitchTab = function (tab) {
+  const single = tab === 'single';
+  document.getElementById('bl-panel-single').style.display = single ? 'block' : 'none';
+  document.getElementById('bl-panel-bulk').style.display   = single ? 'none'  : 'block';
+  const tSingle = document.getElementById('bl-tab-single');
+  const tBulk   = document.getElementById('bl-tab-bulk');
+  tSingle.style.color       = single ? 'var(--accent)'     : 'var(--text-muted)';
+  tSingle.style.borderBottomColor = single ? 'var(--accent)' : 'transparent';
+  tBulk.style.color         = single ? 'var(--text-muted)' : 'var(--accent)';
+  tBulk.style.borderBottomColor   = single ? 'transparent'  : 'var(--accent)';
+};
+
+(function () {
+  const selectAll = document.getElementById('select-all-bl');
+  const toolbar   = document.getElementById('bulk-toolbar-bl');
+  const countEl   = document.getElementById('bulk-count-bl');
+  let pendingIsBulk = true;
+  let pendingAction = null;
+  let pendingActionKey = null;
+  let pendingSingleUrl = null;
+
+  function updateToolbar() {
+    const checked = document.querySelectorAll('.row-check-bl:checked');
+    if (checked.length > 0) {
+      toolbar.style.display = 'flex';
+      countEl.textContent = checked.length + ' selected';
+    } else {
+      toolbar.style.display = 'none';
+    }
+  }
+
+  if (selectAll) {
+    selectAll.addEventListener('change', function () {
+      document.querySelectorAll('.row-check-bl').forEach(cb => cb.checked = this.checked);
+      updateToolbar();
+    });
+  }
+
+  // Delegated so checkboxes that come from tbody auto-refresh swaps
+  // wire up to the bulk-toolbar counter the same way.
+  document.addEventListener('change', function (e) {
+    var cb = e.target.closest('.row-check-bl');
+    if (!cb) return;
+    if (!cb.checked && selectAll) selectAll.checked = false;
+    updateToolbar();
+  });
+
+  window.clearSelectionBl = function () {
+    document.querySelectorAll('.row-check-bl').forEach(cb => cb.checked = false);
+    if (selectAll) selectAll.checked = false;
+    updateToolbar();
+  };
+
+  // Single-row action buttons are delegated off `document` so they keep
+  // working after the auto-refresh poll swaps `<tbody>` innerHTML — the
+  // old per-button addEventListener pattern would lose its listeners on
+  // every refresh, leaving the new rows (especially on the Inactive tab)
+  // completely unresponsive.
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.bl-single-deactivate');
+    if (!btn) return;
+    showModal({
+      title: 'Deactivate Entry',
+      body: '"' + btn.dataset.cidr + '" will be moved to Inactive and no longer block traffic.',
+      btnText: 'Deactivate',
+      btnClass: 'btn-warning',
+      iconStroke: 'var(--warning)',
+      iconPath: '<circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/>',
+    });
+    pendingIsBulk = false;
+    pendingSingleUrl = btn.dataset.url;
+  });
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.bl-single-activate');
+    if (!btn) return;
+    showModal({
+      title: 'Activate Entry',
+      body: '"' + btn.dataset.cidr + '" will be re-activated and will block traffic again.',
+      btnText: 'Activate',
+      btnClass: 'btn-success',
+      iconStroke: 'var(--success)',
+      iconPath: '<polyline points="20 6 9 17 4 12"/>',
+    });
+    pendingIsBulk = false;
+    pendingSingleUrl = btn.dataset.url;
+  });
+
+  // ── Score modal helpers ───────────────────────────────────────────
+  var _scoreAnimFrame = null;
+
+  function openScoreProgressModal(title, subtitle) {
+    document.getElementById('score-modal-title').textContent = title;
+    document.getElementById('score-modal-subtitle').textContent = subtitle;
+    document.getElementById('score-phase-label').textContent = 'Preparing…';
+    document.getElementById('score-pct-label').textContent = '0%';
+    document.getElementById('score-bar').style.width = '0%';
+    document.getElementById('score-bar').style.background = '#c83c8c';
+    document.getElementById('score-modal-icon').setAttribute('stroke', '#c83c8c');
+    document.getElementById('score-current-row').style.display = 'none';
+    document.getElementById('score-progress-section').style.display = 'block';
+    document.getElementById('score-result-section').style.display = 'none';
+    document.getElementById('score-modal-close-btn').style.display = 'none';
+    document.getElementById('score-modal-reload-btn').style.display = 'none';
+    document.getElementById('score-progress-modal').style.display = 'flex';
+  }
+
+  window.closeScoreProgressModal = function () {
+    document.getElementById('score-progress-modal').style.display = 'none';
+  };
+
+  function setScoreBar(pct, phaseText) {
+    if (_scoreAnimFrame) { cancelAnimationFrame(_scoreAnimFrame); _scoreAnimFrame = null; }
+    document.getElementById('score-bar').style.width = pct + '%';
+    document.getElementById('score-pct-label').textContent = pct + '%';
+    if (phaseText !== undefined) document.getElementById('score-phase-label').textContent = phaseText;
+  }
+
+  function animateScoreBar(from, to, durationMs) {
+    var start = performance.now();
+    function step(now) {
+      var t = Math.min((now - start) / durationMs, 1);
+      var cur = Math.round(from + (to - from) * t);
+      document.getElementById('score-bar').style.width = cur + '%';
+      document.getElementById('score-pct-label').textContent = cur + '%';
+      if (t < 1) _scoreAnimFrame = requestAnimationFrame(step);
+    }
+    if (_scoreAnimFrame) cancelAnimationFrame(_scoreAnimFrame);
+    _scoreAnimFrame = requestAnimationFrame(step);
+  }
+
+  function showScoreResults(data, isBulk) {
+    if (_scoreAnimFrame) { cancelAnimationFrame(_scoreAnimFrame); _scoreAnimFrame = null; }
+    document.getElementById('score-progress-section').style.display = 'none';
+    document.getElementById('score-result-section').style.display = 'block';
+    document.getElementById('score-modal-close-btn').style.display = '';
+    if (isBulk) document.getElementById('score-modal-reload-btn').style.display = '';
+
+    var ok = isBulk ? (data.scored + data.failed > 0) : data.success;
+    if (ok) {
+      document.getElementById('score-modal-title').textContent = isBulk ? 'Scoring Complete' : 'Score Retrieved';
+      document.getElementById('score-modal-icon').setAttribute('stroke', 'var(--success)');
+      if (isBulk) {
+        document.getElementById('score-result-grid').innerHTML =
+          scoreStatCard(data.scored, 'Scored',  'var(--success)') +
+          scoreStatCard(data.failed, 'Failed',  data.failed ? 'var(--danger)' : 'var(--text-muted)') +
+          scoreStatCard(data.scored + data.failed, 'Total', 'var(--text-muted)');
+        document.getElementById('score-result-note').textContent = data.failed
+          ? data.failed + ' entr' + (data.failed === 1 ? 'y' : 'ies') + ' could not be queried. Check API key and settings.'
+          : 'All entries scored successfully.';
+      } else {
+        var scoreColor = data.score >= SCORE_30D ? 'var(--danger)' : data.score >= SCORE_24H ? 'var(--warning)' : 'var(--success)';
+        document.getElementById('score-result-grid').innerHTML =
+          scoreStatCard(data.score, 'Abuse Score', scoreColor) +
+          scoreStatCard(data.group_label || '—', 'Group', 'var(--text-secondary)');
+        document.getElementById('score-result-note').textContent = data.message || '';
+      }
+    } else {
+      document.getElementById('score-modal-title').textContent = 'Score Failed';
+      document.getElementById('score-modal-icon').setAttribute('stroke', 'var(--danger)');
+      document.getElementById('score-result-grid').innerHTML =
+        '<div style="grid-column:1/-1;padding:12px;background:rgba(239,68,68,.08);border:1px solid var(--danger);border-radius:var(--radius);color:var(--danger);font-size:13px;">' +
+        (data.message || 'Query failed.') + '</div>';
+      document.getElementById('score-result-note').textContent = '';
+    }
+  }
+
+  function scoreStatCard(num, label, color) {
+    return '<div class="csv-stat-card"><div class="csv-stat-num" style="color:' + color + ';">' + num + '</div><div class="csv-stat-label">' + label + '</div></div>';
+  }
+
+  // Build entry-id → score-url map from rendered rows
+  var _scoreUrlMap = {};
+  document.querySelectorAll('tr[data-entry-id]').forEach(function (row) {
+    var id  = row.dataset.entryId;
+    var btn = row.querySelector('.bl-score-btn');
+    if (btn && btn.dataset.url) _scoreUrlMap[id] = { url: btn.dataset.url, ip: btn.dataset.ip || id };
+  });
+
+  // Single score buttons — delegated so they survive tbody swaps.
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.bl-score-btn');
+    if (!btn) return;
+    var url     = btn.dataset.url;
+    var ip      = btn.dataset.ip;
+    var row     = btn.closest('tr');
+    var entryId = row ? row.dataset.entryId : null;
+    var csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+    openScoreProgressModal('Querying AbuseIPDB', ip);
+    animateScoreBar(0, 70, 600);
+
+    fetch(url, { method: 'POST', headers: { 'X-CSRFToken': csrfToken } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        setScoreBar(100, d.success ? 'Complete' : 'Failed');
+        if (d.success && entryId) updateRowScore(entryId, d.score, d.group_label, d.group_name, d.expires_at);
+        setTimeout(function () { showScoreResults(d, false); }, 200);
+      })
+      .catch(function (err) {
+        showScoreResults({ success: false, message: 'Network error: ' + err }, false);
+      });
+  });
+
+  // Pin toggle buttons — direct AJAX, no confirm modal
+  var SVG_PIN_SOLID   = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><line x1="12" y1="17" x2="12" y2="22" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>';
+  var SVG_PIN_OUTLINE = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>';
+  var SVG_BADGE_ICON  = '<svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-1px;"><line x1="12" y1="17" x2="12" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>';
+
+  document.addEventListener('click', function (e) {
+    var self = e.target.closest('.bl-pin-btn');
+    if (!self) return;
+    var url       = self.dataset.url;
+    var origHTML  = self.innerHTML;
+    var csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+    self.disabled = true;
+
+    fetch(url, { method: 'POST', headers: { 'X-CSRFToken': csrfToken } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        self.disabled = false;
+        if (d.success) {
+          var nowPinned = d.is_pinned;
+          self.dataset.pinned = nowPinned ? 'true' : 'false';
+          self.dataset.tip = nowPinned ? 'Unpin entry' : 'Pin - exempt from auto score changes';
+          self.innerHTML = nowPinned ? SVG_PIN_SOLID : SVG_PIN_OUTLINE;
+          if (nowPinned) {
+            self.classList.remove('btn-purple');
+            self.classList.add('btn-purple-solid');
+          } else {
+            self.classList.remove('btn-purple-solid');
+            self.classList.add('btn-purple');
+          }
+          var row = self.closest('tr');
+          if (row) {
+            var inner = row.querySelector('.bl-ip-cell-inner');
+            var badge = inner ? inner.querySelector('.badge-purple') : null;
+            if (nowPinned && !badge && inner) {
+              var span = document.createElement('span');
+              span.className = 'badge badge-purple tip tip-wrap';
+              span.style.cssText = 'font-size:10px;flex-shrink:0;';
+              span.dataset.tip = 'Pinned - group and status are protected from automatic score-based changes';
+              span.innerHTML = SVG_BADGE_ICON;
+              var copyBtn = inner.querySelector('.copy-btn');
+              inner.insertBefore(span, copyBtn);
+            } else if (!nowPinned && badge) {
+              badge.remove();
+            }
+          }
+          showToast(d.message, 'success');
+        } else {
+          self.innerHTML = origHTML;
+          showToast(d.message || 'Failed.', 'error');
+        }
+      })
+      .catch(function (err) {
+        self.disabled = false;
+        self.innerHTML = origHTML;
+        showToast('Error: ' + err, 'error');
+      });
+  });
+
+  // Single remove buttons — delegated (always hard delete)
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.bl-single-remove');
+    if (!btn) return;
+    showModal({
+      title: 'Remove Entry',
+      body: '"' + btn.dataset.cidr + '" will be permanently deleted from the database. This cannot be undone.',
+      btnText: 'Remove',
+      btnClass: 'btn-danger',
+      iconStroke: 'var(--danger)',
+      iconPath: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
+    });
+    pendingIsBulk = false;
+    pendingSingleUrl = btn.dataset.url;
+  });
+
+  const bulkConfigs = {
+    activate: {
+      title: 'Activate',
+      body: 'Selected entries will be re-activated with their group expiry rules applied.',
+      btnText: 'Activate',
+      btnClass: 'btn-success',
+      iconStroke: 'var(--success)',
+      iconPath: '<polyline points="20 6 9 17 4 12"/>',
+      action: '{% url "blacklist:bulk_activate" %}',
+    },
+    deactivate: {
+      title: 'Deactivate',
+      body: 'Selected entries will be marked inactive and will no longer block traffic.',
+      btnText: 'Deactivate',
+      btnClass: 'btn-warning',
+      iconStroke: 'var(--warning)',
+      iconPath: '<circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/>',
+      action: '{% url "blacklist:bulk_deactivate" %}',
+    },
+    remove: {
+      title: 'Remove',
+      body: 'Selected entries will be permanently deleted from the database. This cannot be undone.',
+      btnText: 'Remove',
+      btnClass: 'btn-danger',
+      iconStroke: 'var(--danger)',
+      iconPath: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
+      action: '{% url "blacklist:bulk_hard_delete" %}',
+    },
+    score: {
+      title: 'Get Score via AbuseIPDB',
+      body: 'Selected entries will be queried against AbuseIPDB. Scores will be saved and groups may be reassigned based on severity.',
+      btnText: 'Score',
+      btnClass: 'btn-pink',
+      iconStroke: '#c83c8c',
+      iconPath: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
+      action: '{% url "blacklist:bulk_score" %}',
+    },
+    hard_remove: {
+      title: 'Permanently Remove Selected',
+      body: 'Selected inactive entries will be permanently deleted from the database. This cannot be undone.',
+      btnText: 'Delete',
+      btnClass: 'btn-danger',
+      iconStroke: 'var(--danger)',
+      iconPath: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
+      action: '{% url "blacklist:bulk_hard_delete" %}',
+    },
+  };
+
+  function showModal(cfg) {
+    document.getElementById('bl-modal-title').textContent = cfg.title;
+    document.getElementById('bl-modal-body').textContent = cfg.body;
+    const btn = document.getElementById('bl-modal-confirm-btn');
+    btn.textContent = cfg.btnText;
+    btn.className = 'btn btn-sm ' + cfg.btnClass;
+    const icon = document.getElementById('bl-modal-icon');
+    icon.setAttribute('stroke', cfg.iconStroke);
+    icon.innerHTML = cfg.iconPath;
+    document.getElementById('bl-confirm-modal').style.display = 'flex';
+  }
+
+  window.blConfirm = function(action) {
+    const cfg = bulkConfigs[action];
+    pendingAction = cfg.action;
+    pendingActionKey = action;
+    pendingIsBulk = true;
+    showModal(cfg);
+  };
+
+  window.blDoAction = function() {
+    document.getElementById('bl-confirm-modal').style.display = 'none';
+
+    if (pendingIsBulk && pendingActionKey === 'score') {
+      // Bulk score — process each entry sequentially with progress modal
+      var checkedArr = Array.from(document.querySelectorAll('.row-check-bl:checked'));
+      if (checkedArr.length === 0) return;
+      var total = checkedArr.length;
+      var csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+      var bulkScored = 0, bulkFailed = 0;
+
+      openScoreProgressModal(
+        'Scoring ' + total + ' Entr' + (total === 1 ? 'y' : 'ies'),
+        'Querying AbuseIPDB for each selected entry…'
+      );
+      document.getElementById('score-current-row').style.display = 'flex';
+
+      function processScoreEntry(index) {
+        if (index >= total) {
+          setScoreBar(100, 'Complete');
+          setTimeout(function () {
+            showScoreResults({ success: bulkScored > 0, scored: bulkScored, failed: bulkFailed }, true);
+          }, 200);
+          return;
+        }
+
+        var cb      = checkedArr[index];
+        var entryId = cb.value;
+        var info    = _scoreUrlMap[entryId];
+        var pct     = Math.round((index / total) * 100);
+
+        setScoreBar(pct, 'Querying ' + (index + 1) + ' / ' + total);
+        document.getElementById('score-current-ip-text').textContent = info ? info.ip : entryId;
+
+        if (!info) { bulkFailed++; processScoreEntry(index + 1); return; }
+
+        fetch(info.url, { method: 'POST', headers: { 'X-CSRFToken': csrfToken } })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d.success) {
+              bulkScored++;
+              updateRowScore(entryId, d.score, d.group_label, d.group_name, d.expires_at);
+            } else {
+              bulkFailed++;
+            }
+            processScoreEntry(index + 1);
+          })
+          .catch(function () { bulkFailed++; processScoreEntry(index + 1); });
+      }
+
+      processScoreEntry(0);
+      return;
+    }
+
+    if (pendingIsBulk) {
+      const form = document.getElementById('bulk-delete-form-bl');
+      form.action = pendingAction;
+      form.submit();
+    } else {
+      const form = document.getElementById('bl-single-remove-form');
+      form.action = pendingSingleUrl;
+      document.getElementById('bl-single-status').value = '{{ filters.status }}';
+      form.submit();
+    }
+  };
+
+  // ── Edit Modal ────────────────────────────────────────────────────
+  window.closeBlEditModal = function () {
+    document.getElementById('bl-edit-modal').style.display = 'none';
+  };
+  document.getElementById('bl-edit-modal').addEventListener('click', function (e) {
+    if (e.target === this) closeBlEditModal();
+  });
+
+  // ── Bulk Edit Group Modal ─────────────────────────────────────────
+  window.openBlBulkEditModal = function () {
+    const checked = document.querySelectorAll('.row-check-bl:checked');
+    if (checked.length === 0) return;
+
+    // Inject hidden entry_id inputs into the bulk-edit form
+    const container = document.getElementById('bl-bulk-edit-ids');
+    container.innerHTML = '';
+    checked.forEach(cb => {
+      const inp = document.createElement('input');
+      inp.type  = 'hidden';
+      inp.name  = 'entry_ids';
+      inp.value = cb.value;
+      container.appendChild(inp);
+    });
+
+    document.getElementById('bl-bulk-edit-status').value = '{{ filters.status }}';
+    document.getElementById('bl-bulk-edit-modal').style.display = 'flex';
+  };
+  window.closeBlBulkEditModal = function () {
+    document.getElementById('bl-bulk-edit-modal').style.display = 'none';
+  };
+  document.getElementById('bl-bulk-edit-modal').addEventListener('click', function (e) {
+    if (e.target === this) closeBlBulkEditModal();
+  });
+
+  // Edit button — delegated.
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.bl-edit-btn');
+    if (!btn) return;
+    document.getElementById('bl-edit-form').action = btn.dataset.editUrl;
+    document.getElementById('bl-edit-cidr').value  = btn.dataset.cidr;
+    document.getElementById('bl-edit-reason').value = btn.dataset.reason || '';
+    document.getElementById('bl-edit-status').value = '{{ filters.status }}';
+    var groupSel = document.getElementById('bl-edit-group');
+    for (var i = 0; i < groupSel.options.length; i++) {
+      groupSel.options[i].selected = groupSel.options[i].value === btn.dataset.groupId;
+    }
+    document.getElementById('bl-edit-modal').style.display = 'flex';
+  });
+})();
+</script>
+
+<!-- ── Score Progress Modal ───────────────────────────────────────── -->
+<div id="score-progress-modal" style="display:none;position:fixed;inset:0;z-index:1300;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);width:460px;max-width:calc(100vw - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.5);overflow:hidden;">
+    <!-- Header -->
+    <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;">
+      <svg id="score-modal-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#c83c8c" stroke-width="2" style="width:22px;height:22px;flex-shrink:0;">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+      <div>
+        <h3 id="score-modal-title" style="margin:0;font-size:15px;font-weight:700;color:var(--text-primary);">Querying AbuseIPDB</h3>
+        <p id="score-modal-subtitle" style="margin:2px 0 0;font-size:12px;color:var(--text-muted);"></p>
+      </div>
+    </div>
+    <!-- Progress section -->
+    <div id="score-progress-section" style="padding:20px 24px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <span id="score-phase-label" style="font-size:13px;color:var(--text-secondary);font-weight:500;">Preparing…</span>
+        <span id="score-pct-label" style="font-size:13px;font-weight:700;color:#c83c8c;">0%</span>
+      </div>
+      <div style="background:var(--bg-elevated);border-radius:999px;height:8px;overflow:hidden;">
+        <div id="score-bar" style="height:100%;width:0%;background:#c83c8c;border-radius:999px;transition:width 0.3s ease;"></div>
+      </div>
+      <div id="score-current-row" style="display:none;align-items:center;gap:10px;margin-top:14px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#c83c8c" stroke-width="2"
+             style="width:18px;height:18px;animation:bl-csv-spin 0.9s linear infinite;flex-shrink:0;">
+          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+        </svg>
+        <span id="score-current-ip-text" style="font-size:13px;color:var(--text-muted);font-family:monospace;"></span>
+      </div>
+    </div>
+    <!-- Result section -->
+    <div id="score-result-section" style="display:none;padding:0 24px 20px;">
+      <div id="score-result-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;"></div>
+      <div id="score-result-note" style="font-size:12px;color:var(--text-muted);line-height:1.5;"></div>
+    </div>
+    <!-- Footer -->
+    <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;">
+      <button id="score-modal-close-btn" type="button" class="btn btn-ghost btn-sm" data-on-click="closeScoreProgressModal()" style="display:none;">Close</button>
+      <button id="score-modal-reload-btn" type="button" class="btn btn-info btn-sm" data-on-click="reloadPage()" style="display:none;">Reload Page</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── CSV Import Progress Modal ───────────────────────────────────── -->
+<div id="csv-import-modal" style="display:none;position:fixed;inset:0;z-index:1300;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);width:460px;max-width:calc(100vw - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.5);overflow:hidden;">
+
+    <!-- Header -->
+    <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;">
+      <svg id="csv-modal-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:22px;height:22px;flex-shrink:0;">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <div>
+        <h3 id="csv-modal-title" style="margin:0;font-size:15px;font-weight:700;color:var(--text-primary);">Importing CSV</h3>
+        <p id="csv-modal-subtitle" style="margin:2px 0 0;font-size:12px;color:var(--text-muted);"></p>
+      </div>
+    </div>
+
+    <!-- Progress section -->
+    <div id="csv-progress-section" style="padding:20px 24px;">
+      <!-- Phase label -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <span id="csv-phase-label" style="font-size:13px;color:var(--text-secondary);font-weight:500;">Uploading file…</span>
+        <span id="csv-pct-label" style="font-size:13px;font-weight:700;color:var(--accent);">0%</span>
+      </div>
+      <!-- Bar track -->
+      <div style="background:var(--bg-elevated);border-radius:999px;height:8px;overflow:hidden;">
+        <div id="csv-bar" style="height:100%;width:0%;background:var(--accent);border-radius:999px;transition:width 0.25s ease;"></div>
+      </div>
+      <!-- Processing spinner (hidden during upload) -->
+      <div id="csv-spinner-row" style="display:none;align-items:center;gap:10px;margin-top:14px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"
+             style="width:18px;height:18px;animation:bl-csv-spin 0.9s linear infinite;flex-shrink:0;">
+          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+        </svg>
+        <span style="font-size:13px;color:var(--text-muted);">Processing entries, please wait…</span>
+      </div>
+    </div>
+
+    <!-- Results section (hidden until done) -->
+    <div id="csv-result-section" style="display:none;padding:0 24px 20px;">
+      <div id="csv-result-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;"></div>
+      <div id="csv-result-note" style="font-size:12px;color:var(--text-muted);line-height:1.5;"></div>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;">
+      <button id="csv-modal-close-btn" type="button" class="btn btn-ghost btn-sm"
+              data-on-click="closeCsvImportModal()" style="display:none;">Close</button>
+      <button id="csv-modal-reload-btn" type="button" class="btn btn-info btn-sm"
+              data-on-click="reloadPage()" style="display:none;">Reload Page</button>
+    </div>
+  </div>
+</div>
+
+<style>
+tr:hover .copy-btn,
+tr:hover .abuse-link { opacity: 1 !important; }
+.copy-btn:hover,
+.abuse-link:hover { color: var(--brand-suffix) !important; }
+@keyframes bl-csv-spin { to { transform: rotate(360deg); } }
+.csv-stat-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  text-align: center;
+}
+.csv-stat-card .csv-stat-num {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.csv-stat-card .csv-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+</style>
+
+<script nonce="{{ csp_nonce }}">
+(function () {
+  const IMPORT_URL = '{% url "blacklist:import_csv" %}';
+  const CSRF = document.querySelector('[name=csrfmiddlewaretoken]').value;
+  const fileInput = document.getElementById('csv-file-bl');
+
+  // ── XHR upload with progress ────────────────────────────────────
+  fileInput.addEventListener('change', function () {
+    if (!this.files || !this.files[0]) return;
+    const file = this.files[0];
+    this.value = ''; // reset so same file can be re-selected
+
+    openCsvImportModal(file.name);
+
+    const fd = new FormData();
+    fd.append('csv_file', file);
+    fd.append('csrfmiddlewaretoken', CSRF);
+
+    const xhr = new XMLHttpRequest();
+
+    // ── Upload progress (0 → 85%) ─────────────────────────────────
+    xhr.upload.addEventListener('progress', function (e) {
+      if (!e.lengthComputable) return;
+      const pct = Math.round((e.loaded / e.total) * 85);
+      setBar(pct, 'Uploading file…');
+    });
+
+    // ── Upload complete → switch to processing phase (85 → 95%) ───
+    xhr.upload.addEventListener('load', function () {
+      setBar(90, null);
+      document.getElementById('csv-phase-label').textContent = 'Processing entries…';
+      document.getElementById('csv-spinner-row').style.display = 'flex';
+      // animate bar slowly to 95 while server works
+      animateBar(90, 95, 800);
+    });
+
+    // ── Response received ─────────────────────────────────────────
+    xhr.addEventListener('load', function () {
+      document.getElementById('csv-spinner-row').style.display = 'none';
+      setBar(100, 'Complete');
+
+      let data;
+      try { data = JSON.parse(xhr.responseText); }
+      catch (e) { data = { ok: false, message: 'Unexpected server response.' }; }
+
+      setTimeout(() => showCsvResults(data), 200);
+    });
+
+    xhr.addEventListener('error', function () {
+      document.getElementById('csv-spinner-row').style.display = 'none';
+      showCsvResults({ ok: false, message: 'Network error. Please try again.' });
+    });
+
+    xhr.open('POST', IMPORT_URL);
+    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+    xhr.send(fd);
+  });
+
+  // ── Helpers ───────────────────────────────────────────────────────
+  function setBar(pct, phaseText) {
+    document.getElementById('csv-bar').style.width = pct + '%';
+    document.getElementById('csv-pct-label').textContent = pct + '%';
+    if (phaseText) document.getElementById('csv-phase-label').textContent = phaseText;
+  }
+
+  let _animFrame = null;
+  function animateBar(from, to, durationMs) {
+    const start = performance.now();
+    function step(now) {
+      const t = Math.min((now - start) / durationMs, 1);
+      const cur = Math.round(from + (to - from) * t);
+      document.getElementById('csv-bar').style.width = cur + '%';
+      document.getElementById('csv-pct-label').textContent = cur + '%';
+      if (t < 1) _animFrame = requestAnimationFrame(step);
+    }
+    if (_animFrame) cancelAnimationFrame(_animFrame);
+    _animFrame = requestAnimationFrame(step);
+  }
+
+  function openCsvImportModal(filename) {
+    document.getElementById('csv-modal-title').textContent = 'Importing CSV';
+    document.getElementById('csv-modal-subtitle').textContent = filename;
+    document.getElementById('csv-phase-label').textContent = 'Uploading file…';
+    document.getElementById('csv-pct-label').textContent = '0%';
+    document.getElementById('csv-bar').style.width = '0%';
+    document.getElementById('csv-spinner-row').style.display = 'none';
+    document.getElementById('csv-progress-section').style.display = 'block';
+    document.getElementById('csv-result-section').style.display = 'none';
+    document.getElementById('csv-modal-close-btn').style.display = 'none';
+    document.getElementById('csv-modal-reload-btn').style.display = 'none';
+    document.getElementById('csv-import-modal').style.display = 'flex';
+  }
+
+  function showCsvResults(data) {
+    document.getElementById('csv-progress-section').style.display = 'none';
+    document.getElementById('csv-result-section').style.display = 'block';
+    document.getElementById('csv-modal-close-btn').style.display = '';
+    document.getElementById('csv-modal-reload-btn').style.display = '';
+
+    if (data.ok) {
+      document.getElementById('csv-modal-title').textContent = 'Import Complete';
+      document.getElementById('csv-modal-icon').setAttribute('stroke', 'var(--success)');
+
+      const notes = [];
+      if (data.cidr_blocks) notes.push(`${data.cidr_blocks} CIDR block(s) skipped — only single IPs (/32) accepted.`);
+      if (data.whitelisted)  notes.push(`${data.whitelisted} skipped — overlaps with whitelist.`);
+      if (data.bl_overlaps)  notes.push(`${data.bl_overlaps} skipped — overlaps with existing blacklist entry.`);
+
+      document.getElementById('csv-result-grid').innerHTML = statCard(data.added,      'Added',    'var(--success)')
+        + statCard(data.skipped,    'Duplicates', 'var(--text-muted)')
+        + statCard(data.errors,     'Errors',     data.errors     ? 'var(--danger)'  : 'var(--text-muted)')
+        + statCard((data.whitelisted||0)+(data.bl_overlaps||0)+(data.cidr_blocks||0), 'Skipped', 'var(--warning)');
+
+      document.getElementById('csv-result-note').textContent = notes.join(' ');
+    } else {
+      document.getElementById('csv-modal-title').textContent = 'Import Failed';
+      document.getElementById('csv-modal-icon').setAttribute('stroke', 'var(--danger)');
+      document.getElementById('csv-result-grid').innerHTML =
+        `<div style="grid-column:1/-1;padding:12px;background:rgba(239,68,68,.08);border:1px solid var(--danger);border-radius:var(--radius);color:var(--danger);font-size:13px;">${data.message || 'Unknown error.'}</div>`;
+      document.getElementById('csv-result-note').textContent = '';
+      document.getElementById('csv-modal-reload-btn').style.display = 'none';
+    }
+  }
+
+  function statCard(num, label, color) {
+    return `<div class="csv-stat-card"><div class="csv-stat-num" style="color:${color};">${num}</div><div class="csv-stat-label">${label}</div></div>`;
+  }
+
+  window.closeCsvImportModal = function () {
+    document.getElementById('csv-import-modal').style.display = 'none';
+  };
+})();
+</script>
+
+<!-- ── PDF Report Modal ──────────────────────────────────────────────────── -->
+<div id="bl-pdf-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:480px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <h2 style="font-size:15px;font-weight:700;color:var(--text-primary);margin:0;display:flex;align-items:center;gap:7px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--brand-suffix)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        PDF Report | IP Blacklist
+      </h2>
+      <button type="button" data-on-click="closeBlPdfModal()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</button>
+    </div>
+
+    <form method="get" action="{% url 'blacklist:export_pdf' %}" id="bl-pdf-form">
+      <input type="hidden" name="report_type" value="executive">
+
+      <!-- Status -->
+      <div class="form-group">
+        <label class="form-label">Status</label>
+        <select name="status" class="form-select">
+          <option value="active">Active Only</option>
+          <option value="inactive">Inactive Only</option>
+          <option value="all">All Records</option>
+        </select>
+      </div>
+
+      <!-- Date Range -->
+      <div class="form-group">
+        <label class="form-label">Date Range (Added At)</label>
+        <select name="date_preset" class="form-select" id="bl-pdf-date-preset" data-on-change="blPdfDatePresetChange()">
+          <option value="">All Time</option>
+          <option value="today">Today</option>
+          <option value="7d">Last 7 Days</option>
+          <option value="30d">Last 30 Days</option>
+          <option value="custom">Custom Range…</option>
+        </select>
+      </div>
+      <div id="bl-pdf-custom-dates" style="display:none;gap:8px;margin-top:-10px;margin-bottom:16px;">
+        <div style="flex:1;">
+          <label class="form-label" style="font-size:11px;">From</label>
+          <input type="date" name="date_from" class="form-input form-input-sm" style="width:100%;">
+        </div>
+        <div style="flex:1;">
+          <label class="form-label" style="font-size:11px;">To</label>
+          <input type="date" name="date_to" class="form-input form-input-sm" style="width:100%;">
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+        <button type="button" data-on-click="closeBlPdfModal()" class="btn btn-ghost">Cancel</button>
+        <button type="submit" class="btn btn-brand">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Generate
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+<!-- PDF Loading Overlay -->
+<div id="bl-pdf-loading" style="display:none;position:fixed;inset:0;z-index:1100;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:36px 48px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px;box-shadow:0 8px 40px rgba(0,0,0,0.5);">
+    <div class="pdf-gen-spinner"></div>
+    <div style="color:var(--text-primary);font-weight:600;font-size:14px;">Generating PDF…</div>
+    <div style="color:var(--text-muted);font-size:12px;">This may take a moment, please wait.</div>
+  </div>
+</div>
+<style>
+@keyframes pdf-gen-spin { to { transform: rotate(360deg); } }
+.pdf-gen-spinner { width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--brand-suffix);border-radius:50%;animation:pdf-gen-spin .75s linear infinite; }
+</style>
+<script nonce="{{ csp_nonce }}">
+  window.openBlPdfModal  = function() { document.getElementById('bl-pdf-modal').style.display = 'flex'; };
+  window.closeBlPdfModal = function() { document.getElementById('bl-pdf-modal').style.display = 'none'; document.getElementById('bl-pdf-loading').style.display = 'none'; };
+  window.blPdfDatePresetChange = function() {
+    var v = document.getElementById('bl-pdf-date-preset').value;
+    document.getElementById('bl-pdf-custom-dates').style.display = v === 'custom' ? 'flex' : 'none';
+  };
+  (function() {
+    var form = document.getElementById('bl-pdf-form');
+    form.addEventListener('submit', function(e) {
+      e.preventDefault();
+      var qs = new URLSearchParams(new FormData(form)).toString();
+      var sep = form.action.indexOf('?') >= 0 ? '&' : '?';
+      var url = form.action + (qs ? sep + qs : '');
+      document.getElementById('bl-pdf-modal').style.display = 'none';
+      window.downloadPdfWithOverlay(url, 'bl-pdf-loading', 'ip-blacklist.pdf');
+    });
+  })();
+
+  // ── Auto-refresh: in-place tbody streaming ────────────────────────────
+  // Polls the same view with `?ajax=1` at the configured interval and swaps
+  // the <tbody> innerHTML so new entries flow in without reloading the page.
+  // Mirrors the dashboard pattern: live countdown of "Next refresh in Ns",
+  // an "Updated HH:MM:SS" timestamp after each successful fetch, and a
+  // manual refresh button that re-arms the timer. Selections, open modals,
+  // and a hidden tab all suppress the swap so the user is never clobbered
+  // mid-interaction.
+  (function () {
+    var INTERVAL = {{ refresh_seconds|default:5 }};
+    if (!INTERVAL || INTERVAL < 1) return;
+    var tbody = document.getElementById('bl-tbody');
+    if (!tbody) return;
+    var spinner = document.getElementById('bl-refresh-spinner');
+    var countdownEl = document.getElementById('bl-countdown');
+    var updatedWrap = document.getElementById('bl-last-updated');
+    var updatedTime = document.getElementById('bl-last-updated-time');
+
+    var remaining = INTERVAL;
+    var tickTimer = null;
+    var autoTimer = null;
+    var paused    = false;
+
+    function shouldSkip() {
+      if (paused) return true;                                     // manually paused
+      if (document.hidden) return true;
+      if (document.querySelectorAll('.row-check-bl:checked').length) return true;
+      var modalIds = ['bl-edit-modal', 'bl-bulk-edit-modal', 'bl-confirm-modal',
+                      'bl-score-modal', 'bl-single-confirm-modal'];
+      for (var i = 0; i < modalIds.length; i++) {
+        var m = document.getElementById(modalIds[i]);
+        if (m && m.style.display && m.style.display !== 'none') return true;
+      }
+      return false;
+    }
+    function buildUrl() {
+      var u = new URL(window.location.href);
+      u.searchParams.set('ajax', '1');
+      return u.toString();
+    }
+    function pad(n) { return n < 10 ? '0' + n : n; }
+    function stampUpdated() {
+      if (!updatedTime || !updatedWrap) return;
+      var d = new Date();
+      updatedTime.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      // `visibility:hidden` reserves the row from the start so unhiding it
+      // doesn't push the table down on the first refresh.
+      updatedWrap.style.visibility = 'visible';
+    }
+    function showSpinner(on) { if (spinner) spinner.style.display = on ? '' : 'none'; }
+    function tickCountdown() {
+      if (countdownEl) countdownEl.textContent = remaining + 's';
+    }
+    function resetCountdown() {
+      remaining = INTERVAL;
+      tickCountdown();
+      clearInterval(tickTimer);
+      tickTimer = setInterval(function () {
+        remaining = Math.max(0, remaining - 1);
+        tickCountdown();
+      }, 1000);
+    }
+    function updateCount(key, value) {
+      if (value == null) return;
+      document.querySelectorAll('[data-bl-count="' + key + '"]').forEach(function (el) {
+        if (el.textContent !== value) el.textContent = value;
+      });
+    }
+    function refresh() {
+      if (shouldSkip()) { resetCountdown(); return; }
+      showSpinner(true);
+      fetch(buildUrl(), { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (r) {
+          if (!r.ok) throw r.status;
+          // Pull the tab counts off the response headers BEFORE we read
+          // the body so headers and rows always paint together.
+          var counts = {
+            active:   r.headers.get('X-Count-Active'),
+            inactive: r.headers.get('X-Count-Inactive'),
+            all:      r.headers.get('X-Count-All'),
+          };
+          return r.text().then(function (html) { return { html: html, counts: counts }; });
+        })
+        .then(function (data) {
+          if (shouldSkip()) return;
+          if (tbody.innerHTML !== data.html) tbody.innerHTML = data.html;
+          updateCount('active',   data.counts.active);
+          updateCount('inactive', data.counts.inactive);
+          updateCount('all',      data.counts.all);
+          stampUpdated();
+        })
+        .catch(function () { /* network blip — next tick will retry */ })
+        .finally(function () { showSpinner(false); });
+    }
+    function scheduleNext() {
+      clearTimeout(autoTimer);
+      autoTimer = setTimeout(function () {
+        refresh();
+        // Re-arm the countdown for the NEXT cycle right after the fetch
+        // fires — otherwise the visible "Ns" pegs at "0s" forever once it
+        // first hits zero.
+        resetCountdown();
+        scheduleNext();
+      }, INTERVAL * 1000);
+    }
+
+    // Exposed for the "Refresh now" button — re-arms both timers so the
+    // countdown restarts cleanly from the click time. Honours the paused
+    // state: a manual click during a pause performs a one-off fetch but
+    // does not resume the schedule.
+    window.blManualRefresh = function () {
+      clearTimeout(autoTimer);
+      clearInterval(tickTimer);
+      var wasPaused = paused;
+      paused = false;
+      refresh();
+      paused = wasPaused;
+      if (!paused) {
+        resetCountdown();
+        scheduleNext();
+      }
+    };
+
+    // Pause / Resume toggle — clicks come via the data-on-click dispatcher.
+    window.blTogglePause = function () {
+      paused = !paused;
+      var btn  = document.getElementById('bl-pause-btn');
+      var icon = document.getElementById('bl-pause-icon');
+      var cd   = document.getElementById('bl-countdown');
+      if (paused) {
+        clearTimeout(autoTimer);
+        clearInterval(tickTimer);
+        if (btn) {
+          btn.title = 'Resume auto-refresh';
+          btn.classList.remove('btn-warning');
+          btn.classList.add('btn-success');
+        }
+        if (icon) icon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
+        if (cd)   cd.textContent = 'paused';
+      } else {
+        if (btn) {
+          btn.title = 'Pause auto-refresh';
+          btn.classList.remove('btn-success');
+          btn.classList.add('btn-warning');
+        }
+        if (icon) icon.innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+        resetCountdown();
+        scheduleNext();
+      }
+    };
+
+    resetCountdown();
+    scheduleNext();
+  })();
+</script>
+
+<style>
+/* Bundled SVG country flag (lipis/flag-icons, 4x3) rendered next to each IP
+   that has AbuseIPDB intel. 4:3 aspect ratio matches the source SVGs so the
+   image isn't distorted. */
+.bl-country-flag {
+  width: 20px;
+  height: 15px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  cursor: help;
+  user-select: none;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  box-shadow: 0 0 0 0.5px rgba(0,0,0,0.04);
+}
+/* Reserves the flag column width when AbuseIPDB has no country — keeps every
+   IP cell aligned to the same vertical so the table doesn't jitter. */
+.bl-country-flag--empty {
+  display: inline-block;
+  border: 0;
+  box-shadow: none;
+  cursor: default;
+  background: transparent;
+}
+/* Locks the flag to a fixed X-position at the left edge of the IP cell so
+   it stays in the same column for every row, independent of how the IP
+   text below it gets centred by the cell's text-align. */
+.bl-flag-slot {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  pointer-events: auto;
+  z-index: 1;
+}
+
+/* ── Blacklist page: only the table itself scrolls ──────────────────── */
+.page-content {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.page-header       { flex-shrink: 0; }
+#bl-filter-area    { flex-shrink: 0; }
+#bulk-delete-form-bl {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#bulk-delete-form-bl .table-wrapper {
+  flex: 1;
+  /* min-height:0 lets flex:1 actually shrink to fit the form's allotted
+     space — without it the wrapper would refuse to shrink below
+     max(400px, calc(100vh - 280px)) and would overflow downward (clipping
+     into the pagination area) whenever the collapsible filter is open and
+     the viewport is short. */
+  min-height: 0;
+  overflow: auto;
+}
+.pagination { flex-shrink: 0; }
+</style>
+{% endblock %}

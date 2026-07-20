@@ -1,0 +1,407 @@
+{% extends "base.html" %}
+{% block title %}Allowed Source IP{% endblock %}
+{% block topbar_title %}Allowed Source IP{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">ALLOWED SOURCE IP</h1>
+    <p class="page-subtitle">Only these IPs/CIDRs can access any API endpoints</code></p>
+  </div>
+  <a type="button" class="btn btn-info" data-on-click="openSipAddModal()">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Add
+  </a>
+</div>
+
+<!-- Status tabs -->
+<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;">
+  <a href="?status=active"
+     class="btn btn-sm {% if status == 'active' %}btn-brand{% else %}btn-ghost{% endif %}">
+    Active <span style="opacity:.7;font-size:11px;">{{ count_active }}</span>
+  </a>
+  <a href="?status=inactive"
+     class="btn btn-sm {% if status == 'inactive' %}btn-brand{% else %}btn-ghost{% endif %}">
+    Inactive <span style="opacity:.7;font-size:11px;">{{ count_inactive }}</span>
+  </a>
+  <a href="?status=all"
+     class="btn btn-sm {% if status == 'all' %}btn-brand{% else %}btn-ghost{% endif %}">
+    All <span style="opacity:.7;font-size:11px;">{{ count_all }}</span>
+  </a>
+</div>
+
+<!-- Bulk toolbar (hidden until checkboxes selected) -->
+<div id="sip-bulk-toolbar" style="display:none;margin-bottom:10px;align-items:center;gap:10px;">
+  <span id="sip-bulk-count" class="text-muted text-sm"></span>
+  {% if status != 'inactive' %}
+  <a type="button" class="btn btn-warning btn-sm" data-on-click="sipBulkAction('deactivate')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg> Deactivate</a>
+  {% endif %}
+  {% if status != 'active' %}
+  <a type="button" class="btn btn-success btn-sm" data-on-click="sipBulkAction('activate')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg> Activate</a>
+  {% endif %}
+  <a type="button" class="btn btn-danger btn-sm" data-on-click="sipBulkAction('remove')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg> Remove</a>
+  <a type="button" class="btn btn-ghost btn-sm" data-on-click="sipClearSelection()">Clear</a>
+</div>
+
+<div class="table-wrapper">
+  <table style="text-align:center;">
+    <thead>
+      <tr>
+        <th style="width:36px;text-align:center;">
+          <input type="checkbox" id="sip-select-all" class="form-checkbox" title="Select all">
+        </th>
+        <th style="text-align:center;">CIDR</th>
+        <th style="text-align:center;">Label</th>
+        <th style="text-align:center;">Status</th>
+        <th style="text-align:center;">Added By</th>
+        <th style="text-align:center;">Added At</th>
+        <th style="text-align:center;">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in entries %}
+      <tr style="text-align:center;">
+        <td style="text-align:center;">
+          <input type="checkbox" class="form-checkbox sip-row-cb" value="{{ entry.pk }}">
+        </td>
+        <td><span class="cidr">{{ entry.cidr }}</span></td>
+        <td class="text-muted">{{ entry.label|default:"—" }}</td>
+        <td>
+          {% if entry.is_active %}
+          <span class="badge badge-green badge-dot">Active</span>
+          {% else %}
+          <span class="badge badge-red badge-dot">Inactive</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if entry.added_by %}
+            <span class="badge badge-blue">{{ entry.added_by.username }}{% if entry.added_by.get_full_name %} ({{ entry.added_by.get_full_name }}){% endif %}</span>
+            {% else %}—{% endif %}
+        </td>
+        <td class="text-muted text-sm">{{ entry.added_at|date:"Y-m-d H:i" }}</td>
+        <td style="white-space:nowrap;">
+          <button type="button" class="btn btn-orange btn-sm sip-edit-btn"
+                  data-id="{{ entry.pk }}"
+                  data-cidr="{{ entry.cidr }}"
+                  data-label="{{ entry.label|default:'' }}"
+                  title="Edit">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          {% if entry.is_active %}
+          <button type="button" class="btn btn-warning btn-sm sip-action-btn"
+                  data-action="deactivate"
+                  data-url="{% url 'settings_app:source_ip_deactivate' entry.pk %}"
+                  data-cidr="{{ entry.cidr }}">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg></button>
+          {% else %}
+          <button type="button" class="btn btn-success btn-sm sip-action-btn"
+                  data-action="activate"
+                  data-url="{% url 'settings_app:source_ip_activate' entry.pk %}"
+                  data-cidr="{{ entry.cidr }}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg></button>
+          {% endif %}
+          <button type="button" class="btn btn-danger btn-sm sip-action-btn"
+                  data-action="remove"
+                  data-url="{% url 'settings_app:source_ip_delete' entry.pk %}"
+                  data-cidr="{{ entry.cidr }}"
+                  style="margin-left:4px;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></button>
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7" class="table-empty">
+        {% if status == 'active' %}No active source IPs.
+        {% elif status == 'inactive' %}No inactive source IPs.
+        {% else %}No allowed source IPs configured. All API calls will be blocked.{% endif %}
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div style="margin-top:16px;">
+  <a href="{% url 'settings_app:index' %}" class="btn btn-info">Back to Settings</a>
+</div>
+
+<!-- Hidden single-action form -->
+<form method="post" id="sip-action-form" style="display:none;">
+  {% csrf_token %}
+</form>
+
+<!-- Hidden bulk action form -->
+<form method="post" id="sip-bulk-form" style="display:none;">
+  {% csrf_token %}
+  <input type="hidden" name="status" value="{{ status }}">
+  <div id="sip-bulk-inputs"></div>
+</form>
+
+<!-- ── Add Source IP Modal ─────────────────────────────────────────── -->
+<div id="sip-add-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:440px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;">Add Source IP</h2>
+      <a type="button" data-on-click="closeSipAddModal()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</a>
+    </div>
+
+    <form method="post" action="{% url 'settings_app:source_ip_add' %}">
+      {% csrf_token %}
+      <div class="form-group">
+        <label class="form-label">IP Address or CIDR <span class="required">*</span></label>
+        <input type="text" name="cidr" class="form-input" placeholder="192.168.1.1 or 10.0.0.0/24" required autocomplete="off">
+      </div>
+      <div class="form-group" style="margin-top:12px;">
+        <label class="form-label">Label</label>
+        <input type="text" name="label" class="form-input" placeholder="Optional description...">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:16px;">
+        <a type="button" data-on-click="closeSipAddModal()" class="btn btn-ghost">Cancel</a>
+        <button type="submit" class="btn btn-info">Add</button>
+      </div>
+    </form>
+
+  </div>
+</div>
+
+<!-- ── Edit Source IP Modal ────────────────────────────────────────── -->
+<div id="sip-edit-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:440px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;">Edit Source IP</h2>
+      <a type="button" data-on-click="closeSipEditModal()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</a>
+    </div>
+
+    <form method="post" id="sip-edit-form" action="">
+      {% csrf_token %}
+      <div class="form-group">
+        <label class="form-label">IP Address or CIDR <span class="required">*</span></label>
+        <input type="text" name="cidr" id="sip-edit-cidr" class="form-input" placeholder="192.168.1.1 or 10.0.0.0/24" required autocomplete="off">
+      </div>
+      <div class="form-group" style="margin-top:12px;">
+        <label class="form-label">Label</label>
+        <input type="text" name="label" id="sip-edit-label" class="form-input" placeholder="Optional description...">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:16px;">
+        <a type="button" data-on-click="closeSipEditModal()" class="btn btn-ghost">Cancel</a>
+        <button type="submit" class="btn btn-info">Save</button>
+      </div>
+    </form>
+
+  </div>
+</div>
+
+<!-- ── Confirm Action Modal ────────────────────────────────────────── -->
+<div id="sip-confirm-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:32px;max-width:420px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+      <svg id="sip-confirm-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" style="width:26px;height:26px;flex-shrink:0;"></svg>
+      <h2 id="sip-confirm-title" style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;"></h2>
+    </div>
+    <p id="sip-confirm-body" style="color:var(--text-secondary);font-size:14px;margin-bottom:24px;"></p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button type="button" data-on-click="sipHideConfirmModal()" class="btn btn-ghost btn-sm">Cancel</button>
+      <button type="button" id="sip-confirm-btn" class="btn btn-sm" data-on-click="sipDoAction()"></button>
+    </div>
+  </div>
+</div>
+
+<script nonce="{{ csp_nonce }}">
+// ── CSP wrapper helper for complex inline expression ───────────────
+window.sipHideConfirmModal = function () { document.getElementById('sip-confirm-modal').style.display = 'none'; };
+
+// ── Add Modal ──────────────────────────────────────────────────────
+window.openSipAddModal = function () {
+  document.getElementById('sip-add-modal').style.display = 'flex';
+};
+window.closeSipAddModal = function () {
+  document.getElementById('sip-add-modal').style.display = 'none';
+};
+document.getElementById('sip-add-modal').addEventListener('click', function (e) {
+  if (e.target === this) closeSipAddModal();
+});
+
+// ── Edit Modal ─────────────────────────────────────────────────────
+window.closeSipEditModal = function () {
+  document.getElementById('sip-edit-modal').style.display = 'none';
+};
+document.getElementById('sip-edit-modal').addEventListener('click', function (e) {
+  if (e.target === this) closeSipEditModal();
+});
+
+document.querySelectorAll('.sip-edit-btn').forEach(btn => {
+  btn.addEventListener('click', function () {
+    const id    = this.dataset.id;
+    const cidr  = this.dataset.cidr;
+    const label = this.dataset.label;
+    document.getElementById('sip-edit-cidr').value  = cidr;
+    document.getElementById('sip-edit-label').value = label;
+    document.getElementById('sip-edit-form').action = '{% url "settings_app:source_ip_edit" 0 %}'.replace('/0/', '/' + id + '/');
+    document.getElementById('sip-edit-modal').style.display = 'flex';
+  });
+});
+
+// ── Checkbox / Bulk Toolbar ────────────────────────────────────────
+const selectAll  = document.getElementById('sip-select-all');
+const toolbar    = document.getElementById('sip-bulk-toolbar');
+const countLabel = document.getElementById('sip-bulk-count');
+
+function getChecked() {
+  return Array.from(document.querySelectorAll('.sip-row-cb:checked'));
+}
+
+function updateToolbar() {
+  const checked = getChecked();
+  if (checked.length > 0) {
+    countLabel.textContent = checked.length + ' selected';
+    toolbar.style.display = 'flex';
+  } else {
+    toolbar.style.display = 'none';
+  }
+}
+
+selectAll.addEventListener('change', function () {
+  document.querySelectorAll('.sip-row-cb').forEach(cb => { cb.checked = this.checked; });
+  updateToolbar();
+});
+
+window.sipClearSelection = function () {
+  document.querySelectorAll('.sip-row-cb').forEach(cb => { cb.checked = false; });
+  selectAll.checked = false;
+  updateToolbar();
+};
+
+document.querySelectorAll('.sip-row-cb').forEach(cb => {
+  cb.addEventListener('change', function () {
+    const allCbs = document.querySelectorAll('.sip-row-cb');
+    selectAll.checked = Array.from(allCbs).every(c => c.checked);
+    updateToolbar();
+  });
+});
+
+// ── Bulk Actions ───────────────────────────────────────────────────
+const _bulkUrls = {
+  activate:   '{% url "settings_app:source_ip_bulk_activate" %}',
+  deactivate: '{% url "settings_app:source_ip_bulk_deactivate" %}',
+  remove:     '{% url "settings_app:source_ip_bulk_delete" %}',
+};
+
+const _bulkConfig = {
+  activate: {
+    title: 'Activate Selected',
+    body:  (n) => `${n} entr${n === 1 ? 'y' : 'ies'} will be activated.`,
+    icon:  `<polyline points="20 6 9 17 4 12" stroke="var(--success)"/>`,
+    btnClass: 'btn-success',
+    btnText: 'Activate',
+  },
+  deactivate: {
+    title: 'Deactivate Selected',
+    body:  (n) => `${n} entr${n === 1 ? 'y' : 'ies'} will be deactivated.`,
+    icon:  `<circle cx="12" cy="12" r="10" stroke="var(--warning)"/><line x1="12" y1="8" x2="12" y2="12" stroke="var(--warning)"/><line x1="12" y1="16" x2="12.01" y2="16" stroke="var(--warning)"/>`,
+    btnClass: 'btn-warning',
+    btnText: 'Deactivate',
+  },
+  remove: {
+    title: 'Remove Selected',
+    body:  (n) => `${n} entr${n === 1 ? 'y' : 'ies'} will be permanently removed.`,
+    icon:  `<polyline points="3 6 5 6 21 6" stroke="var(--danger)"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" stroke="var(--danger)"/><path d="M10 11v6" stroke="var(--danger)"/><path d="M14 11v6" stroke="var(--danger)"/>`,
+    btnClass: 'btn-danger',
+    btnText: 'Remove',
+  },
+};
+
+let _currentMode = 'single'; // 'single' | 'bulk'
+
+window.sipBulkAction = function (action) {
+  const checked = getChecked();
+  if (!checked.length) return;
+  _currentMode = 'bulk';
+  _sipActionUrl = _bulkUrls[action];
+  _sipBulkIds   = checked.map(cb => cb.value);
+  _sipBulkAction = action;
+
+  const cfg = _bulkConfig[action];
+  document.getElementById('sip-confirm-icon').innerHTML   = cfg.icon;
+  document.getElementById('sip-confirm-title').textContent = cfg.title;
+  document.getElementById('sip-confirm-body').textContent  = cfg.body(checked.length);
+  const confirmBtn = document.getElementById('sip-confirm-btn');
+  confirmBtn.className  = 'btn btn-sm ' + cfg.btnClass;
+  confirmBtn.textContent = cfg.btnText;
+  document.getElementById('sip-confirm-modal').style.display = 'flex';
+};
+
+// ── Single Action Modal ────────────────────────────────────────────
+let _sipActionUrl  = '';
+let _sipBulkIds    = [];
+let _sipBulkAction = '';
+
+const _sipConfig = {
+  activate: {
+    title: 'Activate Source IP',
+    body:  (cidr) => `"${cidr}" will be activated and API requests from this address will be allowed.`,
+    icon:  `<polyline points="20 6 9 17 4 12" stroke="var(--success)"/>`,
+    btnClass: 'btn-success',
+    btnText: 'Activate',
+  },
+  deactivate: {
+    title: 'Deactivate Source IP',
+    body:  (cidr) => `"${cidr}" will be deactivated. API access from this address will be blocked.`,
+    icon:  `<circle cx="12" cy="12" r="10" stroke="var(--warning)"/><line x1="12" y1="8" x2="12" y2="12" stroke="var(--warning)"/><line x1="12" y1="16" x2="12.01" y2="16" stroke="var(--warning)"/>`,
+    btnClass: 'btn-warning',
+    btnText: 'Deactivate',
+  },
+  remove: {
+    title: 'Remove Source IP',
+    body:  (cidr) => `"${cidr}" will be permanently removed from the allowed source IP list.`,
+    icon:  `<polyline points="3 6 5 6 21 6" stroke="var(--danger)"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" stroke="var(--danger)"/><path d="M10 11v6" stroke="var(--danger)"/><path d="M14 11v6" stroke="var(--danger)"/>`,
+    btnClass: 'btn-danger',
+    btnText: 'Remove',
+  },
+};
+
+document.querySelectorAll('.sip-action-btn').forEach(btn => {
+  btn.addEventListener('click', function () {
+    _currentMode = 'single';
+    const action = this.dataset.action;
+    const cidr   = this.dataset.cidr;
+    _sipActionUrl = this.dataset.url;
+
+    const cfg = _sipConfig[action];
+    document.getElementById('sip-confirm-icon').innerHTML   = cfg.icon;
+    document.getElementById('sip-confirm-title').textContent = cfg.title;
+    document.getElementById('sip-confirm-body').textContent  = cfg.body(cidr);
+
+    const confirmBtn = document.getElementById('sip-confirm-btn');
+    confirmBtn.className  = 'btn btn-sm ' + cfg.btnClass;
+    confirmBtn.textContent = cfg.btnText;
+
+    document.getElementById('sip-confirm-modal').style.display = 'flex';
+  });
+});
+
+document.getElementById('sip-confirm-modal').addEventListener('click', function (e) {
+  if (e.target === this) this.style.display = 'none';
+});
+
+window.sipDoAction = function () {
+  document.getElementById('sip-confirm-modal').style.display = 'none';
+
+  if (_currentMode === 'bulk') {
+    const form    = document.getElementById('sip-bulk-form');
+    const inputs  = document.getElementById('sip-bulk-inputs');
+    inputs.innerHTML = '';
+    _sipBulkIds.forEach(id => {
+      const inp = document.createElement('input');
+      inp.type  = 'hidden';
+      inp.name  = 'entry_ids';
+      inp.value = id;
+      inputs.appendChild(inp);
+    });
+    form.action = _sipActionUrl;
+    form.submit();
+  } else {
+    const form = document.getElementById('sip-action-form');
+    form.action = _sipActionUrl;
+    form.submit();
+  }
+};
+</script>
+{% endblock %}

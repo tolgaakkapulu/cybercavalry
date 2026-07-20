@@ -1,0 +1,1657 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block topbar_title %}Settings{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">SETTINGS</h1>
+  </div>
+  <div class="page-actions">
+    <a href="{% url 'settings_app:role_matrix' %}" class="btn btn-info">Role Matrix</a>
+    <a href="{% url 'settings_app:source_ip_list' %}" class="btn btn-info">Allowed Source IP</a>
+  </div>
+</div>
+
+<div x-data="{
+  ldapTesting: false, ldapResult: '', ldapSuccess: null,
+  abuseRefreshing: false, abuseResult: '', abuseSuccess: null,
+  abuseOnlyUnchecked: false,
+  abuseChecking: false, abuseCheckResult: '', abuseCheckSuccess: null,
+  abuseRemaining: null, abuseLimit: null, abuseUsed: null,
+  abuseValidKeys: null, abuseTotalKeys: null, abuseExhausted: null, abuseUsedKeys: null,
+  abuseCleaning: false, abuseCleanupResult: '', abuseCleanupSuccess: null,
+  vtRefreshing: false, vtResult: '', vtSuccess: null,
+  vtOnlyUnchecked: false,
+  vtChecking: false, vtCheckResult: '', vtCheckSuccess: null,
+  vtRemaining: null, vtDailyLimit: null, vtDailyUsed: null,
+  vtValidKeys: null, vtTotalKeys: null, vtExhausted: null,
+  vtCleaning: false, vtCleanupResult: '', vtCleanupSuccess: null,
+  quotaTestSending: false, quotaTestSuccess: null, quotaTestMessage: '',
+  smtpTesting: false, smtpTestSuccess: null, smtpTestMessage: '',
+  rateTestSending: false, rateTestSuccess: null, rateTestMessage: '',
+  syslogTesting: false, syslogTestSuccess: null, syslogTestMessage: '',
+  _fv(name) {
+    const el = document.getElementsByName(name)[0];
+    return el ? el.value : '';
+  },
+  testLdap() {
+    this.ldapTesting = true; this.ldapResult = ''; this.ldapSuccess = null;
+    const fd = new FormData();
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    fd.append('server_uri',    this._fv('setting_ldap.server_uri'));
+    fd.append('bind_dn',       this._fv('setting_ldap.bind_dn'));
+    fd.append('bind_password', this._fv('setting_ldap.bind_password'));
+    fetch('{% url 'settings_app:ldap_test' %}', {method: 'POST', body: fd})
+      .then(r => r.json())
+      .then(d => { this.ldapResult = d.message; this.ldapSuccess = d.success; this.ldapTesting = false; })
+      .catch(e => { this.ldapResult = 'Error: ' + e; this.ldapSuccess = false; this.ldapTesting = false; });
+  },
+  checkAbuseKey() {
+    this.abuseChecking = true;
+    this.abuseCheckResult = ''; this.abuseCheckSuccess = null;
+    this.abuseRemaining = null; this.abuseLimit = null; this.abuseUsed = null;
+    this.abuseValidKeys = null; this.abuseTotalKeys = null; this.abuseExhausted = null; this.abuseUsedKeys = null;
+    const fd = new FormData();
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    const abuseKey = this._fv('setting_threat_intel.abuseipdb_api_key');
+    if (abuseKey) fd.append('api_key', abuseKey);
+    fetch('{% url 'settings_app:abuseipdb_check_key' %}', {method: 'POST', body: fd})
+      .then(r => r.json())
+      .then(d => {
+        this.abuseCheckResult = d.message; this.abuseCheckSuccess = d.success;
+        this.abuseValidKeys = d.valid_keys_count;
+        this.abuseTotalKeys = d.total_keys_count;
+        this.abuseExhausted = d.exhausted_keys_count;
+        this.abuseUsedKeys  = d.used_keys_count;
+        if (d.success) {
+          this.abuseRemaining = d.remaining;
+          this.abuseLimit     = d.daily_limit;
+          this.abuseUsed      = d.requests_today;
+        }
+        this.abuseChecking = false;
+      })
+      .catch(e => { this.abuseCheckResult = 'Error: ' + e; this.abuseCheckSuccess = false; this.abuseChecking = false; });
+  },
+  checkVtKey() {
+    this.vtChecking = true; this.vtCheckResult = ''; this.vtCheckSuccess = null;
+    this.vtRemaining = null; this.vtDailyLimit = null; this.vtDailyUsed = null;
+    this.vtValidKeys = null; this.vtTotalKeys = null; this.vtExhausted = null;
+    const fd = new FormData();
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    const vtKey = this._fv('setting_threat_intel.virustotal_api_key');
+    if (vtKey) fd.append('api_key', vtKey);
+    fetch('{% url 'settings_app:virustotal_check_key' %}', {method: 'POST', body: fd})
+      .then(r => r.json())
+      .then(d => {
+        this.vtCheckResult = d.message; this.vtCheckSuccess = d.success;
+        this.vtValidKeys = d.valid_keys_count;
+        this.vtTotalKeys = d.total_keys_count;
+        this.vtExhausted = d.exhausted_keys_count;
+        if (d.success) {
+          this.vtDailyLimit = d.daily_limit;
+          this.vtDailyUsed  = d.daily_used;
+          this.vtRemaining  = d.daily_remaining;
+        }
+        this.vtChecking = false;
+      })
+      .catch(e => { this.vtCheckResult = 'Error: ' + e; this.vtCheckSuccess = false; this.vtChecking = false; });
+  },
+  sendQuotaTest() {
+    this.quotaTestSending = true;
+    this.quotaTestSuccess = null;
+    this.quotaTestMessage = '';
+    const fd = new FormData();
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    // Prefer the value currently in the form so a paste-and-test cycle works
+    // without having to save first.
+    const emailField = this._fv('setting_actions.quota_alert_email');
+    if (emailField) fd.append('email', emailField);
+    fetch('{% url 'settings_app:actions_quota_test_mail' %}', {method: 'POST', body: fd})
+      .then(r => r.json())
+      .then(d => { this.quotaTestSuccess = !!d.success; this.quotaTestMessage = d.message || ''; this.quotaTestSending = false; })
+      .catch(e => { this.quotaTestSuccess = false; this.quotaTestMessage = 'Error: ' + e; this.quotaTestSending = false; });
+  },
+  sendSmtpTest() {
+    this.smtpTesting = true;
+    this.smtpTestSuccess = null;
+    this.smtpTestMessage = '';
+    const fd = new FormData();
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    fetch('{% url 'settings_app:actions_smtp_test' %}', {method: 'POST', body: fd})
+      .then(r => r.json())
+      .then(d => { this.smtpTestSuccess = !!d.success; this.smtpTestMessage = d.message || ''; this.smtpTesting = false; })
+      .catch(e => { this.smtpTestSuccess = false; this.smtpTestMessage = 'Error: ' + e; this.smtpTesting = false; });
+  },
+  sendRateTest() {
+    this.rateTestSending = true;
+    this.rateTestSuccess = null;
+    this.rateTestMessage = '';
+    const fd = new FormData();
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    const emailField = this._fv('setting_actions.rate_limit_alert_email');
+    if (emailField) fd.append('email', emailField);
+    fetch('{% url 'settings_app:actions_rate_limit_test_mail' %}', {method: 'POST', body: fd})
+      .then(r => r.json())
+      .then(d => { this.rateTestSuccess = !!d.success; this.rateTestMessage = d.message || ''; this.rateTestSending = false; })
+      .catch(e => { this.rateTestSuccess = false; this.rateTestMessage = 'Error: ' + e; this.rateTestSending = false; });
+  },
+  sendSyslogTest() {
+    this.syslogTesting = true;
+    this.syslogTestSuccess = null;
+    this.syslogTestMessage = '';
+    const fd = new FormData();
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    fetch('{% url 'settings_app:actions_syslog_test' %}', {method: 'POST', body: fd})
+      .then(r => r.json())
+      .then(d => { this.syslogTestSuccess = !!d.success; this.syslogTestMessage = d.message || ''; this.syslogTesting = false; })
+      .catch(e => { this.syslogTestSuccess = false; this.syslogTestMessage = 'Error: ' + e; this.syslogTesting = false; });
+  }
+}"
+x-init="testLdap(); checkAbuseKey(); checkVtKey(); sendSmtpTest()">
+
+  {% for category, settings_list in settings_by_category.items %}
+  <div class="card settings-category" style="margin-bottom:12px;"
+       x-data="{ open: false{% if category == 'actions' %}, tab: 'email', alertTab: 'quota', quotaEnabled: false, rateEnabled: false, syslogEnabled: false{% endif %} }">
+
+    <!-- Accordion Header -->
+    <div class="card-header" @click="open = !open"
+         style="cursor:pointer;user-select:none;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+             fill="none" stroke="currentColor" stroke-width="2.5"
+             style="transition:transform 0.2s;color:var(--text-muted);flex-shrink:0;"
+             :style="open ? 'transform:rotate(180deg)' : ''">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+        <span style="display:flex;align-items:center;gap:6px;">
+          {% if category == 'threat_intel' %}
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#CB5B63" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span class="card-title" style="color:#CB5B63;">Threat Intelligence</span>
+          {% elif category == 'ldap' %}
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span class="card-title" style="color:#3b82f6;">LDAP</span>
+          {% elif category == 'security' %}
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span class="card-title" style="color:#8b5cf6;">Security</span>
+          {% elif category == 'general' %}
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+          <span class="card-title" style="color:#3b82f6;">General</span>
+          {% elif category == 'password_policy' %}
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+          <span class="card-title" style="color:#8b5cf6;">Password Policy</span>
+          {% elif category == 'backup' %}
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          <span class="card-title" style="color:#14b8a6;">Backup</span>
+          {% elif category == 'actions' %}
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#CB5B63" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          <span class="card-title" style="color:#CB5B63;">Actions</span>
+          {% else %}
+          <span class="card-title">{{ category|upper }}</span>
+          {% endif %}
+        </span>
+        <span class="text-xs text-muted" style="font-weight:400;">
+          {{ settings_list|length }} setting{{ settings_list|length|pluralize }}
+        </span>
+      </div>
+
+      <div @click.stop style="display:flex;align-items:center;gap:8px;">
+        {% if category == 'ldap' %}
+        <template x-if="ldapSuccess === true">
+          <span class="badge badge-green" style="font-size:11px;">Connected</span>
+        </template>
+        <template x-if="ldapSuccess === false">
+          <span class="badge badge-red" style="font-size:11px;">Failed</span>
+        </template>
+        <a type="button" class="btn btn-warning btn-sm" :disabled="ldapTesting" @click="testLdap()">
+          <span x-show="!ldapTesting">Test LDAP</span>
+          <span x-show="ldapTesting">Testing…</span>
+        </a>
+        {% endif %}
+
+        {% if category == 'actions' %}
+        {# ── E-mail tab: SMTP handshake test ─────────────────────────── #}
+        <template x-if="tab === 'email' && smtpTestSuccess === true">
+          <span class="badge badge-green" style="font-size:11px;">Connected</span>
+        </template>
+        <template x-if="tab === 'email' && smtpTestSuccess === false">
+          <span class="badge badge-red" style="font-size:11px;" :title="smtpTestMessage">Failed</span>
+        </template>
+        <a x-show="tab === 'email'" type="button" class="btn btn-warning btn-sm"
+           :disabled="smtpTesting" @click="sendSmtpTest()">
+          <span x-show="!smtpTesting">Test SMTP</span>
+          <span x-show="smtpTesting">Testing…</span>
+        </a>
+        {# ── Alerts → Quota Alert sub-tab: end-to-end preview mail ─── #}
+        <template x-if="tab === 'alerts' && alertTab === 'quota' && quotaTestSuccess === true">
+          <span class="badge badge-green" style="font-size:11px;">Sent</span>
+        </template>
+        <template x-if="tab === 'alerts' && alertTab === 'quota' && quotaTestSuccess === false">
+          <span class="badge badge-red" style="font-size:11px;" x-text="quotaTestMessage || 'Failed'"></span>
+        </template>
+        <a x-show="tab === 'alerts' && alertTab === 'quota'" type="button" class="btn btn-warning btn-sm"
+           :disabled="quotaTestSending" @click="sendQuotaTest()">
+          <span x-show="!quotaTestSending">Send Test Mail</span>
+          <span x-show="quotaTestSending">Sending…</span>
+        </a>
+        {# ── Alerts → API Rate Limit Alert sub-tab: end-to-end preview mail ─ #}
+        <template x-if="tab === 'alerts' && alertTab === 'rate_limit' && rateTestSuccess === true">
+          <span class="badge badge-green" style="font-size:11px;">Sent</span>
+        </template>
+        <template x-if="tab === 'alerts' && alertTab === 'rate_limit' && rateTestSuccess === false">
+          <span class="badge badge-red" style="font-size:11px;" x-text="rateTestMessage || 'Failed'"></span>
+        </template>
+        <a x-show="tab === 'alerts' && alertTab === 'rate_limit'" type="button" class="btn btn-warning btn-sm"
+           :disabled="rateTestSending" @click="sendRateTest()">
+          <span x-show="!rateTestSending">Send Test Mail</span>
+          <span x-show="rateTestSending">Sending…</span>
+        </a>
+        {# ── Syslog tab: probe datagram to the collector ─────────────── #}
+        <template x-if="tab === 'syslog' && syslogTestSuccess === true">
+          <span class="badge badge-green" style="font-size:11px;">Sent</span>
+        </template>
+        <template x-if="tab === 'syslog' && syslogTestSuccess === false">
+          <span class="badge badge-red" style="font-size:11px;" x-text="syslogTestMessage || 'Failed'"></span>
+        </template>
+        <a x-show="tab === 'syslog'" type="button" class="btn btn-warning btn-sm"
+           :disabled="syslogTesting" @click="sendSyslogTest()">
+          <span x-show="!syslogTesting">Test Syslog</span>
+          <span x-show="syslogTesting">Sending…</span>
+        </a>
+        {% endif %}
+
+        {% if category == 'threat_intel' %}
+        <!-- AbuseIPDB -->
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="font-size:11px;color:var(--text-muted);font-weight:500;">AbuseIPDB</span>
+          <template x-if="abuseTotalKeys > 1">
+            <span class="badge" :class="abuseExhausted >= abuseTotalKeys ? 'badge-red' : abuseExhausted > 0 ? 'badge-yellow' : 'badge-green'"
+                  style="font-size:10px;" x-text="abuseUsedKeys + '/' + abuseTotalKeys + ' keys'"
+                  :title="'Keys used today: ' + abuseUsedKeys + ' of ' + abuseTotalKeys + ' (' + abuseExhausted + ' exhausted)'"></span>
+          </template>
+          <template x-if="abuseCheckSuccess && abuseLimit > 0">
+            <div style="display:flex;align-items:center;gap:5px;">
+              <div style="width:60px;height:4px;border-radius:2px;background:var(--bg-elevated);overflow:hidden;">
+                <div :style="'width:'+Math.min(Math.round(abuseUsed/abuseLimit*100),100)+'%;height:100%;border-radius:2px;background:'
+                     +(abuseUsed/abuseLimit>=0.9?'var(--danger)':abuseUsed/abuseLimit>=0.7?'var(--warning)':'var(--success)')"></div>
+              </div>
+              <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;"
+                    x-text="abuseUsed+'/'+abuseLimit"
+                    :title="'Requests used today: ' + abuseUsed + ' of ' + abuseLimit + '  ·  ' + abuseRemaining + ' remaining'"></span>
+            </div>
+          </template>
+          <template x-if="abuseCheckSuccess && !(abuseLimit > 0)">
+            <span class="badge badge-green" style="font-size:10px;">Valid</span>
+          </template>
+          <template x-if="abuseCheckResult && !abuseCheckSuccess">
+            <span class="badge badge-red" style="font-size:10px;">Failed</span>
+          </template>
+          <a type="button" class="btn btn-warning btn-sm" :disabled="abuseChecking" @click="checkAbuseKey()">
+            <span x-show="!abuseChecking">Check Key</span>
+            <span x-show="abuseChecking">Checking…</span>
+          </a>
+        </div>
+        <!-- separator -->
+        <span style="width:1px;height:18px;background:var(--border);flex-shrink:0;"></span>
+        <!-- VirusTotal -->
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="font-size:11px;color:var(--text-muted);font-weight:500;">VirusTotal</span>
+          <template x-if="vtTotalKeys > 1">
+            <span class="badge" :class="vtValidKeys === vtTotalKeys ? 'badge-green' : vtValidKeys > 0 ? 'badge-yellow' : 'badge-red'"
+                  style="font-size:10px;" x-text="vtValidKeys + '/' + vtTotalKeys + ' keys'"></span>
+          </template>
+          <template x-if="vtTotalKeys > 0 && vtExhausted !== null">
+            <div style="display:flex;align-items:center;gap:5px;">
+              <div style="width:60px;height:4px;border-radius:2px;background:var(--bg-elevated);overflow:hidden;">
+                <div :style="'width:'+Math.min(Math.round(vtExhausted/vtTotalKeys*100),100)+'%;height:100%;border-radius:2px;background:'
+                     +(vtExhausted/vtTotalKeys>=0.9?'var(--danger)':vtExhausted/vtTotalKeys>=0.5?'var(--warning)':'var(--success)')"></div>
+              </div>
+              <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;"
+                    x-text="vtExhausted+'/'+vtTotalKeys"
+                    :title="'Keys out of quota: ' + vtExhausted + ' of ' + vtTotalKeys"></span>
+            </div>
+          </template>
+          <template x-if="vtCheckSuccess && !(vtTotalKeys > 0)">
+            <span class="badge badge-green" style="font-size:10px;">Valid</span>
+          </template>
+          <template x-if="vtCheckResult && !vtCheckSuccess">
+            <span class="badge badge-red" style="font-size:10px;">Failed</span>
+          </template>
+          <a type="button" class="btn btn-warning btn-sm" :disabled="vtChecking" @click="checkVtKey()">
+            <span x-show="!vtChecking">Check Key</span>
+            <span x-show="vtChecking">Checking…</span>
+          </a>
+        </div>
+        {% endif %}
+
+        {% if category == 'password_policy' %}
+        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+          <span style="display:inline-flex;align-items:center;gap:4px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text-secondary);white-space:nowrap;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2.5"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            Min. {{ pw_policy.min_length }} chars
+          </span>
+          {% if pw_policy.require_uppercase %}
+          <span style="display:inline-flex;align-items:center;gap:4px;background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.25);border-radius:6px;padding:3px 8px;font-size:11px;color:#8b5cf6;white-space:nowrap;">
+            A–Z
+          </span>
+          {% else %}
+          <span style="display:inline-flex;align-items:center;gap:4px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text-muted);white-space:nowrap;text-decoration:line-through;opacity:.5;">
+            A–Z
+          </span>
+          {% endif %}
+          {% if pw_policy.require_lowercase %}
+          <span style="display:inline-flex;align-items:center;gap:4px;background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.25);border-radius:6px;padding:3px 8px;font-size:11px;color:#8b5cf6;white-space:nowrap;">
+            a–z
+          </span>
+          {% else %}
+          <span style="display:inline-flex;align-items:center;gap:4px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text-muted);white-space:nowrap;text-decoration:line-through;opacity:.5;">
+            a–z
+          </span>
+          {% endif %}
+          {% if pw_policy.require_digits %}
+          <span style="display:inline-flex;align-items:center;gap:4px;background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.25);border-radius:6px;padding:3px 8px;font-size:11px;color:#8b5cf6;white-space:nowrap;">
+            0–9
+          </span>
+          {% else %}
+          <span style="display:inline-flex;align-items:center;gap:4px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text-muted);white-space:nowrap;text-decoration:line-through;opacity:.5;">
+            0–9
+          </span>
+          {% endif %}
+          {% if pw_policy.require_symbols %}
+          <span style="display:inline-flex;align-items:center;gap:4px;background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.25);border-radius:6px;padding:3px 8px;font-size:11px;color:#8b5cf6;white-space:nowrap;">
+            !@#…
+          </span>
+          {% else %}
+          <span style="display:inline-flex;align-items:center;gap:4px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text-muted);white-space:nowrap;text-decoration:line-through;opacity:.5;">
+            !@#…
+          </span>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Accordion Body -->
+    <div x-show="open"
+         x-transition:enter="transition ease-out duration-150"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100">
+
+      {% if category == 'ldap' %}
+      <div style="padding:0 20px;" x-show="ldapResult">
+        <div class="alert" :class="ldapSuccess ? 'alert-success' : 'alert-error'"
+             x-text="ldapResult" style="margin-bottom:0;margin-top:12px;"></div>
+      </div>
+      {% endif %}
+
+      {% if category == 'threat_intel' %}
+      {# ── Threat Intelligence: AbuseIPDB | VirusTotal sub-tabs ────────────── #}
+      <div>
+
+        <!-- Sub-tab bar -->
+        <div style="display:flex;gap:6px;padding:14px 20px 0;">
+          <button type="button" id="ti-tab-abuseipdb" data-on-click="tiSwitchTab('abuseipdb')"
+                  class="ti-tab ti-tab-active">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            AbuseIPDB
+          </button>
+          <button type="button" id="ti-tab-virustotal" data-on-click="tiSwitchTab('virustotal')"
+                  class="ti-tab">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            VirusTotal
+          </button>
+        </div>
+
+        
+        {# ── AbuseIPDB tab ────────────────────────────────────────────────────── #}
+        <div id="ti-panel-abuseipdb">
+          <form method="post" action="{% url 'settings_app:save' %}" data-ajax-save>
+            {% csrf_token %}
+            <input type="hidden" name="category" value="{{ category }}">
+
+            <div class="card-body" style="padding-top:16px;padding-bottom:8px;">
+              {% for setting in settings_list %}
+              {% if 'abuseipdb' in setting.key and 'cleanup' not in setting.key %}
+
+              {% if setting.key == 'threat_intel.abuseipdb_schedule_enabled' %}
+
+              
+              <div x-data="{ schedEnabled: {% if setting.typed_value %}true{% else %}false{% endif %} }">
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;display:flex;align-items:center;gap:6px;">
+                    <span>{{ setting.ui_label|default:setting.key }}</span>
+                    {% if setting.key == 'threat_intel.abuseipdb_api_key' or setting.key == 'threat_intel.virustotal_api_key' %}
+                    <span class="info-tip" data-tip="You can stack multiple API keys with the '+ Add key' button. When a key hits its daily quota (HTTP 429) the platform automatically rotates to the next available key and brings the exhausted one back at the next UTC reset.">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    </span>
+                    {% endif %}
+                  </div>
+                  {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+                  <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+                </div>
+                <div class="setting-control">
+                  <label class="toggle-switch">
+                    <input type="checkbox"
+                           id="tog_{{ setting.key }}"
+                           {% if setting.typed_value %}checked{% endif %}
+                           @change="schedEnabled = $event.target.checked; document.getElementById('hid_{{ setting.key }}').value = $event.target.checked ? 'true' : 'false'">
+                    <span class="toggle-track"></span>
+                  </label>
+                  <input type="hidden" name="setting_{{ setting.key }}" id="hid_{{ setting.key }}"
+                         value="{% if setting.typed_value %}true{% else %}false{% endif %}">
+                </div>
+              </div>
+              {% elif setting.key == 'threat_intel.abuseipdb_schedule_interval' %}
+              <div class="setting-row" :class="!schedEnabled ? 'setting-sub-disabled' : ''">
+                <div class="setting-meta">
+                  <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;display:flex;align-items:center;gap:6px;">
+                    <span>{{ setting.ui_label|default:setting.key }}</span>
+                    {% if setting.key == 'threat_intel.abuseipdb_api_key' or setting.key == 'threat_intel.virustotal_api_key' %}
+                    <span class="info-tip" data-tip="You can stack multiple API keys with the '+ Add key' button. When a key hits its daily quota (HTTP 429) the platform automatically rotates to the next available key and brings the exhausted one back at the next UTC reset.">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    </span>
+                    {% endif %}
+                  </div>
+                  {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+                  <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+                </div>
+                <div class="setting-control">
+                  <div x-data="{ interval: '{{ setting.value }}' }">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                      <select name="setting_{{ setting.key }}" class="form-select" x-model="interval" style="width:auto;" :disabled="!schedEnabled">
+                        <option value="hourly">Hourly</option>
+                        <option value="daily">Daily</option>
+                      </select>
+                      <input type="time" name="setting_threat_intel.abuseipdb_schedule_time"
+                             value="{{ setting.inline_suffix|default:'' }}"
+                             class="form-input" style="width:auto;" x-show="interval === 'daily'" :disabled="!schedEnabled">
+                      <span class="text-xs text-muted" x-show="interval === 'hourly'">Runs at the top of every hour.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              </div>{# close schedEnabled wrapper #}
+
+
+              {% elif setting.key == 'threat_intel.abuseipdb_promotion_threshold' %}
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ setting.ui_label|default:setting.key }}</div>
+                  {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+                  <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">threat_intel.abuseipdb_promotion_threshold  +  window_days</code>
+                </div>
+                <div class="setting-control">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <span class="text-xs text-muted">Reports ≥</span>
+                    <input type="number" min="0" name="setting_threat_intel.abuseipdb_promotion_threshold"
+                           value="{{ setting.value }}" class="form-input" style="width:78px;text-align:center;" placeholder="0 = off">
+                    <span class="text-xs text-muted" style="margin-left:14px;">within</span>
+                    <input type="number" min="1" max="30" name="setting_threat_intel.abuseipdb_promotion_window_days"
+                           value="{{ setting.inline_abuseipdb_promotion_window_days|default:'7' }}" class="form-input" style="width:78px;text-align:center;" placeholder="Days">
+                    <span class="text-xs text-muted">days</span>
+                  </div>
+                </div>
+              </div>
+
+              {% else %}
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;display:flex;align-items:center;gap:6px;">
+                    <span>{{ setting.ui_label|default:setting.key }}</span>
+                    {% if setting.key == 'threat_intel.abuseipdb_api_key' or setting.key == 'threat_intel.virustotal_api_key' %}
+                    <span class="info-tip" data-tip="You can stack multiple API keys with the '+ Add key' button. When a key hits its daily quota (HTTP 429) the platform automatically rotates to the next available key and brings the exhausted one back at the next UTC reset.">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    </span>
+                    {% endif %}
+                  </div>
+                  {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+                  <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+                </div>
+                <div class="setting-control">
+                  {% if setting.value_type == 'bool' %}
+                  <label class="toggle-switch">
+                    <input type="checkbox"
+                           id="tog_{{ setting.key }}"
+                           {% if setting.typed_value %}checked{% endif %}
+                           {% if setting.key == 'threat_intel.abuseipdb_enabled' %}data-master-toggle{% endif %}
+                           data-on-change="settingToggle('hid_{{ setting.key }}')">
+                    <span class="toggle-track"></span>
+                  </label>
+                  <input type="hidden" name="setting_{{ setting.key }}" id="hid_{{ setting.key }}"
+                         value="{% if setting.typed_value %}true{% else %}false{% endif %}">
+                  {% elif setting.value_type == 'json' %}
+                  <textarea name="setting_{{ setting.key }}" class="form-input font-mono" rows="3">{{ setting.value }}</textarea>
+                  {% elif setting.is_secret %}
+                    {% if setting.key == 'threat_intel.abuseipdb_api_key' or setting.key == 'threat_intel.virustotal_api_key' %}
+                    <div class="api-key-list" x-data="apiKeyList('{{ setting.plain_value|escapejs }}')" x-init="sync()">
+                      <template x-for="(row, i) in keys" :key="i">
+                        <div class="api-key-row">
+                          <input :type="row.show ? 'text' : 'password'"
+                                 class="form-input api-key-input"
+                                 x-model="row.value"
+                                 @input="sync()"
+                                 placeholder="Enter API key"
+                                 autocomplete="new-password">
+                          <button type="button" class="api-key-btn api-key-btn--eye"
+                                  @click="row.show = !row.show"
+                                  :title="row.show ? 'Hide key' : 'Show key'"
+                                  aria-label="Toggle key visibility">
+                            <svg x-show="!row.show" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                            <svg x-show="row.show" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                          </button>
+                          <button type="button" class="api-key-btn api-key-btn--remove"
+                                  @click="removeKey(i)"
+                                  x-show="keys.length > 1"
+                                  title="Remove this key"
+                                  aria-label="Remove key">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                          </button>
+                        </div>
+                      </template>
+                      <div class="api-key-actions">
+                        <button type="button" class="api-key-add" @click="addKey()" title="Add another API key">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                          Add key
+                        </button>
+                        <span class="api-key-hint" x-show="keys.filter(k => k.value.trim()).length > 1"
+                              x-text="keys.filter(k => k.value.trim()).length + ' keys — auto-rotated on quota exhaustion'"></span>
+                      </div>
+                      <input type="hidden" name="setting_{{ setting.key }}" x-ref="hidden">
+                    </div>
+                    {% else %}
+                    <input type="password" name="setting_{{ setting.key }}" class="form-input"
+                           value="" autocomplete="new-password"
+                           placeholder="{% if setting.plain_value %}••••••••  (set - leave blank to keep){% else %}Enter value{% endif %}">
+                    {% endif %}
+                  {% else %}
+                  <input type="text" name="setting_{{ setting.key }}" class="form-input" value="{{ setting.value }}">
+                  {% endif %}
+                </div>
+              </div>
+              {% endif %}
+
+              {% endif %}{# end if 'abuseipdb' in setting.key #}
+              {% endfor %}
+
+              <!-- AbuseIPDB: Bulk Refresh -->
+              <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:16px;">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                  <a type="button" class="btn btn-info btn-sm"
+                     :disabled="abuseRefreshing"
+                     @click="
+                       abuseRefreshing=true; abuseResult=''; abuseSuccess=null;
+                       const fd=new FormData();
+                       fd.append('csrfmiddlewaretoken','{{ csrf_token }}');
+                       fd.append('only_unchecked', abuseOnlyUnchecked ? 'true' : 'false');
+                       fetch('{% url 'settings_app:abuseipdb_refresh' %}', {method:'POST', body:fd})
+                         .then(r=>r.json())
+                         .then(d=>{abuseResult=d.message; abuseSuccess=d.success; abuseRefreshing=false})
+                         .catch(e=>{abuseResult='Error: '+e; abuseSuccess=false; abuseRefreshing=false})
+                     ">
+                    <span x-show="!abuseRefreshing">Refresh Abuse Scores</span>
+                    <span x-show="abuseRefreshing">Querying AbuseIPDB…</span>
+                  </a>
+                  <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted);cursor:pointer;">
+                    <input type="checkbox" class="form-checkbox" x-model="abuseOnlyUnchecked">
+                    Only unchecked entries
+                  </label>
+                </div>
+                <div x-show="abuseResult" style="margin-top:10px;">
+                  <div class="alert" :class="abuseSuccess ? 'alert-success' : 'alert-error'" x-text="abuseResult"></div>
+                </div>
+                <p class="text-xs text-muted" style="margin-top:10px;">
+                  Queries AbuseIPDB for all active blacklist entries and stores the confidence score.
+                  Free tier: 1,000 queries/day. Use "Only unchecked" to avoid re-querying scored entries.
+                </p>
+              </div>
+
+              <!-- AbuseIPDB: Auto-Cleanup (toggle + rule + manual trigger all together) -->
+              <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:16px;">
+                <p style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Inactive Cleanup</p>
+
+                {% for s in settings_list %}
+                  {% if s.key == 'threat_intel.abuseipdb_cleanup_enabled' %}
+                  <div class="setting-row">
+                    <div class="setting-meta">
+                      <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ s.ui_label|default:s.key }}</div>
+                      {% if s.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ s.ui_hint }}</div>{% endif %}
+                      <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ s.key }}</code>
+                    </div>
+                    <div class="setting-control">
+                      <label class="toggle-switch">
+                        <input type="checkbox" id="tog_{{ s.key }}"
+                               {% if s.typed_value %}checked{% endif %}
+                               data-on-change="settingToggle('hid_{{ s.key }}')">
+                        <span class="toggle-track"></span>
+                      </label>
+                      <input type="hidden" name="setting_{{ s.key }}" id="hid_{{ s.key }}"
+                             value="{% if s.typed_value %}true{% else %}false{% endif %}">
+                    </div>
+                  </div>
+                  {% elif s.key == 'threat_intel.abuseipdb_cleanup_score_min' %}
+                  <div class="setting-row">
+                    <div class="setting-meta">
+                      <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ s.ui_label|default:s.key }}</div>
+                      {% if s.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ s.ui_hint }}</div>{% endif %}
+                      <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">threat_intel.abuseipdb_cleanup_score_*  +  retention_days</code>
+                    </div>
+                    <div class="setting-control">
+                      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <span class="text-xs text-muted">Score</span>
+                        <input type="number" min="0" max="100" name="setting_threat_intel.abuseipdb_cleanup_score_min"
+                               value="{{ s.value }}" class="form-input" style="width:78px;text-align:center;" placeholder="Min">
+                        <span style="color:var(--text-muted);font-weight:600;">–</span>
+                        <input type="number" min="0" max="100" name="setting_threat_intel.abuseipdb_cleanup_score_max"
+                               value="{{ s.inline_abuseipdb_cleanup_score_max|default:'100' }}" class="form-input" style="width:78px;text-align:center;" placeholder="Max">
+                        <span class="text-xs text-muted" style="margin-left:14px;">Retention</span>
+                        <input type="number" min="1" max="3650" name="setting_threat_intel.abuseipdb_cleanup_retention_days"
+                               value="{{ s.inline_abuseipdb_cleanup_retention_days|default:'30' }}" class="form-input" style="width:90px;text-align:center;" placeholder="Days">
+                        <span class="text-xs text-muted">days</span>
+                      </div>
+                    </div>
+                  </div>
+                  {% endif %}
+                {% endfor %}
+
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;">
+                  <a type="button" class="btn btn-danger btn-sm"
+                     :disabled="abuseCleaning"
+                     @click="
+                       abuseCleaning=true; abuseCleanupResult=''; abuseCleanupSuccess=null;
+                       const fd=new FormData();
+                       fd.append('csrfmiddlewaretoken','{{ csrf_token }}');
+                       fetch('{% url 'settings_app:abuseipdb_run_cleanup' %}', {method:'POST', body:fd})
+                         .then(r=>r.json())
+                         .then(d=>{abuseCleanupResult=d.message; abuseCleanupSuccess=d.success; abuseCleaning=false})
+                         .catch(e=>{abuseCleanupResult='Error: '+e; abuseCleanupSuccess=false; abuseCleaning=false})
+                     ">
+                    <span x-show="!abuseCleaning">Run Cleanup Now</span>
+                    <span x-show="abuseCleaning">Deleting…</span>
+                  </a>
+                </div>
+                <div x-show="abuseCleanupResult" style="margin-top:10px;">
+                  <div class="alert" :class="abuseCleanupSuccess ? 'alert-success' : 'alert-error'" x-text="abuseCleanupResult"></div>
+                </div>
+                <p class="text-xs text-muted" style="margin-top:10px;">
+                  Permanently deletes inactive blacklist entries whose AbuseIPDB confidence score
+                  is within the Cleanup Score range AND that were added more than the configured
+                  retention days ago. Every run writes one entry to the activity log with the rule
+                  that fired and a full snapshot of each deleted record (cidr, score, country, etc.).
+                </p>
+              </div>
+
+              <!-- AbuseIPDB: Scheduler Status -->
+              <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:16px;">
+                <p style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Auto Schedule Status</p>
+                <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+                  <div>
+                    <p class="text-xs text-muted" style="margin-bottom:4px;">Scheduler</p>
+                    {% if not scheduler_status.running %}
+                      <span class="badge badge-red" style="font-size:11px;">Not running</span>
+                    {% elif scheduler_status.job_exists %}
+                      <span class="badge badge-green" style="font-size:11px;">Active</span>
+                    {% else %}
+                      <span class="badge badge-yellow" style="font-size:11px;">Standby</span>
+                    {% endif %}
+                  </div>
+                  <div>
+                    <p class="text-xs text-muted" style="margin-bottom:4px;">Next Run</p>
+                    {% if scheduler_status.next_run %}
+                      <span class="badge badge-blue" style="font-size:11px;font-family:var(--font-mono);">{{ scheduler_status.next_run }}</span>
+                    {% else %}
+                      <span class="text-muted text-sm">—</span>
+                    {% endif %}
+                  </div>
+                  <div>
+                    <p class="text-xs text-muted" style="margin-bottom:4px;">Last Run</p>
+                    {% if last_scheduled_run %}
+                      <span class="badge badge-blue" style="font-size:11px;font-family:var(--font-mono);">{{ last_scheduled_run.timestamp }}</span>
+                      {% with d=last_scheduled_run.detail %}
+                      {% if d %}
+                      <span class="text-muted text-sm" style="margin-left:6px;">
+                        checked {{ d.checked|default:0 }}, skipped {{ d.skipped|default:0 }}, failed {{ d.failed|default:0 }}
+                        {% if d.elapsed_seconds %}· {{ d.elapsed_seconds }}s{% endif %}
+                      </span>
+                      {% endif %}
+                      {% endwith %}
+                    {% else %}
+                      <span class="text-muted text-sm">Never</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <p class="text-xs text-muted" style="margin-top:10px;">
+                  Enable <strong>Auto Schedule</strong> above and save to activate. Changes take effect immediately without a restart.
+                  The scheduler runs in the background; results are logged to the Activity Log.
+                </p>
+              </div>
+            </div>
+
+            <div style="display:flex;justify-content:flex-end;padding:4px 20px 16px;">
+              <button type="submit" class="btn btn-warning">Save</button>
+            </div>
+          </form>
+        </div>{# /abuseipdb tab #}
+
+        {# ── VirusTotal tab ───────────────────────────────────────────────────── #}
+        <div id="ti-panel-virustotal" style="display:none;">
+          <form method="post" action="{% url 'settings_app:save' %}" data-ajax-save>
+            {% csrf_token %}
+            <input type="hidden" name="category" value="{{ category }}">
+
+            <div class="card-body" style="padding-top:16px;padding-bottom:8px;">
+              {% for setting in settings_list %}
+              {% if 'virustotal' in setting.key and 'cleanup' not in setting.key %}
+
+              {% if setting.key == 'threat_intel.virustotal_schedule_enabled' %}
+              <div x-data="{ vtSchedEnabled: {% if setting.typed_value %}true{% else %}false{% endif %} }">
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;display:flex;align-items:center;gap:6px;">
+                    <span>{{ setting.ui_label|default:setting.key }}</span>
+                    {% if setting.key == 'threat_intel.abuseipdb_api_key' or setting.key == 'threat_intel.virustotal_api_key' %}
+                    <span class="info-tip" data-tip="You can stack multiple API keys with the '+ Add key' button. When a key hits its daily quota (HTTP 429) the platform automatically rotates to the next available key and brings the exhausted one back at the next UTC reset.">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    </span>
+                    {% endif %}
+                  </div>
+                  {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+                  <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+                </div>
+                <div class="setting-control">
+                  <label class="toggle-switch">
+                    <input type="checkbox"
+                           id="tog_{{ setting.key }}"
+                           {% if setting.typed_value %}checked{% endif %}
+                           @change="vtSchedEnabled = $event.target.checked; document.getElementById('hid_{{ setting.key }}').value = $event.target.checked ? 'true' : 'false'">
+                    <span class="toggle-track"></span>
+                  </label>
+                  <input type="hidden" name="setting_{{ setting.key }}" id="hid_{{ setting.key }}"
+                         value="{% if setting.typed_value %}true{% else %}false{% endif %}">
+                </div>
+              </div>
+              {% elif setting.key == 'threat_intel.virustotal_schedule_interval' %}
+              <div class="setting-row" :class="!vtSchedEnabled ? 'setting-sub-disabled' : ''">
+                <div class="setting-meta">
+                  <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;display:flex;align-items:center;gap:6px;">
+                    <span>{{ setting.ui_label|default:setting.key }}</span>
+                    {% if setting.key == 'threat_intel.abuseipdb_api_key' or setting.key == 'threat_intel.virustotal_api_key' %}
+                    <span class="info-tip" data-tip="You can stack multiple API keys with the '+ Add key' button. When a key hits its daily quota (HTTP 429) the platform automatically rotates to the next available key and brings the exhausted one back at the next UTC reset.">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    </span>
+                    {% endif %}
+                  </div>
+                  {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+                  <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+                </div>
+                <div class="setting-control">
+                  <div x-data="{ vtInterval: '{{ setting.value }}' }">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                      <select name="setting_{{ setting.key }}" class="form-select" x-model="vtInterval" style="width:auto;" :disabled="!vtSchedEnabled">
+                        <option value="hourly">Hourly</option>
+                        <option value="daily">Daily</option>
+                      </select>
+                      <input type="time" name="setting_threat_intel.virustotal_schedule_time"
+                             value="{{ setting.inline_suffix|default:'' }}"
+                             class="form-input" style="width:auto;" x-show="vtInterval === 'daily'" :disabled="!vtSchedEnabled">
+                      <span class="text-xs text-muted" x-show="vtInterval === 'hourly'">Runs at the top of every hour.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              </div>{# close vtSchedEnabled wrapper #}
+
+
+              {% else %}
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;display:flex;align-items:center;gap:6px;">
+                    <span>{{ setting.ui_label|default:setting.key }}</span>
+                    {% if setting.key == 'threat_intel.abuseipdb_api_key' or setting.key == 'threat_intel.virustotal_api_key' %}
+                    <span class="info-tip" data-tip="You can stack multiple API keys with the '+ Add key' button. When a key hits its daily quota (HTTP 429) the platform automatically rotates to the next available key and brings the exhausted one back at the next UTC reset.">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    </span>
+                    {% endif %}
+                  </div>
+                  {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+                  <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+                </div>
+                <div class="setting-control">
+                  {% if setting.value_type == 'bool' %}
+                  <label class="toggle-switch">
+                    <input type="checkbox"
+                           id="tog_{{ setting.key }}"
+                           {% if setting.typed_value %}checked{% endif %}
+                           {% if setting.key == 'threat_intel.virustotal_enabled' %}data-master-toggle{% endif %}
+                           data-on-change="settingToggle('hid_{{ setting.key }}')">
+                    <span class="toggle-track"></span>
+                  </label>
+                  <input type="hidden" name="setting_{{ setting.key }}" id="hid_{{ setting.key }}"
+                         value="{% if setting.typed_value %}true{% else %}false{% endif %}">
+                  {% elif setting.value_type == 'json' %}
+                  <textarea name="setting_{{ setting.key }}" class="form-input font-mono" rows="3">{{ setting.value }}</textarea>
+                  {% elif setting.is_secret %}
+                    {% if setting.key == 'threat_intel.abuseipdb_api_key' or setting.key == 'threat_intel.virustotal_api_key' %}
+                    <div class="api-key-list" x-data="apiKeyList('{{ setting.plain_value|escapejs }}')" x-init="sync()">
+                      <template x-for="(row, i) in keys" :key="i">
+                        <div class="api-key-row">
+                          <input :type="row.show ? 'text' : 'password'"
+                                 class="form-input api-key-input"
+                                 x-model="row.value"
+                                 @input="sync()"
+                                 placeholder="Enter API key"
+                                 autocomplete="new-password">
+                          <button type="button" class="api-key-btn api-key-btn--eye"
+                                  @click="row.show = !row.show"
+                                  :title="row.show ? 'Hide key' : 'Show key'"
+                                  aria-label="Toggle key visibility">
+                            <svg x-show="!row.show" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                            <svg x-show="row.show" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                          </button>
+                          <button type="button" class="api-key-btn api-key-btn--remove"
+                                  @click="removeKey(i)"
+                                  x-show="keys.length > 1"
+                                  title="Remove this key"
+                                  aria-label="Remove key">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                          </button>
+                        </div>
+                      </template>
+                      <div class="api-key-actions">
+                        <button type="button" class="api-key-add" @click="addKey()" title="Add another API key">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                          Add key
+                        </button>
+                        <span class="api-key-hint" x-show="keys.filter(k => k.value.trim()).length > 1"
+                              x-text="keys.filter(k => k.value.trim()).length + ' keys — auto-rotated on quota exhaustion'"></span>
+                      </div>
+                      <input type="hidden" name="setting_{{ setting.key }}" x-ref="hidden">
+                    </div>
+                    {% else %}
+                    <input type="password" name="setting_{{ setting.key }}" class="form-input"
+                           value="" autocomplete="new-password"
+                           placeholder="{% if setting.plain_value %}••••••••  (set - leave blank to keep){% else %}Enter value{% endif %}">
+                    {% endif %}
+                  {% else %}
+                  <input type="text" name="setting_{{ setting.key }}" class="form-input" value="{{ setting.value }}">
+                  {% endif %}
+                </div>
+              </div>
+              {% endif %}
+
+              {% endif %}{# end if 'virustotal' in setting.key #}
+              {% endfor %}
+
+              <!-- VirusTotal: Bulk Refresh -->
+              <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:16px;">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                  <a type="button" class="btn btn-info btn-sm"
+                     :disabled="vtRefreshing"
+                     @click="
+                       vtRefreshing=true; vtResult=''; vtSuccess=null;
+                       const fd=new FormData();
+                       fd.append('csrfmiddlewaretoken','{{ csrf_token }}');
+                       fd.append('only_unchecked', vtOnlyUnchecked ? 'true' : 'false');
+                       fetch('{% url 'settings_app:virustotal_refresh' %}', {method:'POST', body:fd})
+                         .then(r=>r.json())
+                         .then(d=>{vtResult=d.message; vtSuccess=d.success; vtRefreshing=false})
+                         .catch(e=>{vtResult='Error: '+e; vtSuccess=false; vtRefreshing=false})
+                     ">
+                    <span x-show="!vtRefreshing">Refresh VT Scores</span>
+                    <span x-show="vtRefreshing">Querying VirusTotal…</span>
+                  </a>
+                  <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted);cursor:pointer;">
+                    <input type="checkbox" class="form-checkbox" x-model="vtOnlyUnchecked">
+                    Only unchecked entries
+                  </label>
+                </div>
+                <div x-show="vtResult" style="margin-top:10px;">
+                  <div class="alert" :class="vtSuccess ? 'alert-success' : 'alert-error'" x-text="vtResult"></div>
+                </div>
+                <p class="text-xs text-muted" style="margin-top:10px;">
+                  Queries VirusTotal for all active hash blacklist entries and stores engine detection counts.
+                  Free tier: 4 lookups/minute, 500/day. Use "Only unchecked" to avoid re-querying scored entries.
+                </p>
+              </div>
+
+              <!-- VirusTotal: Auto-Cleanup (toggle + rule + manual trigger all together) -->
+              <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:16px;">
+                <p style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Inactive Cleanup</p>
+
+                {% for s in settings_list %}
+                  {% if s.key == 'threat_intel.virustotal_cleanup_enabled' %}
+                  <div class="setting-row">
+                    <div class="setting-meta">
+                      <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ s.ui_label|default:s.key }}</div>
+                      {% if s.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ s.ui_hint }}</div>{% endif %}
+                      <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ s.key }}</code>
+                    </div>
+                    <div class="setting-control">
+                      <label class="toggle-switch">
+                        <input type="checkbox" id="tog_{{ s.key }}"
+                               {% if s.typed_value %}checked{% endif %}
+                               data-on-change="settingToggle('hid_{{ s.key }}')">
+                        <span class="toggle-track"></span>
+                      </label>
+                      <input type="hidden" name="setting_{{ s.key }}" id="hid_{{ s.key }}"
+                             value="{% if s.typed_value %}true{% else %}false{% endif %}">
+                    </div>
+                  </div>
+                  {% elif s.key == 'threat_intel.virustotal_cleanup_score_min' %}
+                  <div class="setting-row">
+                    <div class="setting-meta">
+                      <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ s.ui_label|default:s.key }}</div>
+                      {% if s.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ s.ui_hint }}</div>{% endif %}
+                      <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">threat_intel.virustotal_cleanup_score_*  +  retention_days</code>
+                    </div>
+                    <div class="setting-control">
+                      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <span class="text-xs text-muted">Malicious</span>
+                        <input type="number" min="0" max="100" name="setting_threat_intel.virustotal_cleanup_score_min"
+                               value="{{ s.value }}" class="form-input" style="width:78px;text-align:center;" placeholder="Min">
+                        <span style="color:var(--text-muted);font-weight:600;">–</span>
+                        <input type="number" min="0" max="100" name="setting_threat_intel.virustotal_cleanup_score_max"
+                               value="{{ s.inline_virustotal_cleanup_score_max|default:'100' }}" class="form-input" style="width:78px;text-align:center;" placeholder="Max">
+                        <span class="text-xs text-muted" style="margin-left:14px;">Retention</span>
+                        <input type="number" min="1" max="3650" name="setting_threat_intel.virustotal_cleanup_retention_days"
+                               value="{{ s.inline_virustotal_cleanup_retention_days|default:'30' }}" class="form-input" style="width:90px;text-align:center;" placeholder="Days">
+                        <span class="text-xs text-muted">days</span>
+                      </div>
+                    </div>
+                  </div>
+                  {% endif %}
+                {% endfor %}
+
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;">
+                  <a type="button" class="btn btn-danger btn-sm"
+                     :disabled="vtCleaning"
+                     @click="
+                       vtCleaning=true; vtCleanupResult=''; vtCleanupSuccess=null;
+                       const fd=new FormData();
+                       fd.append('csrfmiddlewaretoken','{{ csrf_token }}');
+                       fetch('{% url 'settings_app:virustotal_run_cleanup' %}', {method:'POST', body:fd})
+                         .then(r=>r.json())
+                         .then(d=>{vtCleanupResult=d.message; vtCleanupSuccess=d.success; vtCleaning=false})
+                         .catch(e=>{vtCleanupResult='Error: '+e; vtCleanupSuccess=false; vtCleaning=false})
+                     ">
+                    <span x-show="!vtCleaning">Run Cleanup Now</span>
+                    <span x-show="vtCleaning">Deleting…</span>
+                  </a>
+                </div>
+                <div x-show="vtCleanupResult" style="margin-top:10px;">
+                  <div class="alert" :class="vtCleanupSuccess ? 'alert-success' : 'alert-error'" x-text="vtCleanupResult"></div>
+                </div>
+                <p class="text-xs text-muted" style="margin-top:10px;">
+                  Permanently deletes inactive hash blacklist entries whose VirusTotal malicious-engine
+                  count is within the Cleanup Score range AND that were added more than the configured
+                  retention days ago. Every run writes one entry to the activity log with the rule
+                  that fired and a full snapshot of each deleted hash (hash, type, threat label, etc.).
+                </p>
+              </div>
+
+              <!-- VirusTotal: Scheduler Status -->
+              <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:16px;">
+                <p style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Auto Schedule Status</p>
+                <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+                  <div>
+                    <p class="text-xs text-muted" style="margin-bottom:4px;">Scheduler</p>
+                    {% if not vt_scheduler_status.running %}
+                      <span class="badge badge-red" style="font-size:11px;">Not running</span>
+                    {% elif vt_scheduler_status.job_exists %}
+                      <span class="badge badge-green" style="font-size:11px;">Active</span>
+                    {% else %}
+                      <span class="badge badge-yellow" style="font-size:11px;">Standby</span>
+                    {% endif %}
+                  </div>
+                  <div>
+                    <p class="text-xs text-muted" style="margin-bottom:4px;">Next Run</p>
+                    {% if vt_scheduler_status.next_run %}
+                      <span class="badge badge-blue" style="font-size:11px;font-family:var(--font-mono);">{{ vt_scheduler_status.next_run }}</span>
+                    {% else %}
+                      <span class="text-muted text-sm">—</span>
+                    {% endif %}
+                  </div>
+                  <div>
+                    <p class="text-xs text-muted" style="margin-bottom:4px;">Last Run</p>
+                    {% if last_vt_scheduled_run %}
+                      <span class="badge badge-blue" style="font-size:11px;font-family:var(--font-mono);">{{ last_vt_scheduled_run.timestamp }}</span>
+                      {% with d=last_vt_scheduled_run.detail %}
+                      {% if d %}
+                      <span class="text-muted text-sm" style="margin-left:6px;">
+                        checked {{ d.checked|default:0 }}, skipped {{ d.skipped|default:0 }}, failed {{ d.failed|default:0 }}
+                        {% if d.elapsed_seconds %}· {{ d.elapsed_seconds }}s{% endif %}
+                      </span>
+                      {% endif %}
+                      {% endwith %}
+                    {% else %}
+                      <span class="text-muted text-sm">Never</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <p class="text-xs text-muted" style="margin-top:10px;">
+                  Enable <strong>Auto Schedule</strong> above and save to activate. Changes take effect immediately without a restart.
+                  The scheduler runs in the background; results are logged to the Activity Log.
+                </p>
+              </div>
+            </div>
+
+            <div style="display:flex;justify-content:flex-end;padding:4px 20px 16px;">
+              <button type="submit" class="btn btn-warning">Save</button>
+            </div>
+          </form>
+        </div>{# /virustotal tab #}
+
+      </div>{# /tiTab x-data #}
+
+      {% else %}
+      {# ── All other categories (non threat_intel) ──────────────────────────── #}
+      <form method="post" action="{% url 'settings_app:save' %}" enctype="multipart/form-data" data-ajax-save>
+        {% csrf_token %}
+        <input type="hidden" name="category" value="{{ category }}">
+
+        <div class="card-body" style="padding-top:16px;padding-bottom:8px;">
+          {% if category == 'actions' %}
+          <div class="settings-tabbar">
+            <a class="settings-tab" :class="{ 'settings-tab-active': tab === 'email' }"      @click.prevent="tab = 'email'">E-mail</a>
+            <a class="settings-tab" :class="{ 'settings-tab-active': tab === 'alerts' }"     @click.prevent="tab = 'alerts'">Alerts</a>
+            <a class="settings-tab" :class="{ 'settings-tab-active': tab === 'syslog' }"     @click.prevent="tab = 'syslog'">Syslog</a>
+          </div>
+          <div x-show="tab === 'alerts'" class="settings-subtabbar">
+            <a class="settings-subtab" :class="{ 'settings-subtab-active': alertTab === 'quota' }"      @click.prevent="alertTab = 'quota'">Quota Alert</a>
+            <a class="settings-subtab" :class="{ 'settings-subtab-active': alertTab === 'rate_limit' }" @click.prevent="alertTab = 'rate_limit'">API Rate Limit Alert</a>
+          </div>
+          {% endif %}
+          {% for setting in settings_list %}
+          {% if category == 'actions' %}
+            {% if setting.tab_key == 'email' %}
+            <div x-show="tab === 'email'">
+            {% elif setting.tab_key == 'quota' %}
+            <div x-show="tab === 'alerts' && alertTab === 'quota'"
+                 {% if setting.key != 'actions.quota_alert_enabled' %}:class="{ 'actions-tab-off': !quotaEnabled }"{% endif %}>
+            {% elif setting.tab_key == 'rate_limit' %}
+            <div x-show="tab === 'alerts' && alertTab === 'rate_limit'"
+                 {% if setting.key != 'actions.rate_limit_alert_enabled' %}:class="{ 'actions-tab-off': !rateEnabled }"{% endif %}>
+            {% elif setting.tab_key == 'syslog' %}
+            <div x-show="tab === 'syslog'"
+                 {% if setting.key != 'actions.syslog_enabled' %}:class="{ 'actions-tab-off': !syslogEnabled }"{% endif %}>
+            {% else %}
+            <div>
+            {% endif %}
+          {% endif %}
+          {% if setting.key == 'security.lockout_attempts' %}
+          <div class="setting-row">
+            <div class="setting-meta">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">Login Lockout</div>
+              <div class="setting-desc" style="margin-bottom:3px;">Lock an account after this many consecutive failed logins for the specified duration.</div>
+              <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">security.lockout_attempts · security.lockout_duration</code>
+            </div>
+            <div class="setting-control" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <input type="number" name="setting_security.lockout_attempts"
+                       class="form-input" value="{{ setting.value }}"
+                       min="1" max="100" style="width:70px;text-align:center;">
+                <span class="text-muted text-sm" style="white-space:nowrap;">attempts then lock for</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <select name="setting_security.lockout_duration" class="form-select" style="width:auto;">
+                  {% with dur=setting.inline_suffix|default:'5' %}
+                  <option value="1"  {% if dur == '1'  %}selected{% endif %}>1 minute</option>
+                  <option value="2"  {% if dur == '2'  %}selected{% endif %}>2 minutes</option>
+                  <option value="5"  {% if dur == '5'  %}selected{% endif %}>5 minutes</option>
+                  <option value="10" {% if dur == '10' %}selected{% endif %}>10 minutes</option>
+                  <option value="15" {% if dur == '15' %}selected{% endif %}>15 minutes</option>
+                  <option value="30" {% if dur == '30' %}selected{% endif %}>30 minutes</option>
+                  <option value="60" {% if dur == '60' %}selected{% endif %}>1 hour</option>
+                  {% endwith %}
+                </select>
+              </div>
+            </div>
+          </div>
+          {% elif setting.key == 'security.session_timeout' %}
+          <div class="setting-row">
+            <div class="setting-meta">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ setting.ui_label|default:setting.key }}</div>
+              {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+              <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+            </div>
+            <div class="setting-control">
+              <select name="setting_{{ setting.key }}" class="form-select">
+                {% with cur=setting.value %}
+                <option value="15"   {% if cur == '15'   %}selected{% endif %}>15 minutes</option>
+                <option value="30"   {% if cur == '30'   %}selected{% endif %}>30 minutes</option>
+                <option value="60"   {% if cur == '60'   %}selected{% endif %}>1 hour</option>
+                <option value="360"  {% if cur == '360'  %}selected{% endif %}>6 hours</option>
+                <option value="720"  {% if cur == '720'  %}selected{% endif %}>12 hours</option>
+                <option value="1440" {% if cur == '1440' %}selected{% endif %}>24 hours</option>
+                {% endwith %}
+              </select>
+            </div>
+          </div>
+          {% elif setting.key == 'general.platform_name' %}
+          <div class="setting-row">
+            <div class="setting-meta">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">Platform Name</div>
+              <div class="setting-desc" style="margin-bottom:3px;">Brand name displayed in the UI. The primary part is unstyled; the suffix is shown in accent colour.</div>
+              <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">general.platform_name + general.platform_name_suffix</code>
+            </div>
+            <div class="setting-control" style="display:flex;gap:6px;align-items:center;">
+              <input type="text" name="setting_general.platform_name" class="form-input" value="{{ setting.value }}" placeholder="CYBER" style="flex:1;">
+              <span style="color:var(--text-muted);font-size:13px;flex-shrink:0;">+</span>
+              <input type="text" name="setting_general.platform_name_suffix" class="form-input" style="flex:1;color:var(--brand-suffix);"
+                     value="{{ setting.inline_suffix|default:'' }}"
+                     placeholder="Cavalry">
+            </div>
+          </div>
+          {% elif setting.key == 'backup.time' %}
+          <div class="setting-row">
+            <div class="setting-meta">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ setting.ui_label|default:setting.key }}</div>
+              {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+              <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+            </div>
+            <div class="setting-control">
+              <input type="time" name="setting_{{ setting.key }}" value="{{ setting.value }}"
+                     class="form-input" style="width:auto;">
+            </div>
+          </div>
+          {% elif setting.key == 'general.default_theme' %}
+          <div class="setting-row">
+            <div class="setting-meta">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ setting.ui_label|default:setting.key }}</div>
+              {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+              <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+            </div>
+            <div class="setting-control">
+              <select name="setting_{{ setting.key }}" class="form-select" style="width:auto;">
+                {% with cur=setting.value %}
+                <option value="light" {% if cur == 'light' %}selected{% endif %}>Light</option>
+                <option value="dark"  {% if cur == 'dark'  %}selected{% endif %}>Dark</option>
+                {% endwith %}
+              </select>
+            </div>
+          </div>
+          {% elif setting.key == 'actions.quota_alert_email' or setting.key == 'actions.rate_limit_alert_email' %}
+          <div class="setting-row">
+            <div class="setting-meta">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;display:inline-flex;align-items:center;gap:6px;">
+                {{ setting.ui_label|default:setting.key }}
+                <span class="info-tip" data-tip="Separate multiple e-mail addresses with a semicolon `;`.&#10;Example:  ops@corp.tr; soc@corp.tr&#10;Leading/trailing whitespace is ignored." style="color:var(--text-muted);">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                </span>
+              </div>
+              {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+              <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+            </div>
+            <div class="setting-control">
+              <input type="text" name="setting_{{ setting.key }}" class="form-input"
+                     value="{{ setting.value }}"
+                     placeholder="ops@corp.tr; soc@corp.tr">
+            </div>
+          </div>
+          {% elif setting.key == 'actions.syslog_protocol' %}
+          <div class="setting-row">
+            <div class="setting-meta">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ setting.ui_label|default:setting.key }}</div>
+              {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+              <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+            </div>
+            <div class="setting-control">
+              <select name="setting_{{ setting.key }}" class="form-select" style="width:auto;">
+                {% with cur=setting.value %}
+                <option value="udp" {% if cur == 'udp' %}selected{% endif %}>UDP</option>
+                <option value="tcp" {% if cur == 'tcp' %}selected{% endif %}>TCP</option>
+                {% endwith %}
+              </select>
+            </div>
+          </div>
+          {% elif setting.key == 'actions.quota_check_interval_unit' %}
+          <div class="setting-row">
+            <div class="setting-meta">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ setting.ui_label|default:setting.key }}</div>
+              {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+              <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+            </div>
+            <div class="setting-control">
+              <select name="setting_{{ setting.key }}" class="form-select" style="width:auto;">
+                {% with cur=setting.value %}
+                <option value="minutes" {% if cur == 'minutes' %}selected{% endif %}>Minutes</option>
+                <option value="hours"   {% if cur == 'hours'   %}selected{% endif %}>Hours</option>
+                {% endwith %}
+              </select>
+            </div>
+          </div>
+          {% elif setting.category == 'actions' and setting.value_type == 'bool' %}
+          {% comment %}
+            Actions bool toggles bypass the shared CSP dispatcher and bind the
+            change handler directly via Alpine. The dispatcher's capture-phase
+            `change` listener was silently dropping updates inside the tab
+            wrapper on some browsers, leaving hidden inputs stuck at their
+            initial value. Each toggle also mirrors its state to the card-level
+            Alpine scope (quotaEnabled / rateEnabled) so the alert-tab enable
+            toggles double as a soft master switch for their sibling rows.
+          {% endcomment %}
+          <div class="setting-row" x-data="{ checked: {% if setting.typed_value %}true{% else %}false{% endif %} }"
+               {% if setting.key == 'actions.quota_alert_enabled' %}x-init="quotaEnabled = checked"{% endif %}
+               {% if setting.key == 'actions.rate_limit_alert_enabled' %}x-init="rateEnabled = checked"{% endif %}
+               {% if setting.key == 'actions.syslog_enabled' %}x-init="syslogEnabled = checked"{% endif %}>
+            <div class="setting-meta">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ setting.ui_label|default:setting.key }}</div>
+              {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+              <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+            </div>
+            <div class="setting-control">
+              <label class="toggle-switch">
+                <input type="checkbox"
+                       x-model="checked"
+                       @change="
+                         $refs.hidden_{{ setting.key|slugify }}.value = checked ? 'true' : 'false';
+                         {% if setting.key == 'actions.quota_alert_enabled' %}quotaEnabled = checked;{% endif %}
+                         {% if setting.key == 'actions.rate_limit_alert_enabled' %}rateEnabled = checked;{% endif %}
+                         {% if setting.key == 'actions.syslog_enabled' %}syslogEnabled = checked;{% endif %}
+                       ">
+                <span class="toggle-track"></span>
+              </label>
+              <input type="hidden" name="setting_{{ setting.key }}"
+                     x-ref="hidden_{{ setting.key|slugify }}"
+                     :value="checked ? 'true' : 'false'"
+                     value="{% if setting.typed_value %}true{% else %}false{% endif %}">
+            </div>
+          </div>
+          {% elif setting.key == 'general.brand_color' %}
+          <div class="setting-row">
+            <div class="setting-meta">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ setting.ui_label|default:setting.key }}</div>
+              {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+              <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+            </div>
+            <div class="setting-control" x-data="{ hex: '{{ setting.value|default:'#ee5356' }}' }" style="display:flex;align-items:center;gap:8px;">
+              <input type="color" x-model="hex"
+                     style="width:42px;height:36px;padding:2px;border:1px solid var(--border);border-radius:6px;background:var(--bg-surface);cursor:pointer;flex-shrink:0;">
+              <input type="text" name="setting_{{ setting.key }}" x-model="hex"
+                     pattern="^#[0-9a-fA-F]{6}$" maxlength="7"
+                     class="form-input font-mono" style="width:110px;text-transform:uppercase;">
+              <span class="text-muted text-xs">Default: <code style="font-family:var(--font-mono);">#ee5356</code></span>
+            </div>
+          </div>
+          {% elif setting.is_brand_image %}
+          <div class="setting-row">
+            <div class="setting-meta">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ setting.ui_label|default:setting.key }}</div>
+              {% if setting.ui_hint %}<div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>{% endif %}
+              <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+            </div>
+            <div class="setting-control" style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;">
+              {% if setting.brand_url %}
+              <img src="{{ setting.brand_url }}" alt="Current"
+                   style="max-height:52px;max-width:170px;border:1px solid var(--border);border-radius:6px;padding:4px;background:var(--bg-elevated);">
+              {% else %}
+              <span class="text-muted text-sm">Using built-in default.</span>
+              {% endif %}
+              <input type="file" name="file_{{ setting.key }}" class="form-input" style="width:auto;"
+                     accept=".svg,.png,.jpg,.jpeg,.webp,.gif,.ico,image/*">
+              {% if setting.value %}
+              <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);cursor:pointer;">
+                <input type="checkbox" name="remove_{{ setting.key }}" value="1"> Remove (revert to default)
+              </label>
+              {% endif %}
+            </div>
+          </div>
+          {% else %}
+          <div class="setting-row">
+            <div class="setting-meta">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">
+                {{ setting.ui_label|default:setting.key }}
+              </div>
+              {% if setting.ui_hint %}
+              <div class="setting-desc" style="margin-bottom:3px;">{{ setting.ui_hint }}</div>
+              {% endif %}
+              <code style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">{{ setting.key }}</code>
+            </div>
+            <div class="setting-control">
+              {% if setting.value_type == 'bool' %}
+              <label class="toggle-switch">
+                <input type="checkbox"
+                       id="tog_{{ setting.key }}"
+                       {% if setting.typed_value %}checked{% endif %}
+                       {% if setting.key|slice:"-7:" == 'enabled' and setting.category != 'actions' %}data-master-toggle{% endif %}
+                       data-on-change="settingToggle('hid_{{ setting.key }}')">
+                <span class="toggle-track"></span>
+              </label>
+              <input type="hidden" name="setting_{{ setting.key }}" id="hid_{{ setting.key }}"
+                     value="{% if setting.typed_value %}true{% else %}false{% endif %}">
+              {% elif setting.value_type == 'int' %}
+              <input type="number" name="setting_{{ setting.key }}" class="form-input"
+                     value="{{ setting.value }}" min="0"
+                     style="width:90px;text-align:center;">
+              {% elif setting.value_type == 'json' %}
+              <textarea name="setting_{{ setting.key }}" class="form-input font-mono" rows="3">{{ setting.value }}</textarea>
+              {% elif setting.is_secret %}
+              <input type="password" name="setting_{{ setting.key }}" class="form-input"
+                     value="" autocomplete="new-password"
+                     placeholder="{% if setting.plain_value %}••••••••  (set - leave blank to keep){% else %}Enter value{% endif %}">
+              {% else %}
+              <input type="text" name="setting_{{ setting.key }}" class="form-input" value="{{ setting.value }}">
+              {% endif %}
+            </div>
+          </div>
+          {% endif %}
+          {% if category == 'actions' %}</div>{% endif %}
+          {% endfor %}
+
+          {% if category == 'backup' %}
+          <!-- Backup: status + manual trigger + recent files -->
+          <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:16px;"
+               x-data="{ running:false, msg:'', ok:null,
+                 backupNow(){
+                   this.running=true; this.msg=''; this.ok=null;
+                   const fd=new FormData(); fd.append('csrfmiddlewaretoken','{{ csrf_token }}');
+                   fetch('{% url 'settings_app:backup_now' %}',{method:'POST',body:fd})
+                     .then(r=>r.json())
+                     .then(d=>{this.msg=d.message; this.ok=d.success; this.running=false;})
+                     .catch(e=>{this.msg='Error: '+e; this.ok=false; this.running=false;});
+                 } }">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+              <div style="display:flex;gap:24px;flex-wrap:wrap;">
+                <div>
+                  <p class="text-xs text-muted" style="margin-bottom:4px;">Scheduler</p>
+                  {% if not backup_status.running %}
+                    <span class="badge badge-red" style="font-size:11px;">Not running</span>
+                  {% elif backup_status.job_exists %}
+                    <span class="badge badge-green" style="font-size:11px;">Active</span>
+                  {% else %}
+                    <span class="badge badge-yellow" style="font-size:11px;">Standby</span>
+                  {% endif %}
+                </div>
+                <div>
+                  <p class="text-xs text-muted" style="margin-bottom:4px;">Next Run</p>
+                  {% if backup_status.next_run %}
+                    <span class="badge badge-blue" style="font-size:11px;font-family:var(--font-mono);">{{ backup_status.next_run }}</span>
+                  {% else %}<span class="text-muted text-sm">—</span>{% endif %}
+                </div>
+                <div>
+                  <p class="text-xs text-muted" style="margin-bottom:4px;">Last Backup</p>
+                  {% if last_backup %}
+                    <span class="badge badge-blue" style="font-size:11px;font-family:var(--font-mono);">{{ last_backup.modified }}</span>
+                    <span class="text-muted text-sm" style="margin-left:6px;">{{ last_backup.name }} · {{ last_backup.size_kb }} KB</span>
+                  {% else %}<span class="text-muted text-sm">Never</span>{% endif %}
+                </div>
+              </div>
+              <a type="button" class="btn btn-teal btn-sm" :disabled="running" @click="backupNow()">
+                <span x-show="!running">Backup Now</span>
+                <span x-show="running">Backing up…</span>
+              </a>
+            </div>
+            <div x-show="msg" style="margin-top:12px;">
+              <div class="alert" :class="ok ? 'alert-success' : 'alert-error'" x-text="msg"></div>
+            </div>
+            <p class="text-xs text-muted" style="margin-top:10px;">
+              Target directory: <code style="font-family:var(--font-mono);">{{ backup_dir }}</code>.
+              Backups are cumulative (one timestamped file per run). Changes take effect immediately after Save — no restart needed.
+            </p>
+            {% if recent_backups %}
+            <div style="margin-top:12px;">
+              <p class="text-xs text-muted" style="margin-bottom:6px;">Recent backups</p>
+              <div style="display:flex;flex-direction:column;gap:4px;">
+                {% for b in recent_backups %}
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);font-family:var(--font-mono);background:var(--bg-elevated);border-radius:6px;padding:5px 10px;">
+                  <span>{{ b.name }}</span>
+                  <span class="text-muted">{{ b.modified }} · {{ b.size_kb }} KB</span>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+          </div>
+          {% endif %}
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;padding:4px 20px 16px;">
+          <button type="submit" class="btn btn-warning">Save</button>
+        </div>
+      </form>
+      {% endif %}{# end threat_intel check #}
+
+    </div><!-- /accordion body -->
+  </div>
+  {% endfor %}
+
+</div>
+
+<style>
+.ti-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  letter-spacing: 0;
+}
+.ti-tab:hover {
+  color: var(--text-primary);
+  border-color: var(--brand-suffix);
+}
+.ti-tab-active {
+  background: var(--brand-suffix) !important;
+  color: #fff !important;
+  border-color: var(--brand-suffix) !important;
+}
+
+/* ── Multi-key API rotation widget ─────────────────────────────────
+   One row per configured key; "+" appends, "×" removes. Hidden field
+   carries the newline-joined value so the existing save-settings
+   handler doesn't need to change. */
+/* Grid layout so 10+ keys don't stack into an endless single column.
+   `auto-fit` + minmax(280px, 1fr) picks 1 / 2 / 3 columns based on width:
+     narrow modals → 1 col, average ≥ 600px → 2 cols, wide ≥ 900px → 3 cols. */
+.api-key-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 6px 10px;
+}
+.api-key-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.api-key-input { flex: 1; min-width: 0; }
+.api-key-btn {
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); background: var(--bg-secondary);
+  color: var(--text-muted);
+  border-radius: var(--radius); cursor: pointer; flex-shrink: 0;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.api-key-btn:hover { color: var(--brand-suffix); border-color: var(--brand-suffix); }
+.api-key-btn--remove:hover { color: #CB5B63; border-color: #CB5B63; }
+.api-key-actions {
+  /* Span every column of the parent grid so the Add button + hint stay
+     on their own full-width row below the key inputs. */
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 2px;
+}
+.api-key-add {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; font-size: 12px; font-weight: 600;
+  background: none; border: 1px dashed var(--border);
+  color: var(--brand-suffix);
+  border-radius: var(--radius); cursor: pointer;
+  transition: background .15s, border-color .15s, border-style .15s;
+}
+.api-key-add:hover { background: rgba(104, 45, 130, 0.07); border-color: var(--brand-suffix); border-style: solid; }
+.api-key-hint { font-size: 11px; color: var(--text-muted); }
+
+/* .info-tip pattern is now defined globally in static/css/main.css so the
+   dashboard analytics page (and any other view that wants an inline info
+   tooltip next to a label) can use it without duplicating styles. */
+</style>
+
+<script nonce="{{ csp_nonce }}">
+// ── AJAX save handler for [data-ajax-save] forms ───────────────────
+// Intercept the form POST, send via fetch with XHR header, and pop a
+// toast per server message — no more full page reload after every save.
+// Non-JS environments still get the legacy redirect (server-side branch).
+(function () {
+  function pushToast(level, text) {
+    var t = document.createElement('div');
+    var safeLevel = level && /^(success|error|warning|info)$/.test(level) ? level : 'info';
+    t.className = 'alert alert-' + safeLevel;
+    t.setAttribute('data-auto-dismiss', '1');
+    t.style.cssText = 'position:fixed;right:24px;z-index:9999;min-width:240px;max-width:380px;'
+      + 'box-shadow:0 8px 24px rgba(0,0,0,.18);margin-top:8px;';
+    var stack = document.querySelectorAll('.alert[data-toast-stack="1"]');
+    t.dataset.toastStack = '1';
+    t.style.top = (80 + stack.length * 60) + 'px';
+    t.textContent = text;
+    document.body.appendChild(t);
+    setTimeout(function () {
+      t.style.transition = 'opacity .35s';
+      t.style.opacity = '0';
+      setTimeout(function () { t.remove(); }, 380);
+    }, 4500);
+  }
+
+  function getCsrf(form) {
+    var el = form.querySelector('input[name="csrfmiddlewaretoken"]');
+    return el ? el.value : '';
+  }
+
+  function onSubmit(e) {
+    var form = e.target.closest('form[data-ajax-save]');
+    if (!form) return;
+    e.preventDefault();
+    var btn = form.querySelector('button[type="submit"], input[type="submit"]');
+    var origLabel = '';
+    if (btn) {
+      origLabel = btn.tagName === 'BUTTON' ? btn.textContent : btn.value;
+      btn.disabled = true;
+      if (btn.tagName === 'BUTTON') btn.textContent = 'Saving…';
+      else btn.value = 'Saving…';
+    }
+    fetch(form.action, {
+      method: 'POST',
+      body: new FormData(form),
+      credentials: 'same-origin',
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRFToken': getCsrf(form),
+      },
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        var msgs = (data && data.messages) || [];
+        if (msgs.length === 0) {
+          pushToast('success', 'Settings saved.');
+        } else {
+          msgs.forEach(function (m) { pushToast(m.level, m.text); });
+        }
+        // Reset masked secret password inputs so they don't keep stale
+        // typed values visible after save (matches the "leave blank to
+        // keep" UX of the password-style inputs). Skip inputs inside the
+        // multi-key API rotation widget — those are Alpine-bound and the
+        // visible value reflects the actual stored key.
+        form.querySelectorAll('input[type="password"]').forEach(function (el) {
+          if (el.closest('.api-key-list')) return;
+          el.value = '';
+        });
+      })
+      .catch(function (err) {
+        pushToast('error', 'Save failed: ' + (err && err.message ? err.message : err));
+      })
+      .finally(function () {
+        if (btn) {
+          btn.disabled = false;
+          if (btn.tagName === 'BUTTON') btn.textContent = origLabel || 'Save';
+          else btn.value = origLabel || 'Save';
+        }
+      });
+  }
+  document.addEventListener('submit', onSubmit, true);
+})();
+
+// ── Threat Intelligence sub-tab switcher ──────────────────────────
+window.tiSwitchTab = function (tab) {
+  ['abuseipdb', 'virustotal'].forEach(function (id) {
+    var panel = document.getElementById('ti-panel-' + id);
+    var btn   = document.getElementById('ti-tab-' + id);
+    if (!panel || !btn) return;
+    var active = id === tab;
+    panel.style.display = active ? '' : 'none';
+    btn.classList.toggle('ti-tab-active', active);
+  });
+};
+
+// ── CSP wrapper: sync checkbox state to hidden input ───────────────
+window.settingToggle = function (targetId) {
+  var hidden = document.getElementById(targetId);
+  if (hidden) hidden.value = this.checked ? 'true' : 'false';
+};
+
+// ── Multi-key API rotation widget (AbuseIPDB / VirusTotal) ─────────
+// Stored value is one logical setting split by newlines (or commas) so
+// no schema change is needed. The hidden input that the form submits is
+// rebuilt from the visible rows whenever they change.
+window.apiKeyList = function (raw) {
+  var initial = (raw || '')
+    .replace(/,/g, '\n')
+    .split('\n')
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s.length > 0; })
+    .map(function (v) { return { value: v, show: false }; });
+  if (initial.length === 0) initial.push({ value: '', show: false });
+  return {
+    keys: initial,
+    sync: function () {
+      var joined = this.keys
+        .map(function (k) { return (k.value || '').trim(); })
+        .filter(function (v) { return v.length > 0; })
+        .join('\n');
+      if (this.$refs.hidden) this.$refs.hidden.value = joined;
+    },
+    addKey: function () {
+      this.keys.push({ value: '', show: true });
+      // Defer to next tick so x-ref is bound to the newly rendered row
+      var self = this;
+      this.$nextTick(function () { self.sync(); });
+    },
+    removeKey: function (i) {
+      this.keys.splice(i, 1);
+      if (this.keys.length === 0) this.keys.push({ value: '', show: false });
+      this.sync();
+    },
+  };
+};
+
+(function () {
+  function applyMaster(masterCb) {
+    var form = masterCb.closest('form');
+    if (!form) return;
+    var masterRow = masterCb.closest('.setting-row');
+    var enabled = masterCb.checked;
+    form.querySelectorAll('.setting-row').forEach(function (row) {
+      if (row === masterRow) return;
+      if (enabled) {
+        row.classList.remove('setting-sub-disabled');
+        row.querySelectorAll('input:not([type=hidden]), select, textarea').forEach(function (el) { el.disabled = false; });
+      } else {
+        row.classList.add('setting-sub-disabled');
+        row.querySelectorAll('input:not([type=hidden]), select, textarea').forEach(function (el) { el.disabled = true; });
+      }
+    });
+  }
+
+  document.querySelectorAll('[data-master-toggle]').forEach(function (cb) {
+    applyMaster(cb);
+    cb.addEventListener('change', function () { applyMaster(cb); });
+  });
+})();
+</script>
+
+{% endblock %}

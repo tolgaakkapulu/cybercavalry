@@ -1,0 +1,1215 @@
+{% extends "base.html" %}
+{% block title %}Hash Blacklist{% endblock %}
+
+{% block content %}
+<style>
+/* Critical layout — see blacklist/list.html for the rationale. */
+.page-content { overflow: hidden; display: flex; flex-direction: column; }
+.page-header  { flex-shrink: 0; }
+#hl-main-form { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#hl-main-form .table-wrapper {
+  flex: 1; min-height: 0; overflow: auto;
+  contain: layout style;
+}
+.pagination { flex-shrink: 0; }
+@keyframes hl-spin { to { transform: rotate(360deg); } }
+</style>
+<div class="page-header">
+  <div>
+    <h1 class="page-title">HASH BLACKLIST</h1>
+  </div>
+  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span id="hl-countdown-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);">
+        <svg id="hl-refresh-spinner" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="display:none;animation:hl-spin 0.8s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        <span>Next refresh in</span>
+        <span id="hl-countdown" style="font-weight:600;color:var(--text-primary);font-family:var(--font-mono);min-width:24px;text-align:right;">{{ refresh_seconds }}s</span>
+      </span>
+      <button id="hl-refresh-btn" type="button" class="btn btn-brand btn-sm" data-on-click="hlManualRefresh()" title="Refresh now">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/><polyline points="21 3 21 9 15 9"/></svg>
+      </button>
+      <button id="hl-pause-btn" type="button" class="btn btn-warning btn-sm" data-on-click="hlTogglePause()" title="Pause auto-refresh">
+        <svg id="hl-pause-icon" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+      </button>
+    </div>
+    <span id="hl-last-updated" style="font-size:11px;color:var(--text-muted);visibility:hidden;">
+      Updated | <span id="hl-last-updated-time" style="font-family:var(--font-mono);">--:--:--</span>
+    </span>
+  </div>
+</div>
+
+{% if request.user.profile.role.can_manage_hashlist or request.user.is_superuser %}
+<!-- Import CSV hidden form -->
+<form method="post" action="{% url 'hashlist:import_csv' %}" enctype="multipart/form-data" id="hl-import-form" style="display:none;">
+  {% csrf_token %}
+  <input type="file" name="csv_file" id="hl-csv-file" accept=".csv" data-on-change="hlSubmitImportForm()">
+</form>
+{% endif %}
+
+<!-- Status tabs + Search + Action buttons -->
+<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+  <!-- Left: status tabs + search -->
+  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+    <a href="?status=active{% if search %}&search={{ search }}{% endif %}"
+       class="btn btn-sm {% if status == 'active' %}btn-brand{% else %}btn-ghost{% endif %}">Active <span data-hl-count="active" style="opacity:.7;font-size:11px;">{{ count_active }}</span></a>
+    <a href="?status=inactive{% if search %}&search={{ search }}{% endif %}"
+       class="btn btn-sm {% if status == 'inactive' %}btn-brand{% else %}btn-ghost{% endif %}">Inactive <span data-hl-count="inactive" style="opacity:.7;font-size:11px;">{{ count_inactive }}</span></a>
+    <a href="?status=all{% if search %}&search={{ search }}{% endif %}"
+       class="btn btn-sm {% if status == 'all' %}btn-brand{% else %}btn-ghost{% endif %}">All <span data-hl-count="all" style="opacity:.7;font-size:11px;">{{ count_all }}</span></a>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+    <form method="get" style="display:flex;gap:6px;align-items:center;">
+      <input type="hidden" name="status" value="{{ status }}">
+      <input type="search" name="search" class="form-input" style="height:30px;font-size:12px;padding:4px 16px;"
+             placeholder="Search hash or reason…" value="{{ search }}">
+      <button type="submit" class="btn btn-info btn-sm">Search</button>
+      {% if request.user.profile.role.name == 'admin' or request.user.is_superuser %}
+      <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+    <a href="{% url 'settings_app:activity_log' %}?type=hash_blacklist" class="btn btn-orange btn-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      History
+    </a>
+    {% endif %}
+      {% if search %}<a href="?status={{ status }}" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
+    </form>
+  </div>
+  <!-- Right: History + action buttons -->
+  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+    
+    {% if request.user.profile.role.can_manage_hashlist or request.user.is_superuser %}
+    <a type="button" class="btn btn-brand btn-sm" data-on-click="openHlPdfModal()">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      Report
+    </a>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+    <a href="{% url 'hashlist:export' %}?status={{ status }}{% if search %}&search={{ search }}{% endif %}" class="btn btn-success btn-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export
+    </a>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+    <div class="csv-tooltip-wrap">
+      <a type="button" class="btn btn-success btn-sm" data-on-click="hlTriggerFileInput()">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Import
+      </a>
+      <div class="csv-tooltip">
+        <h4>Import CSV — Hash Blacklist</h4>
+        <p>Accepted column names (case-insensitive):</p>
+        <p><strong style="color:var(--text-primary)">Hash</strong> — required per row<br>
+        <span class="tip-label">hash · hash_value · md5 · sha1 · sha256 · sha512 · value</span></p>
+        <p><strong style="color:var(--text-primary)">Reason</strong> — optional<br>
+        <span class="tip-label">reason · description · note · comment</span></p>
+        <p style="margin-top:10px;color:var(--text-primary);font-weight:600;">Supported hash types:</p>
+        <code>MD5    — 32 hex chars
+SHA1   — 40 hex chars
+SHA256 — 64 hex chars
+SHA512 — 128 hex chars</code>
+        <p style="margin-top:6px;color:var(--text-primary);font-weight:600;">Plain hash list (no header):</p>
+        <code>d41d8cd98f00b204e9800998ecf8427e
+da39a3ee5e6b4b0d3255bfef95601890afd80709</code>
+        <p class="tip-label" style="margin-top:8px;">File encoding: UTF-8 · Format: .csv</p>
+      </div>
+    </div>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+    <a type="button" class="btn btn-info btn-sm" data-on-click="openHlAddModal()">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Add
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Bulk action forms -->
+<form method="post" action="{% url 'hashlist:bulk_delete' %}" id="hl-bulk-delete-form">
+  {% csrf_token %}
+  <input type="hidden" name="status" value="{{ status }}">
+</form>
+<form method="post" action="{% url 'hashlist:bulk_deactivate' %}" id="hl-bulk-deactivate-form">
+  {% csrf_token %}
+  <input type="hidden" name="status" value="{{ status }}">
+</form>
+<form method="post" action="{% url 'hashlist:bulk_activate' %}" id="hl-bulk-activate-form">
+  {% csrf_token %}
+  <input type="hidden" name="status" value="{{ status }}">
+</form>
+
+{% if request.user.profile.role.can_manage_hashlist or request.user.is_superuser %}
+<div id="hl-bulk-toolbar" style="display:none;margin-bottom:10px;align-items:center;gap:10px;">
+  <span id="hl-bulk-count" class="text-muted text-sm"></span>
+  {% if status != 'inactive' %}
+  <a type="button" class="btn btn-warning btn-sm" data-on-click="hlConfirmBulkDeactivate()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>
+    Deactivate
+  </a>
+  {% endif %}
+  {% if status != 'active' %}
+  <a type="button" class="btn btn-success btn-sm" data-on-click="hlConfirmBulkActivate()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+    Activate
+  </a>
+  {% endif %}
+  {% if status == 'inactive' %}
+  <a type="button" class="btn btn-danger btn-sm" data-on-click="hlConfirmBulkRemove()">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+    Remove
+  </a>
+  {% endif %}
+  <a type="button" class="btn btn-pink btn-sm" data-on-click="hlVtBulkScore()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+   Query VirusTotal
+  </a>
+  <a type="button" class="btn btn-ghost btn-sm" data-on-click="clearSelectionHl()">Clear</a>
+</div>
+{% endif %}
+
+<!-- Main table -->
+<form method="post" id="hl-main-form">
+  {% csrf_token %}
+  <div class="table-wrapper">
+    <table style="text-align:center;min-width:900px;">
+      <thead>
+        <tr>
+          {% if request.user.profile.role.can_manage_hashlist or request.user.is_superuser %}
+          <th style="width:36px;text-align:center;"><input type="checkbox" id="hl-select-all" class="form-checkbox" title="Select all"></th>
+          {% endif %}
+          <th style="width:32px;" title="Row ID — hover the status icon to view, or type the number in the search box."></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=hash&dir={% if sort == 'hash' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Hash Value{% if sort == 'hash' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=type&dir={% if sort == 'type' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Type{% if sort == 'type' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=source&dir={% if sort == 'source' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Source{% if sort == 'source' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;">Reason</th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=score&dir={% if sort == 'score' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">VirusTotal{% if sort == 'score' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=checked&dir={% if sort == 'checked' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">VirusTotal Checked{% if sort == 'checked' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=added_by&dir={% if sort == 'added_by' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Added By{% if sort == 'added_by' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          <th style="text-align:center;white-space:nowrap;cursor:pointer;"><a href="?{{ sort_qs }}&sort=added&dir={% if sort == 'added' and dir == 'asc' %}desc{% else %}asc{% endif %}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:3px;justify-content:center;">Added At{% if sort == 'added' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          {% if request.user.profile.role.can_manage_hashlist or request.user.is_superuser %}
+          <th style="text-align:center;white-space:nowrap;">Actions</th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody id="hl-tbody">
+        {% include "hashlist/_list_rows.html" %}
+      </tbody>
+    </table>
+  </div>
+</form>
+
+{% with page_obj=entries %}{% include "partials/pagination.html" %}{% endwith %}
+
+<!-- Hidden single action form -->
+<form method="post" id="hl-single-action-form" style="display:none;">
+  {% csrf_token %}
+  <input type="hidden" name="status" value="{{ status }}">
+</form>
+
+<!-- ── Add Entry Modal ───────────────────────────────────────────── -->
+<div id="hl-add-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:540px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);max-height:90vh;overflow-y:auto;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;">Add to Hash Blacklist</h2>
+      <a type="button" data-on-click="closeHlAddModal()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</a>
+    </div>
+    <!-- Tabs -->
+    <div style="display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);">
+      <button type="button" id="hl-tab-single" data-on-click="hlSwitchTab('single')"
+              style="padding:6px 16px;border:none;border-bottom:2px solid var(--accent);background:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);margin-bottom:-1px;">Quick Add</button>
+      <button type="button" id="hl-tab-bulk" data-on-click="hlSwitchTab('bulk')"
+              style="padding:6px 16px;border:none;border-bottom:2px solid transparent;background:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:-1px;">Bulk Add</button>
+    </div>
+    <!-- Quick Add -->
+    <div id="hl-panel-single">
+      <form method="post" action="{% url 'hashlist:create' %}">
+        {% csrf_token %}
+        <div class="form-group">
+          <label class="form-label">Hash Value <span class="required">*</span></label>
+          <input type="text" name="hash_input" class="form-input" style="font-family:var(--font-mono);font-size:12px;"
+                 placeholder="MD5 (32) / SHA1 (40) / SHA256 (64) / SHA512 (128) hex chars" required autocomplete="off">
+          <p class="text-muted text-sm" style="margin-top:4px;">Only hexadecimal characters accepted · Auto-detects hash type</p>
+        </div>
+        <div class="form-group" style="margin-top:12px;">
+          <label class="form-label">Reason</label>
+          <input type="text" name="reason" class="form-input" placeholder="Optional reason...">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:16px;">
+          <a type="button" data-on-click="closeHlAddModal()" class="btn btn-ghost">Cancel</a>
+          <button type="submit" class="btn btn-info">Add</button>
+        </div>
+      </form>
+    </div>
+    <!-- Bulk Add -->
+    <div id="hl-panel-bulk" style="display:none;">
+      <form method="post" action="{% url 'hashlist:bulk_create' %}">
+        {% csrf_token %}
+        <div class="form-group">
+          <label class="form-label">Hashes <span class="required">*</span></label>
+          <textarea name="hash_list" class="form-input" rows="9"
+                    style="font-family:var(--font-mono);font-size:11px;"
+                    placeholder="One hash per line&#10;d41d8cd98f00b204e9800998ecf8427e&#10;da39a3ee5e6b4b0d3255bfef95601890afd80709" required></textarea>
+          <p class="text-muted text-sm" style="margin-top:4px;">One hash per line · Max 500 entries · MD5/SHA1/SHA256/SHA512</p>
+        </div>
+        <div class="form-group" style="margin-top:12px;">
+          <label class="form-label">Reason</label>
+          <input type="text" name="reason" class="form-input" placeholder="Optional reason for all entries...">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:16px;">
+          <a type="button" data-on-click="closeHlAddModal()" class="btn btn-ghost">Cancel</a>
+          <button type="submit" class="btn btn-info">Add</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ── Edit Entry Modal ──────────────────────────────────────────── -->
+<div id="hl-edit-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:520px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <div>
+        <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0 0 2px;">Edit Entry</h2>
+        <p id="hl-edit-subtitle" style="font-size:11px;color:var(--text-muted);margin:0;font-family:var(--font-mono);word-break:break-all;"></p>
+      </div>
+      <a type="button" data-on-click="closeHlEditModal()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</a>
+    </div>
+    <form id="hl-edit-form" method="post">
+      {% csrf_token %}
+      <div class="form-group">
+        <label class="form-label">Hash Value <span class="required">*</span></label>
+        <input type="text" name="hash_input" id="hl-edit-hash" class="form-input"
+               style="font-family:var(--font-mono);font-size:12px;"
+               placeholder="MD5 / SHA1 / SHA256 / SHA512" required autocomplete="off">
+      </div>
+      <div class="form-group" style="margin-top:12px;">
+        <label class="form-label">Reason</label>
+        <input type="text" name="reason" id="hl-edit-reason" class="form-input" placeholder="Optional reason...">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:16px;">
+        <a type="button" data-on-click="closeHlEditModal()" class="btn btn-ghost">Cancel</a>
+        <button type="submit" class="btn btn-info">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Confirm Modal ─────────────────────────────────────────────── -->
+<div id="hl-confirm-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:32px;max-width:420px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+      <svg id="hl-confirm-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" style="width:26px;height:26px;flex-shrink:0;">
+        <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>
+      </svg>
+      <h2 id="hl-confirm-title" style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;"></h2>
+    </div>
+    <p id="hl-confirm-body" style="color:var(--text-secondary);font-size:14px;margin-bottom:24px;word-break:break-all;"></p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <a type="button" data-on-click="hlHideConfirmModal()" class="btn btn-ghost btn-sm">Cancel</a>
+      <a type="button" id="hl-confirm-action-btn" class="btn btn-sm" data-on-click="hlDoAction()">Confirm</a>
+    </div>
+  </div>
+</div>
+
+<script nonce="{{ csp_nonce }}">
+// ── CSP wrapper helpers for complex inline expressions ─────────────
+window.hlTriggerFileInput = function () { document.getElementById('hl-csv-file').click(); };
+
+// ── CSV Import XHR ─────────────────────────────────────────────────
+window.hlSubmitImportForm = function () {
+  var fileInput = document.getElementById('hl-csv-file');
+  if (!fileInput || !fileInput.files || !fileInput.files[0]) return;
+  var file = fileInput.files[0];
+  fileInput.value = '';
+
+  _hlOpenCsvModal(file.name);
+
+  var fd = new FormData();
+  fd.append('csv_file', file);
+  fd.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+
+  var xhr = new XMLHttpRequest();
+
+  xhr.upload.addEventListener('progress', function (e) {
+    if (!e.lengthComputable) return;
+    _hlCsvSetBar(Math.round((e.loaded / e.total) * 85), 'Uploading file…');
+  });
+
+  xhr.upload.addEventListener('load', function () {
+    _hlCsvSetBar(90, null);
+    document.getElementById('hl-csv-phase').textContent = 'Processing entries…';
+    document.getElementById('hl-csv-spinner').style.display = 'flex';
+    _hlCsvAnimateBar(90, 95, 800);
+  });
+
+  xhr.addEventListener('load', function () {
+    document.getElementById('hl-csv-spinner').style.display = 'none';
+    _hlCsvSetBar(100, 'Complete');
+    var data;
+    try { data = JSON.parse(xhr.responseText); } catch (e) { data = { ok: false, message: 'Unexpected server response.' }; }
+    setTimeout(function () { _hlShowCsvResults(data); }, 200);
+  });
+
+  xhr.addEventListener('error', function () {
+    document.getElementById('hl-csv-spinner').style.display = 'none';
+    _hlShowCsvResults({ ok: false, message: 'Network error. Please try again.' });
+  });
+
+  xhr.open('POST', '{% url "hashlist:import_csv" %}');
+  xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+  xhr.send(fd);
+};
+
+function _hlCsvSetBar(pct, phase) {
+  document.getElementById('hl-csv-bar').style.width = pct + '%';
+  document.getElementById('hl-csv-pct').textContent = pct + '%';
+  if (phase) document.getElementById('hl-csv-phase').textContent = phase;
+}
+
+var _hlCsvAnimFrame = null;
+function _hlCsvAnimateBar(from, to, ms) {
+  var start = performance.now();
+  function step(now) {
+    var t = Math.min((now - start) / ms, 1);
+    var cur = Math.round(from + (to - from) * t);
+    document.getElementById('hl-csv-bar').style.width = cur + '%';
+    document.getElementById('hl-csv-pct').textContent = cur + '%';
+    if (t < 1) _hlCsvAnimFrame = requestAnimationFrame(step);
+  }
+  if (_hlCsvAnimFrame) cancelAnimationFrame(_hlCsvAnimFrame);
+  _hlCsvAnimFrame = requestAnimationFrame(step);
+}
+
+function _hlOpenCsvModal(filename) {
+  document.getElementById('hl-csv-title').textContent = 'Importing CSV';
+  document.getElementById('hl-csv-subtitle').textContent = filename;
+  document.getElementById('hl-csv-phase').textContent = 'Uploading file…';
+  document.getElementById('hl-csv-pct').textContent = '0%';
+  document.getElementById('hl-csv-bar').style.width = '0%';
+  document.getElementById('hl-csv-spinner').style.display = 'none';
+  document.getElementById('hl-csv-progress').style.display = 'block';
+  document.getElementById('hl-csv-result').style.display = 'none';
+  document.getElementById('hl-csv-close-btn').style.display = 'none';
+  document.getElementById('hl-csv-reload-btn').style.display = 'none';
+  document.getElementById('hl-csv-icon').setAttribute('stroke', 'currentColor');
+  document.getElementById('hl-csv-modal').style.display = 'flex';
+}
+
+function _hlShowCsvResults(data) {
+  document.getElementById('hl-csv-progress').style.display = 'none';
+  document.getElementById('hl-csv-result').style.display = 'block';
+  document.getElementById('hl-csv-close-btn').style.display = '';
+  document.getElementById('hl-csv-reload-btn').style.display = '';
+
+  if (data.ok) {
+    document.getElementById('hl-csv-title').textContent = 'Import Complete';
+    document.getElementById('hl-csv-icon').setAttribute('stroke', 'var(--success)');
+    document.getElementById('hl-csv-grid').innerHTML =
+        _hlCsvStat(data.added,   'Added',      'var(--success)')
+      + _hlCsvStat(data.skipped, 'Duplicates', 'var(--text-muted)')
+      + _hlCsvStat(data.errors,  'Errors',     data.errors ? 'var(--danger)' : 'var(--text-muted)');
+    document.getElementById('hl-csv-note').textContent = data.errors
+      ? data.errors + ' row(s) had unrecognised hash formats and were skipped.' : '';
+  } else {
+    document.getElementById('hl-csv-title').textContent = 'Import Failed';
+    document.getElementById('hl-csv-icon').setAttribute('stroke', 'var(--danger)');
+    document.getElementById('hl-csv-grid').innerHTML =
+      '<div style="grid-column:1/-1;padding:12px;background:rgba(239,68,68,.08);border:1px solid var(--danger);border-radius:var(--radius);color:var(--danger);font-size:13px;">'
+      + (data.message || 'Unknown error.') + '</div>';
+    document.getElementById('hl-csv-note').textContent = '';
+    document.getElementById('hl-csv-reload-btn').style.display = 'none';
+  }
+}
+
+function _hlCsvStat(num, label, color) {
+  return '<div class="hl-csv-stat"><div class="hl-csv-stat-num" style="color:' + color + ';">' + num + '</div>'
+       + '<div class="hl-csv-stat-label">' + label + '</div></div>';
+}
+
+window.closeHlCsvModal = function () {
+  document.getElementById('hl-csv-modal').style.display = 'none';
+};
+window.hlHideConfirmModal = function () { document.getElementById('hl-confirm-modal').style.display = 'none'; };
+
+// ── Add Modal ──────────────────────────────────────────────────────
+window.openHlAddModal = function () {
+  hlSwitchTab('single');
+  document.getElementById('hl-add-modal').style.display = 'flex';
+};
+window.closeHlAddModal = function () {
+  document.getElementById('hl-add-modal').style.display = 'none';
+};
+window.hlSwitchTab = function (tab) {
+  var s = tab === 'single';
+  document.getElementById('hl-panel-single').style.display = s ? '' : 'none';
+  document.getElementById('hl-panel-bulk').style.display   = s ? 'none' : '';
+  var ts = document.getElementById('hl-tab-single');
+  var tb = document.getElementById('hl-tab-bulk');
+  ts.style.borderBottomColor = s ? 'var(--accent)' : 'transparent';
+  ts.style.color             = s ? 'var(--accent)' : 'var(--text-muted)';
+  tb.style.borderBottomColor = s ? 'transparent' : 'var(--accent)';
+  tb.style.color             = s ? 'var(--text-muted)' : 'var(--accent)';
+};
+document.getElementById('hl-add-modal').addEventListener('click', function (e) {
+  if (e.target === this) closeHlAddModal();
+});
+
+// ── Edit Modal ─────────────────────────────────────────────────────
+window.closeHlEditModal = function () {
+  document.getElementById('hl-edit-modal').style.display = 'none';
+};
+document.getElementById('hl-edit-modal').addEventListener('click', function (e) {
+  if (e.target === this) closeHlEditModal();
+});
+// Row action buttons are delegated off `document` so the listeners survive
+// auto-refresh `<tbody>` swaps. With the old per-button pattern the rows
+// rendered after each refresh — especially everything on the Inactive tab —
+// would lose their handlers and become unresponsive on the very next tick.
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('.hl-edit-btn');
+  if (!btn) return;
+  document.getElementById('hl-edit-form').action   = btn.dataset.editUrl;
+  document.getElementById('hl-edit-hash').value    = btn.dataset.hash;
+  document.getElementById('hl-edit-reason').value  = btn.dataset.reason || '';
+  document.getElementById('hl-edit-subtitle').textContent = btn.dataset.hash;
+  document.getElementById('hl-edit-modal').style.display = 'flex';
+  document.getElementById('hl-edit-hash').focus();
+});
+
+// ── Checkbox / bulk toolbar ────────────────────────────────────────
+(function () {
+  var selectAll = document.getElementById('hl-select-all');
+  var toolbar   = document.getElementById('hl-bulk-toolbar');
+  var countEl   = document.getElementById('hl-bulk-count');
+
+  function updateToolbar() {
+    var checked = document.querySelectorAll('.hl-row-check:checked');
+    if (checked.length > 0) {
+      toolbar.style.display = 'flex';
+      countEl.textContent = checked.length + ' selected';
+    } else {
+      toolbar.style.display = 'none';
+    }
+  }
+  if (selectAll) {
+    selectAll.addEventListener('change', function () {
+      document.querySelectorAll('.hl-row-check').forEach(function (cb) { cb.checked = selectAll.checked; });
+      updateToolbar();
+    });
+  }
+  // Row checkbox change → toolbar refresh, delegated so checkboxes that
+  // arrive via the auto-refresh tbody swap behave the same way.
+  document.addEventListener('change', function (e) {
+    var cb = e.target.closest('.hl-row-check');
+    if (!cb) return;
+    if (!cb.checked && selectAll) selectAll.checked = false;
+    updateToolbar();
+  });
+  window.clearSelectionHl = function () {
+    document.querySelectorAll('.hl-row-check').forEach(function (cb) { cb.checked = false; });
+    if (selectAll) selectAll.checked = false;
+    updateToolbar();
+  };
+})();
+
+// ── Unified Confirm Modal ──────────────────────────────────────────
+var _hlActionMode = 'remove';
+var _hlActionUrl  = '';
+
+function _syncCheckboxesToBulkForms() {
+  var ids = Array.from(document.querySelectorAll('.hl-row-check:checked')).map(function (cb) { return cb.value; });
+  ['hl-bulk-deactivate-form', 'hl-bulk-activate-form', 'hl-bulk-delete-form'].forEach(function (formId) {
+    var form = document.getElementById(formId);
+    form.querySelectorAll('input[name="entry_ids"]').forEach(function (el) { el.remove(); });
+    ids.forEach(function (id) {
+      var inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'entry_ids'; inp.value = id;
+      form.appendChild(inp);
+    });
+  });
+}
+
+function showHlConfirm(title, body, cls, btnText) {
+  document.getElementById('hl-confirm-title').textContent = title;
+  document.getElementById('hl-confirm-body').textContent  = body;
+  var btn = document.getElementById('hl-confirm-action-btn');
+  btn.className = 'btn btn-sm ' + cls;
+  btn.textContent = btnText;
+  var icon = document.getElementById('hl-confirm-icon');
+  icon.setAttribute('stroke', cls.includes('danger') ? 'var(--danger)' : cls.includes('warning') ? 'var(--warning)' : 'var(--success)');
+  document.getElementById('hl-confirm-modal').style.display = 'flex';
+}
+
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('.hl-remove-btn');
+  if (!btn) return;
+  _hlActionMode = 'remove'; _hlActionUrl = btn.dataset.url;
+  showHlConfirm('Remove Entry', 'This hash will be permanently removed from the blacklist.', 'btn-danger', 'Remove');
+});
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('.hl-deactivate-btn');
+  if (!btn) return;
+  _hlActionMode = 'deactivate'; _hlActionUrl = btn.dataset.url;
+  showHlConfirm('Deactivate Entry', 'This entry will be deactivated. It can be re-activated later.', 'btn-warning', 'Deactivate');
+});
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('.hl-activate-btn');
+  if (!btn) return;
+  _hlActionMode = 'activate'; _hlActionUrl = btn.dataset.url;
+  showHlConfirm('Activate Entry', 'This entry will be activated.', 'btn-success', 'Activate');
+});
+
+window.hlConfirmBulkRemove = function () {
+  var count = document.querySelectorAll('.hl-row-check:checked').length;
+  if (count === 0) return;
+  _hlActionMode = 'bulk-remove'; _syncCheckboxesToBulkForms();
+  showHlConfirm('Remove Entries', count + ' entr' + (count === 1 ? 'y' : 'ies') + ' will be permanently removed.', 'btn-danger', 'Remove');
+};
+window.hlConfirmBulkDeactivate = function () {
+  var count = document.querySelectorAll('.hl-row-check:checked').length;
+  if (count === 0) return;
+  _hlActionMode = 'bulk-deactivate'; _syncCheckboxesToBulkForms();
+  showHlConfirm('Deactivate Entries', count + ' entr' + (count === 1 ? 'y' : 'ies') + ' will be deactivated.', 'btn-warning', 'Deactivate');
+};
+window.hlConfirmBulkActivate = function () {
+  var count = document.querySelectorAll('.hl-row-check:checked').length;
+  if (count === 0) return;
+  _hlActionMode = 'bulk-activate'; _syncCheckboxesToBulkForms();
+  showHlConfirm('Activate Entries', count + ' entr' + (count === 1 ? 'y' : 'ies') + ' will be activated.', 'btn-success', 'Activate');
+};
+
+window.hlDoAction = function () {
+  document.getElementById('hl-confirm-modal').style.display = 'none';
+  var sf = document.getElementById('hl-single-action-form');
+  if (_hlActionMode === 'remove' || _hlActionMode === 'deactivate' || _hlActionMode === 'activate') {
+    sf.action = _hlActionUrl; sf.submit();
+  } else if (_hlActionMode === 'bulk-remove') {
+    document.getElementById('hl-bulk-delete-form').submit();
+  } else if (_hlActionMode === 'bulk-deactivate') {
+    document.getElementById('hl-bulk-deactivate-form').submit();
+  } else if (_hlActionMode === 'bulk-activate') {
+    document.getElementById('hl-bulk-activate-form').submit();
+  }
+};
+
+document.getElementById('hl-confirm-modal').addEventListener('click', function (e) {
+  if (e.target === this) this.style.display = 'none';
+});
+
+// ── VT Score ───────────────────────────────────────────────────────
+var _hlCsrf        = '{{ csrf_token }}';
+var _hlVtThreshold = {{ vt_threshold }};
+var _hlStatus      = '{{ status }}';
+
+function updateRowVtScore(entryId, malicious, total, checkedAt) {
+  var scoreCell   = document.getElementById('vt-score-cell-' + entryId);
+  var checkedCell = document.getElementById('vt-checked-cell-' + entryId);
+  if (!scoreCell) return;
+  var aboveThreshold = malicious >= _hlVtThreshold;
+  var scoreCls = aboveThreshold ? 'badge badge-red' : 'badge badge-green';
+  var title = malicious + '/' + total + ' engines detected as malicious';
+  scoreCell.innerHTML = '<span class="' + scoreCls + '" style="font-size:11px;" title="' + title + '">' + malicious + '/' + total + '</span>';
+  if (checkedCell) {
+    if (checkedAt) {
+      var checkedCls = aboveThreshold ? 'badge badge-red' : 'badge badge-green';
+      checkedCell.innerHTML = '<span class="' + checkedCls + '" style="font-size:11px;">' + checkedAt + '</span>';
+    } else {
+      checkedCell.innerHTML = '<span class="text-muted" style="font-size:11px;">—</span>';
+    }
+  }
+}
+
+// ── VT Score modal helpers (mirror IP Blacklist score modal) ────────
+var _hlVtAnimFrame = null;
+var VT_BRAND = '#8b5cf6';
+
+function openHlVtProgressModal(title, subtitle) {
+  document.getElementById('hl-vt-title').textContent = title;
+  document.getElementById('hl-vt-subtitle').textContent = subtitle || '';
+  document.getElementById('hl-vt-phase-label').textContent = 'Preparing…';
+  document.getElementById('hl-vt-pct-label').textContent = '0%';
+  document.getElementById('hl-vt-pct-label').style.color = VT_BRAND;
+  document.getElementById('hl-vt-bar').style.width = '0%';
+  document.getElementById('hl-vt-bar').style.background = VT_BRAND;
+  document.getElementById('hl-vt-icon').setAttribute('stroke', VT_BRAND);
+  document.getElementById('hl-vt-current-row').style.display = 'none';
+  document.getElementById('hl-vt-progress-section').style.display = 'block';
+  document.getElementById('hl-vt-result-section').style.display = 'none';
+  document.getElementById('hl-vt-modal-close-btn').style.display = 'none';
+  document.getElementById('hl-vt-modal-reload-btn').style.display = 'none';
+  document.getElementById('hl-vt-modal').style.display = 'flex';
+}
+
+window.closeHlVtModal = function () {
+  var modal = document.getElementById('hl-vt-modal');
+  if (modal) modal.style.display = 'none';
+};
+
+function setHlVtBar(pct, phaseText) {
+  if (_hlVtAnimFrame) { cancelAnimationFrame(_hlVtAnimFrame); _hlVtAnimFrame = null; }
+  document.getElementById('hl-vt-bar').style.width = pct + '%';
+  document.getElementById('hl-vt-pct-label').textContent = pct + '%';
+  if (phaseText !== undefined) document.getElementById('hl-vt-phase-label').textContent = phaseText;
+}
+
+function animateHlVtBar(from, to, durationMs) {
+  var start = performance.now();
+  function step(now) {
+    var t = Math.min((now - start) / durationMs, 1);
+    var cur = Math.round(from + (to - from) * t);
+    document.getElementById('hl-vt-bar').style.width = cur + '%';
+    document.getElementById('hl-vt-pct-label').textContent = cur + '%';
+    if (t < 1) _hlVtAnimFrame = requestAnimationFrame(step);
+  }
+  if (_hlVtAnimFrame) cancelAnimationFrame(_hlVtAnimFrame);
+  _hlVtAnimFrame = requestAnimationFrame(step);
+}
+
+function hlVtStatCard(num, label, color) {
+  return '<div class="hl-csv-stat"><div class="hl-csv-stat-num" style="color:' + color + ';">' + num + '</div><div class="hl-csv-stat-label">' + label + '</div></div>';
+}
+
+function showHlVtResults(data, isBulk) {
+  if (_hlVtAnimFrame) { cancelAnimationFrame(_hlVtAnimFrame); _hlVtAnimFrame = null; }
+  document.getElementById('hl-vt-progress-section').style.display = 'none';
+  document.getElementById('hl-vt-result-section').style.display = 'block';
+  document.getElementById('hl-vt-modal-close-btn').style.display = '';
+  if (isBulk) document.getElementById('hl-vt-modal-reload-btn').style.display = '';
+
+  var ok = isBulk ? ((data.scored + data.failed) > 0 && data.scored > 0) : data.success;
+  if (ok) {
+    document.getElementById('hl-vt-title').textContent = isBulk ? 'Scoring Complete' : 'Score Retrieved';
+    document.getElementById('hl-vt-icon').setAttribute('stroke', 'var(--success)');
+    if (isBulk) {
+      document.getElementById('hl-vt-result-grid').innerHTML =
+        hlVtStatCard(data.scored, 'Scored', 'var(--success)') +
+        hlVtStatCard(data.failed, 'Failed', data.failed ? 'var(--danger)' : 'var(--text-muted)') +
+        hlVtStatCard(data.scored + data.failed, 'Total', 'var(--text-muted)');
+      document.getElementById('hl-vt-result-note').textContent = data.failed
+        ? data.failed + ' hash' + (data.failed === 1 ? '' : 'es') + ' could not be queried. Check API key and per-minute rate limit.'
+        : 'All hashes scored successfully.';
+    } else {
+      var maliciousColor = (data.malicious >= _hlVtThreshold) ? 'var(--danger)' : 'var(--success)';
+      var statusLabel = data.deactivated ? 'Deactivated' : 'Active';
+      var statusColor = data.deactivated ? 'var(--warning)' : 'var(--success)';
+      document.getElementById('hl-vt-result-grid').innerHTML =
+        hlVtStatCard(data.malicious + '/' + data.total, 'Malicious / Total', maliciousColor) +
+        hlVtStatCard(statusLabel, 'Status', statusColor);
+      document.getElementById('hl-vt-result-note').textContent = data.message || '';
+    }
+  } else {
+    document.getElementById('hl-vt-title').textContent = isBulk ? 'Scoring Failed' : 'Score Failed';
+    document.getElementById('hl-vt-icon').setAttribute('stroke', 'var(--danger)');
+    document.getElementById('hl-vt-result-grid').innerHTML =
+      '<div style="grid-column:1/-1;padding:12px;background:rgba(239,68,68,.08);border:1px solid var(--danger);border-radius:var(--radius);color:var(--danger);font-size:13px;">' +
+      (data.message || 'Query failed.') + '</div>';
+    document.getElementById('hl-vt-result-note').textContent = '';
+  }
+}
+
+// Single row VT score — delegated so new rows from tbody swaps still respond.
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('.hl-vt-score-btn');
+  if (!btn) return;
+  var entryId  = btn.dataset.entryId;
+  var scoreUrl = btn.dataset.scoreUrl;
+  var row      = btn.closest('tr');
+  var hashCell = row ? row.querySelector('.hl-hash-cell') : null;
+  var hashStr  = hashCell ? hashCell.textContent.trim() : '';
+  var hashShort = hashStr.length > 20 ? hashStr.substring(0, 20) + '…' : hashStr;
+
+  openHlVtProgressModal('Querying VirusTotal', hashShort);
+  animateHlVtBar(0, 70, 600);
+
+  var fd = new FormData();
+  fd.append('csrfmiddlewaretoken', _hlCsrf);
+  fetch(scoreUrl, {method: 'POST', body: fd})
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      setHlVtBar(100, d.success ? 'Complete' : 'Failed');
+      if (d.success && entryId != null) updateRowVtScore(entryId, d.malicious, d.total, d.vt_checked_at || '');
+      setTimeout(function () { showHlVtResults(d, false); }, 200);
+      if (d.success && d.deactivated && _hlStatus === 'active') {
+        var rr = document.getElementById('hl-row-' + entryId);
+        if (rr) {
+          rr.style.transition = 'opacity .4s';
+          rr.style.opacity = '0';
+          setTimeout(function () { rr.remove(); }, 420);
+        }
+      }
+    })
+    .catch(function (err) {
+      showHlVtResults({ success: false, message: 'Network error: ' + err }, false);
+    });
+});
+
+// Bulk VT Score — same progress→result modal pattern
+window.hlVtBulkScore = function () {
+  var checkedArr = Array.from(document.querySelectorAll('.hl-row-check:checked'));
+  if (checkedArr.length === 0) return;
+  var ids = checkedArr.map(function (cb) { return cb.value; });
+  var total = ids.length;
+
+  openHlVtProgressModal(
+    'Scoring ' + total + ' Hash' + (total === 1 ? '' : 'es'),
+    'Querying VirusTotal for each selected entry…'
+  );
+  document.getElementById('hl-vt-current-row').style.display = 'flex';
+  // Free-tier rate limit is 4 req/min, so bulk-score endpoint walks the
+  // list server-side at its own pace — the bar creeps to 70% while the
+  // user waits, then snaps to 100% on response.
+  animateHlVtBar(0, 70, Math.min(8000, total * 800));
+
+  var fd = new FormData();
+  fd.append('csrfmiddlewaretoken', _hlCsrf);
+  ids.forEach(function (id) { fd.append('entry_ids', id); });
+
+  fetch('{% url "hashlist:bulk_score" %}', {method: 'POST', body: fd})
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      var scored = 0, failed = 0;
+      var deactivatedRows = [];
+      if (d.scores) {
+        d.scores.forEach(function (s) {
+          // A hash counts as "scored" when the server returns concrete
+          // malicious/total numbers; null means the per-key call failed
+          // (rate limit, network blip, …) and we tally it as failed.
+          if (s.malicious != null && s.total != null) {
+            scored++;
+            updateRowVtScore(s.id, s.malicious, s.total, s.vt_checked_at || '');
+          } else {
+            failed++;
+          }
+          if (s.deactivated) {
+            var row = document.getElementById('hl-row-' + s.id);
+            if (row) deactivatedRows.push(row);
+          }
+        });
+        if (deactivatedRows.length > 0 && _hlStatus === 'active') {
+          deactivatedRows.forEach(function (row) { row.remove(); });
+        }
+      } else if (!d.success) {
+        failed = total;
+      }
+      setHlVtBar(100, d.success ? 'Complete' : 'Failed');
+      setTimeout(function () {
+        showHlVtResults({ success: d.success, scored: scored, failed: failed, message: d.message }, true);
+      }, 200);
+    })
+    .catch(function (e) {
+      showHlVtResults({ success: false, message: 'Network error: ' + e }, true);
+    });
+};
+
+// ── Pin / Unpin ────────────────────────────────────────────────────
+(function () {
+  var SVG_PIN_SOLID   = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><line x1="12" y1="17" x2="12" y2="22" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>';
+  var SVG_PIN_OUTLINE = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>';
+  var SVG_BADGE_ICON  = '<svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-1px;"><line x1="12" y1="17" x2="12" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>';
+
+  document.addEventListener('click', function (e) {
+    var self = e.target.closest('.hl-pin-btn');
+    if (!self) return;
+    var url      = self.dataset.url;
+    var origHTML = self.innerHTML;
+    var csrf     = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+    self.disabled = true;
+    fetch(url, { method: 'POST', headers: { 'X-CSRFToken': csrf } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        self.disabled = false;
+        if (d.success) {
+          var nowPinned = d.is_pinned;
+          self.dataset.pinned = nowPinned ? 'true' : 'false';
+          self.dataset.tip    = nowPinned ? 'Unpin entry' : 'Pin — exempt from auto deactivation';
+          self.innerHTML      = nowPinned ? SVG_PIN_SOLID : SVG_PIN_OUTLINE;
+          if (nowPinned) {
+            self.classList.remove('btn-purple');
+            self.classList.add('btn-purple-solid');
+          } else {
+            self.classList.remove('btn-purple-solid');
+            self.classList.add('btn-purple');
+          }
+          var row = self.closest('tr');
+          if (row) {
+            var inner = row.querySelector('.hl-hash-cell-inner');
+            var badge = inner ? inner.querySelector('.badge-purple') : null;
+            if (nowPinned && !badge && inner) {
+              var span = document.createElement('span');
+              span.className     = 'badge badge-purple tip tip-wrap';
+              span.style.cssText = 'font-size:10px;flex-shrink:0;';
+              span.dataset.tip   = 'Pinned — exempt from automatic score-based deactivation';
+              span.innerHTML     = SVG_BADGE_ICON;
+              var copyBtn = inner.querySelector('.copy-btn');
+              inner.insertBefore(span, copyBtn);
+            } else if (!nowPinned && badge) {
+              badge.remove();
+            }
+          }
+          if (window.showToast) showToast(d.message, 'success');
+        } else {
+          self.innerHTML = origHTML;
+          if (window.showToast) showToast(d.message || 'Failed.', 'error');
+        }
+      })
+      .catch(function () {
+        self.disabled = false;
+        self.innerHTML = origHTML;
+      });
+  });
+})();
+</script>
+
+<!-- ── VT Score Progress Modal (mirrors the IP Blacklist score modal) ─── -->
+<div id="hl-vt-modal" style="display:none;position:fixed;inset:0;z-index:1300;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);width:460px;max-width:calc(100vw - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.5);overflow:hidden;">
+    <!-- Header -->
+    <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;">
+      <svg id="hl-vt-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" style="width:22px;height:22px;flex-shrink:0;">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <div>
+        <h3 id="hl-vt-title" style="margin:0;font-size:15px;font-weight:700;color:var(--text-primary);">Querying VirusTotal</h3>
+        <p id="hl-vt-subtitle" style="margin:2px 0 0;font-size:12px;color:var(--text-muted);"></p>
+      </div>
+    </div>
+    <!-- Progress section -->
+    <div id="hl-vt-progress-section" style="padding:20px 24px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <span id="hl-vt-phase-label" style="font-size:13px;color:var(--text-secondary);font-weight:500;">Preparing…</span>
+        <span id="hl-vt-pct-label" style="font-size:13px;font-weight:700;color:#8b5cf6;">0%</span>
+      </div>
+      <div style="background:var(--bg-elevated);border-radius:999px;height:8px;overflow:hidden;">
+        <div id="hl-vt-bar" style="height:100%;width:0%;background:#8b5cf6;border-radius:999px;transition:width 0.3s ease;"></div>
+      </div>
+      <div id="hl-vt-current-row" style="display:none;align-items:center;gap:10px;margin-top:14px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2"
+             style="width:18px;height:18px;animation:hl-csv-spin 0.9s linear infinite;flex-shrink:0;">
+          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+        </svg>
+        <span id="hl-vt-current-hash-text" style="font-size:13px;color:var(--text-muted);font-family:monospace;"></span>
+      </div>
+    </div>
+    <!-- Result section -->
+    <div id="hl-vt-result-section" style="display:none;padding:0 24px 20px;">
+      <div id="hl-vt-result-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;"></div>
+      <div id="hl-vt-result-note" style="font-size:12px;color:var(--text-muted);line-height:1.5;"></div>
+    </div>
+    <!-- Footer -->
+    <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;">
+      <button id="hl-vt-modal-close-btn" type="button" class="btn btn-ghost btn-sm" data-on-click="closeHlVtModal()" style="display:none;">Close</button>
+      <button id="hl-vt-modal-reload-btn" type="button" class="btn btn-info btn-sm" data-on-click="reloadPage()" style="display:none;">Reload Page</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── CSV Import Progress Modal ───────────────────────────────────── -->
+<div id="hl-csv-modal" style="display:none;position:fixed;inset:0;z-index:1300;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);width:460px;max-width:calc(100vw - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.5);overflow:hidden;">
+
+    <!-- Header -->
+    <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;">
+      <svg id="hl-csv-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:22px;height:22px;flex-shrink:0;">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <div>
+        <h3 id="hl-csv-title" style="margin:0;font-size:15px;font-weight:700;color:var(--text-primary);">Importing CSV</h3>
+        <p id="hl-csv-subtitle" style="margin:2px 0 0;font-size:12px;color:var(--text-muted);"></p>
+      </div>
+    </div>
+
+    <!-- Progress section -->
+    <div id="hl-csv-progress" style="padding:20px 24px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <span id="hl-csv-phase" style="font-size:13px;color:var(--text-secondary);font-weight:500;">Uploading file…</span>
+        <span id="hl-csv-pct" style="font-size:13px;font-weight:700;color:var(--accent);">0%</span>
+      </div>
+      <div style="background:var(--bg-elevated);border-radius:999px;height:8px;overflow:hidden;">
+        <div id="hl-csv-bar" style="height:100%;width:0%;background:var(--accent);border-radius:999px;transition:width 0.25s ease;"></div>
+      </div>
+      <div id="hl-csv-spinner" style="display:none;align-items:center;gap:10px;margin-top:14px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"
+             style="width:18px;height:18px;animation:hl-csv-spin 0.9s linear infinite;flex-shrink:0;">
+          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+        </svg>
+        <span style="font-size:13px;color:var(--text-muted);">Processing entries, please wait…</span>
+      </div>
+    </div>
+
+    <!-- Results section -->
+    <div id="hl-csv-result" style="display:none;padding:0 24px 20px;">
+      <div id="hl-csv-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px;"></div>
+      <div id="hl-csv-note" style="font-size:12px;color:var(--text-muted);line-height:1.5;"></div>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;">
+      <button id="hl-csv-close-btn" type="button" class="btn btn-ghost btn-sm"
+              data-on-click="closeHlCsvModal()" style="display:none;">Close</button>
+      <button id="hl-csv-reload-btn" type="button" class="btn btn-info btn-sm"
+              data-on-click="reloadPage()" style="display:none;">Reload Page</button>
+    </div>
+  </div>
+</div>
+
+<style>
+/* Match the IP Blacklist page layout: only the table scrolls and the
+   wrapper fills the rest of the viewport, so the empty-state height is
+   identical across all three list pages. */
+.page-content { overflow: hidden; display: flex; flex-direction: column; }
+.page-header  { flex-shrink: 0; }
+#hl-main-form {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#hl-main-form .table-wrapper {
+  flex: 1;
+  /* min-height:0 lets flex:1 actually shrink to fit the form's allotted
+     space — without it the wrapper would refuse to shrink below the
+     calc-based floor and would overflow downward (clipping into the
+     pagination area) when the collapsible filter is open. */
+  min-height: 0;
+  overflow: auto;
+}
+.pagination { flex-shrink: 0; }
+tr:hover .copy-btn,
+tr:hover .vt-link { opacity: 1 !important; }
+.copy-btn:hover,
+.vt-link:hover { color: var(--brand-suffix) !important; }
+.hl-hash-cell {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  cursor: default;
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+@keyframes hl-csv-spin { to { transform: rotate(360deg); } }
+.hl-csv-stat {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  text-align: center;
+}
+.hl-csv-stat-num { font-size: 22px; font-weight: 700; line-height: 1.2; }
+.hl-csv-stat-label { font-size: 11px; color: var(--text-muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+</style>
+
+<!-- ── PDF Report Modal ──────────────────────────────────────────────────── -->
+<div id="hl-pdf-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:480px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <h2 style="font-size:15px;font-weight:700;color:var(--text-primary);margin:0;display:flex;align-items:center;gap:7px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--brand-suffix)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        PDF Report | Hash Blacklist
+      </h2>
+      <button type="button" data-on-click="closeHlPdfModal()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</button>
+    </div>
+    <form method="get" action="{% url 'hashlist:export_pdf' %}" id="hl-pdf-form">
+      <input type="hidden" name="report_type" value="executive">
+      <div class="form-group">
+        <label class="form-label">Status</label>
+        <select name="status" class="form-select">
+          <option value="active">Active Only</option>
+          <option value="inactive">Inactive Only</option>
+          <option value="all">All Records</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Date Range (Added At)</label>
+        <select name="date_preset" class="form-select" id="hl-pdf-date-preset" data-on-change="hlPdfDatePresetChange()">
+          <option value="">All Time</option>
+          <option value="today">Today</option>
+          <option value="7d">Last 7 Days</option>
+          <option value="30d">Last 30 Days</option>
+          <option value="custom">Custom Range…</option>
+        </select>
+      </div>
+      <div id="hl-pdf-custom-dates" style="display:none;gap:8px;margin-top:-10px;margin-bottom:16px;">
+        <div style="flex:1;"><label class="form-label" style="font-size:11px;">From</label><input type="date" name="date_from" class="form-input form-input-sm" style="width:100%;"></div>
+        <div style="flex:1;"><label class="form-label" style="font-size:11px;">To</label><input type="date" name="date_to" class="form-input form-input-sm" style="width:100%;"></div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+        <button type="button" data-on-click="closeHlPdfModal()" class="btn btn-ghost">Cancel</button>
+        <button type="submit" class="btn btn-brand">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Generate
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+<!-- PDF Loading Overlay -->
+<div id="hl-pdf-loading" style="display:none;position:fixed;inset:0;z-index:1100;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:36px 48px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px;box-shadow:0 8px 40px rgba(0,0,0,0.5);">
+    <div class="pdf-gen-spinner"></div>
+    <div style="color:var(--text-primary);font-weight:600;font-size:14px;">Generating PDF…</div>
+    <div style="color:var(--text-muted);font-size:12px;">This may take a moment, please wait.</div>
+  </div>
+</div>
+<style>
+@keyframes pdf-gen-spin { to { transform: rotate(360deg); } }
+.pdf-gen-spinner { width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--brand-suffix);border-radius:50%;animation:pdf-gen-spin .75s linear infinite; }
+</style>
+<script nonce="{{ csp_nonce }}">
+  window.openHlPdfModal  = function() { document.getElementById('hl-pdf-modal').style.display = 'flex'; };
+  window.closeHlPdfModal = function() { document.getElementById('hl-pdf-modal').style.display = 'none'; document.getElementById('hl-pdf-loading').style.display = 'none'; };
+  window.hlPdfDatePresetChange = function() {
+    var v = document.getElementById('hl-pdf-date-preset').value;
+    document.getElementById('hl-pdf-custom-dates').style.display = v === 'custom' ? 'flex' : 'none';
+  };
+  (function() {
+    var form = document.getElementById('hl-pdf-form');
+    form.addEventListener('submit', function(e) {
+      e.preventDefault();
+      var qs = new URLSearchParams(new FormData(form)).toString();
+      var sep = form.action.indexOf('?') >= 0 ? '&' : '?';
+      var url = form.action + (qs ? sep + qs : '');
+      document.getElementById('hl-pdf-modal').style.display = 'none';
+      window.downloadPdfWithOverlay(url, 'hl-pdf-loading', 'hash-blacklist.pdf');
+    });
+  })();
+
+  // ── Auto-refresh: in-place tbody streaming ────────────────────────────
+  // Mirrors the IP-blacklist implementation: tbody swap on `?ajax=1`
+  // polling + countdown + Updated timestamp + manual-refresh button.
+  (function () {
+    var INTERVAL = {{ refresh_seconds|default:5 }};
+    if (!INTERVAL || INTERVAL < 1) return;
+    var tbody = document.getElementById('hl-tbody');
+    if (!tbody) return;
+    var spinner = document.getElementById('hl-refresh-spinner');
+    var countdownEl = document.getElementById('hl-countdown');
+    var updatedWrap = document.getElementById('hl-last-updated');
+    var updatedTime = document.getElementById('hl-last-updated-time');
+
+    var remaining = INTERVAL;
+    var tickTimer = null;
+    var autoTimer = null;
+    var paused    = false;
+
+    function shouldSkip() {
+      if (paused) return true;
+      if (document.hidden) return true;
+      if (document.querySelectorAll('.hl-row-check:checked').length) return true;
+      var modalIds = ['hl-edit-modal', 'hl-add-modal', 'hl-confirm-modal',
+                      'hl-csv-confirm-modal', 'hl-pdf-modal', 'hl-vt-confirm-modal'];
+      for (var i = 0; i < modalIds.length; i++) {
+        var m = document.getElementById(modalIds[i]);
+        if (m && m.style.display && m.style.display !== 'none') return true;
+      }
+      return false;
+    }
+    function buildUrl() {
+      var u = new URL(window.location.href);
+      u.searchParams.set('ajax', '1');
+      return u.toString();
+    }
+    function pad(n) { return n < 10 ? '0' + n : n; }
+    function stampUpdated() {
+      if (!updatedTime || !updatedWrap) return;
+      var d = new Date();
+      updatedTime.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      updatedWrap.style.visibility = 'visible';
+    }
+    function showSpinner(on) { if (spinner) spinner.style.display = on ? '' : 'none'; }
+    function tickCountdown() {
+      if (countdownEl) countdownEl.textContent = remaining + 's';
+    }
+    function resetCountdown() {
+      remaining = INTERVAL;
+      tickCountdown();
+      clearInterval(tickTimer);
+      tickTimer = setInterval(function () {
+        remaining = Math.max(0, remaining - 1);
+        tickCountdown();
+      }, 1000);
+    }
+    function updateCount(key, value) {
+      if (value == null) return;
+      document.querySelectorAll('[data-hl-count="' + key + '"]').forEach(function (el) {
+        if (el.textContent !== value) el.textContent = value;
+      });
+    }
+    function refresh() {
+      if (shouldSkip()) { resetCountdown(); return; }
+      showSpinner(true);
+      fetch(buildUrl(), { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (r) {
+          if (!r.ok) throw r.status;
+          var counts = {
+            active:   r.headers.get('X-Count-Active'),
+            inactive: r.headers.get('X-Count-Inactive'),
+            all:      r.headers.get('X-Count-All'),
+          };
+          return r.text().then(function (html) { return { html: html, counts: counts }; });
+        })
+        .then(function (data) {
+          if (shouldSkip()) return;
+          if (tbody.innerHTML !== data.html) tbody.innerHTML = data.html;
+          updateCount('active',   data.counts.active);
+          updateCount('inactive', data.counts.inactive);
+          updateCount('all',      data.counts.all);
+          stampUpdated();
+        })
+        .catch(function () {})
+        .finally(function () { showSpinner(false); });
+    }
+    function scheduleNext() {
+      clearTimeout(autoTimer);
+      autoTimer = setTimeout(function () {
+        refresh();
+        // Re-arm the countdown for the next cycle so the "Ns" indicator
+        // doesn't peg at "0s" after the first tick reaches zero.
+        resetCountdown();
+        scheduleNext();
+      }, INTERVAL * 1000);
+    }
+
+    window.hlManualRefresh = function () {
+      clearTimeout(autoTimer);
+      clearInterval(tickTimer);
+      var wasPaused = paused;
+      paused = false;
+      refresh();
+      paused = wasPaused;
+      if (!paused) {
+        resetCountdown();
+        scheduleNext();
+      }
+    };
+
+    window.hlTogglePause = function () {
+      paused = !paused;
+      var btn  = document.getElementById('hl-pause-btn');
+      var icon = document.getElementById('hl-pause-icon');
+      var cd   = document.getElementById('hl-countdown');
+      if (paused) {
+        clearTimeout(autoTimer);
+        clearInterval(tickTimer);
+        if (btn) {
+          btn.title = 'Resume auto-refresh';
+          btn.classList.remove('btn-warning');
+          btn.classList.add('btn-success');
+        }
+        if (icon) icon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
+        if (cd)   cd.textContent = 'paused';
+      } else {
+        if (btn) {
+          btn.title = 'Pause auto-refresh';
+          btn.classList.remove('btn-success');
+          btn.classList.add('btn-warning');
+        }
+        if (icon) icon.innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+        resetCountdown();
+        scheduleNext();
+      }
+    };
+
+    resetCountdown();
+    scheduleNext();
+  })();
+</script>
+
+{% endblock %}

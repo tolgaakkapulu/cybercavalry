@@ -1,0 +1,83 @@
+# ── Environment / secrets ────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.production
+!.env.example
+
+# ── Virtual environment ──────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Python bytecode & build output ───────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+*.egg
+
+# ── Django runtime artefacts ─────────────────────────────────────────
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+db.sqlite3*
+cybercavalry.db*
+staticfiles/
+staticfiles_bkp/
+
+# ── User uploads (brand images etc.) ─────────────────────────────────
+media/branding/
+media/brand/
+
+# ── TLS certificates ─────────────────────────────────────────────────
+certs/*.pem
+certs/*.key
+certs/*.crt
+certs/*.p12
+certs/*.pfx
+
+# ── Runtime data ─────────────────────────────────────────────────────
+logs/*
+!logs/.gitkeep
+backups/*
+!backups/.gitkeep
+
+# ── Release / deploy artefacts (auto-generated, huge) ────────────────
+VERSIONS/
+deploy/wheels/
+deploy/wheels.py*.lock.txt
+
+# ── Test & lint caches ───────────────────────────────────────────────
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# ── Editor / IDE ─────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# ── OS clutter ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Node (only if any tooling shows up later) ────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*

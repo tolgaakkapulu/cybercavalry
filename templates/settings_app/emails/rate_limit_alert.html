@@ -1,0 +1,95 @@
+{% comment %}
+Rate-limit alert e-mail — same visual language as the quota alert but a
+caller-oriented table (username / IP · requests · usage %).
+{% endcomment %}<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>{{ platform_name }} — API Rate Limit Alert</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1f2328;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f5f7;padding:32px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.06);">
+          <tr>
+            <td style="background:{{ brand_color }};padding:22px 28px;color:#ffffff;">
+              <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;opacity:0.85;">API Rate Limit Alert</div>
+              <div style="font-size:22px;font-weight:700;margin-top:4px;">{{ platform_name_primary }}<span style="opacity:0.85;">{{ platform_name_suffix }}</span></div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px;">
+              <p style="margin:0 0 12px;font-size:15px;line-height:1.55;">
+                {% if is_test %}
+                Preview of the alert that fires when an API caller crosses
+                <strong>{{ threshold_pct }}%</strong> of the configured per-minute rate limit
+                (<code>{{ limit_rpm }}</code> requests/min). The sample below is live: it
+                reflects actual traffic in the last 60 seconds.
+                {% else %}
+                One or more API callers crossed <strong>{{ threshold_pct }}%</strong>
+                of the configured per-minute rate limit (<code>{{ limit_rpm }}</code> requests/min)
+                in the last 60 seconds. Review the callers below and rotate or throttle
+                if this looks unexpected.
+                {% endif %}
+              </p>
+
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:18px;border-collapse:collapse;font-size:13px;">
+                <thead>
+                  <tr style="background:#f6f8fa;">
+                    <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #d0d7de;color:#57606a;font-weight:600;">Caller</th>
+                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d0d7de;color:#57606a;font-weight:600;">Requests / Limit</th>
+                    <th style="text-align:right;padding:10px 12px;border-bottom:1px solid #d0d7de;color:#57606a;font-weight:600;">Usage</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in callers %}
+                  <tr>
+                    <td style="padding:12px;border-bottom:1px solid #eef1f4;font-weight:600;">{{ row.caller }}</td>
+                    <td style="padding:12px;border-bottom:1px solid #eef1f4;text-align:right;font-family:'Consolas','Menlo',monospace;color:#57606a;">
+                      {{ row.requests }} / {{ row.limit_rpm }}
+                    </td>
+                    <td style="padding:12px;border-bottom:1px solid #eef1f4;text-align:right;">
+                      <span style="display:inline-block;padding:3px 10px;border-radius:999px;background:{% if row.over_threshold %}{{ brand_color }}{% else %}#eef1f4{% endif %};color:{% if row.over_threshold %}#ffffff{% else %}#57606a{% endif %};font-weight:600;font-size:12px;">
+                        {{ row.usage_pct }}%
+                      </span>
+                    </td>
+                  </tr>
+                  {% empty %}
+                  <tr>
+                    <td colspan="3" style="padding:16px;text-align:center;color:#8c959f;font-style:italic;">
+                      No API activity in the last 60 seconds.
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+
+              <p style="margin:22px 0 0;font-size:13px;color:#57606a;line-height:1.6;">
+                <strong>Threshold:</strong> {{ threshold_pct }}% of {{ limit_rpm }} rpm<br>
+                <strong>Checked at:</strong> {{ checked_at }}<br>
+                <strong>Window:</strong> last 60 seconds<br>
+                <strong>Next repeat suppressed for:</strong> {{ cooldown_hours }} hour(s) per caller
+              </p>
+
+              <div style="margin-top:26px;padding:14px 16px;background:#f6f8fa;border-left:3px solid {{ brand_color }};border-radius:6px;font-size:12.5px;color:#57606a;line-height:1.55;">
+                {% if is_test %}
+                This is a <strong>test message</strong> triggered from Settings → Actions → API Rate Limit Alert.
+                {% else %}
+                This alert was generated automatically by {{ platform_name }}. To change the
+                recipient, threshold, or cooldown, visit <em>Settings → Actions → API Rate Limit Alert</em>.
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#f6f8fa;padding:14px 28px;color:#8c959f;font-size:11px;text-align:center;">
+              CONFIDENTIAL — {{ platform_name }} · Automated alert · {{ platform_email|default:"" }}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

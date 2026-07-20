@@ -1,0 +1,61 @@
+[Unit]
+Description=CYBER Cavalry Django Application
+Documentation=file:///data/cybercavalry/deploy/INSTALL_RHEL.md
+After=network-online.target redis.service
+Wants=network-online.target redis.service
+
+[Service]
+Type=simple
+User=cavalry
+Group=cavalry
+WorkingDirectory=/data/cybercavalry
+
+Environment="DJANGO_SETTINGS_MODULE=cybercavalry.settings.base"
+Environment="PYTHONUNBUFFERED=1"
+Environment="LANG=en_US.UTF-8"
+Environment="LC_ALL=en_US.UTF-8"
+
+# Pre-flight (idempotent): migrate + collectstatic before starting
+ExecStartPre=/data/cybercavalry/venv/bin/python /data/cybercavalry/manage.py migrate --noinput
+ExecStartPre=/data/cybercavalry/venv/bin/python /data/cybercavalry/manage.py collectstatic --noinput
+
+# Gunicorn with native HTTPS (no reverse proxy required).
+# IMPORTANT: workers=1 — APScheduler runs in-process and must not be duplicated.
+# Concurrency is provided by threads.
+ExecStart=/data/cybercavalry/venv/bin/gunicorn \
+    --bind 0.0.0.0:8443 \
+    --workers 1 \
+    --threads 8 \
+    --worker-class gthread \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    --keep-alive 5 \
+    --access-logfile /data/cybercavalry/logs/access.log \
+    --error-logfile /data/cybercavalry/logs/error.log \
+    --log-level info \
+    --capture-output \
+    --certfile /data/cybercavalry/certs/cert.pem \
+    --keyfile /data/cybercavalry/certs/key.pem \
+    cybercavalry.wsgi:application
+
+ExecReload=/bin/kill -s HUP $MAINPID
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+# ─── Security hardening ─────────────────────────────────────────
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+[Install]
+WantedBy=multi-user.target

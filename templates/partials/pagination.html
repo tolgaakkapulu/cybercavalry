@@ -1,0 +1,41 @@
+{% if page_obj.has_other_pages or page_size_options %}
+<div class="pagination">
+  {% if page_obj.has_previous %}
+    <a href="?{% if request.GET.urlencode %}{{ request.GET.urlencode }}&{% endif %}page=1" class="page-link" title="First page" aria-label="First page">&#171;</a>
+    <a href="?{% if request.GET.urlencode %}{{ request.GET.urlencode }}&{% endif %}page={{ page_obj.previous_page_number }}" class="page-link" title="Previous page" aria-label="Previous page">&#8249;</a>
+  {% else %}
+    <span class="page-link disabled" aria-hidden="true">&#171;</span>
+    <span class="page-link disabled" aria-hidden="true">&#8249;</span>
+  {% endif %}
+
+  {% for num in page_obj.paginator.page_range %}
+    {% if page_obj.number == num %}
+      <span class="page-link active">{{ num }}</span>
+    {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+      <a href="?{% if request.GET.urlencode %}{{ request.GET.urlencode }}&{% endif %}page={{ num }}" class="page-link">{{ num }}</a>
+    {% endif %}
+  {% endfor %}
+
+  {% if page_obj.has_next %}
+    <a href="?{% if request.GET.urlencode %}{{ request.GET.urlencode }}&{% endif %}page={{ page_obj.next_page_number }}" class="page-link" title="Next page" aria-label="Next page">&#8250;</a>
+    <a href="?{% if request.GET.urlencode %}{{ request.GET.urlencode }}&{% endif %}page={{ page_obj.paginator.num_pages }}" class="page-link" title="Last page" aria-label="Last page">&#187;</a>
+  {% else %}
+    <span class="page-link disabled" aria-hidden="true">&#8250;</span>
+    <span class="page-link disabled" aria-hidden="true">&#187;</span>
+  {% endif %}
+
+  <span class="page-info">{{ page_obj.start_index }}–{{ page_obj.end_index }} of {{ page_obj.paginator.count }}</span>
+
+  {% if page_size_options %}
+  <span class="page-size-control">
+    <span class="page-size-label">Show</span>
+    <select class="page-size-select" data-on-change="pageSizeChange()" aria-label="Items per page">
+      {% for opt in page_size_options %}
+        <option value="{{ opt }}" {% if page_size == opt %}selected{% endif %}>{{ opt }}</option>
+      {% endfor %}
+    </select>
+    <span class="page-size-label">per page</span>
+  </span>
+  {% endif %}
+</div>
+{% endif %}

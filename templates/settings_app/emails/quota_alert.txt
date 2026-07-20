@@ -1,0 +1,16 @@
+{{ platform_name }} — API QUOTA ALERT
+{% if is_test %}(TEST MESSAGE — no threshold crossed){% endif %}
+
+{% if not is_test %}One or more threat-intel providers have crossed {{ threshold_pct }}% of their daily API quota.{% else %}Preview of the alert that will be sent when a provider crosses the configured threshold.{% endif %}
+
+Threshold:         {{ threshold_pct }}%
+Checked at:        {{ checked_at }}
+Check interval:    {{ check_interval }} {{ check_interval_unit }}
+Cooldown:          {{ cooldown_hours }} hour(s)
+
+Providers:
+{% for row in providers %}  {{ row.provider }}{% if row.configured %} — {{ row.used }} / {{ row.limit }} ({{ row.usage_pct }}%){% if row.triggered %}  ← above threshold{% endif %}{% else %} — {{ row.error|default:"not configured" }}{% endif %}
+{% endfor %}
+
+Manage this alert: Settings → Actions
+{% if platform_email %}Contact: {{ platform_email }}{% endif %}

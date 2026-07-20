@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+CYBER Cavalry -- Offline Bundle Preparer
+=========================================
+
+The target machine has no internet access. This script runs on your own
+connected machine (Windows/Linux/macOS) and downloads every Python wheel
+required to run CYBER Cavalry into deploy/wheels/<pyXX>/.
+
+Universal bundle: wheel sets for both Python 3.9 (RHEL 9 default) and
+Python 3.11 (RHEL 9 AppStream) are prepared in a single pass.
+
+Target:
+  - RHEL 9.x / AlmaLinux 9.x / Rocky Linux 9.x (glibc 2.34)
+  - Python 3.9 or 3.11
+  - x86_64
+
+Usage:
+  python deploy/prepare_offline_bundle.py             # Both 3.9 and 3.11
+  python deploy/prepare_offline_bundle.py --py 39     # 3.9 only
+  python deploy/prepare_offline_bundle.py --py 311    # 3.11 only
+
+Outputs:
+  deploy/wheels/py39/         -- Wheels for Python 3.9
+  deploy/wheels/py311/        -- Wheels for Python 3.11
+  deploy/wheels.pyXX.lock.txt -- Lock file for each set
+
+Install on the target RHEL host:
+  PY=py$(python3 -c 'import sys; print(f"{sys.version_info.major}{sys.version_info.minor}")')
+  python3 -m venv venv
+  ./venv/bin/pip install --no-index --find-links deploy/wheels/$PY/ \
+      -r requirements.txt gunicorn
+"""
+
+import argparse
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+BASE_DIR    = Path(__file__).resolve().parent.parent
+DEPLOY_DIR  = BASE_DIR / 'deploy'
+REQS        = BASE_DIR / 'requirements.txt'
+
+# RHEL 9 = glibc 2.34. manylinux2014 (glibc 2.17) wheels are forward-compatible.
+TARGET_PLATFORMS  = ['manylinux2014_x86_64', 'manylinux_2_28_x86_64']
+SUPPORTED_PYTHONS = ['39', '311']
+
+# pip interprets a bare --python-version like "39" as 3.9.0, which trips
+# Requires-Python markers such as cryptography's "!=3.9.0,!=3.9.1". Pass a
+# realistic patch-level version (RHEL 9 ships >= these) so markers evaluate
+# correctly. The wheel ABI tag stays cp39/cp311 regardless of patch level.
+_PIP_PYVERSION = {'39': '3.9.18', '311': '3.11.9'}
+
+# EXTRA_PACKAGES: packages that are not in requirements.txt, or that pip
+# download skips because they are marker-conditional.
+#   - gunicorn          → production WSGI server
+#   - async-timeout     → conditional dependency of redis (required on
+#                         Python <3.11.3; pip's cross-platform download
+#                         evaluates the marker incorrectly, so we ask for
+#                         it explicitly)
+#   - pip               → to upgrade the default pip in the server's venv
+EXTRA_PACKAGES    = [
+    'gunicorn>=22,<23',
+    'pip>=24,<25',
+
+    # ── Marker-conditional packages ─────────────────────────────────────
+    # pip's cross-platform download (running on Windows with Python 3.14)
+    # evaluates markers against the CURRENT interpreter; the
+    # --python-version flag only filters wheel tags. That is why we
+    # explicitly request packages that are needed on Python 3.9 targets
+    # but built-in on 3.11+.
+    'async-timeout>=4.0.3',           # redis  (Python <3.11.3)
+    'typing-extensions>=4.0.0',       # asgiref/Django/pydantic  (Python <3.11)
+    'importlib-metadata>=6.0',        # Python <3.10 backport
+    'zipp>=3.0',                      # importlib-metadata dependency
+    'exceptiongroup>=1.0',            # Python <3.11 backport
+    'tomli>=2.0',                     # Python <3.11 backport
+
+    # ── Transitive dependencies of svglib 1.5.1 ─────────────────────────
+    # (Stage 2 builds them locally with --no-deps; also added as Linux
+    # wheels in Stage 1)
+    'lxml',
+    'tinycss2>=0.6.0',
+    'cssselect2>=0.7.0',
+    'webcolors',
+    'webencodings',
+]
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def download_for(py_ver: str):
+    """Download every wheel for the specified Python version."""
+    abi          = f'cp{py_ver}'
+    wheels_dir   = DEPLOY_DIR / 'wheels' / f'py{py_ver}'
+    lock_file    = DEPLOY_DIR / f'wheels.py{py_ver}.lock.txt'
+
+    log('')
+    log(f'================ Python {py_ver} ================')
+
+    if wheels_dir.exists():
+        shutil.rmtree(wheels_dir)
+    wheels_dir.mkdir(parents=True)
+
+    platform_args = []
+    for p in TARGET_PLATFORMS:
+        platform_args.extend(['--platform', p])
+
+    # ---- Asama 1: tum paketleri wheel olarak indir (svglib haric) ----
+    tmp_reqs_lines = []
+    for line in REQS.read_text(encoding='utf-8').splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        if re.match(r'^svglib\b', stripped, re.IGNORECASE):
+            continue
+        tmp_reqs_lines.append(stripped)
+    tmp_reqs = wheels_dir / '_tmp_reqs.txt'
+    tmp_reqs.write_text('\n'.join(tmp_reqs_lines) + '\n', encoding='utf-8')
+
+    cmd1 = [
+        sys.executable, '-m', 'pip', 'download',
+        '--dest', str(wheels_dir),
+        '--python-version', _PIP_PYVERSION.get(py_ver, py_ver),
+        *platform_args,
+        '--abi', abi,
+        '--implementation', 'cp',
+        '--only-binary=:all:',
+        '--no-cache-dir',
+        '-r', str(tmp_reqs),
+        *EXTRA_PACKAGES,
+    ]
+    log(f'  Asama 1: pip download (cp{py_ver}, manylinux2014)')
+    try:
+        subprocess.run(cmd1, check=True)
+    finally:
+        tmp_reqs.unlink(missing_ok=True)
+
+    # ---- Asama 2: svglib sdist -> wheel (saf Python, py3-none-any) ----
+    cmd2 = [
+        sys.executable, '-m', 'pip', 'wheel',
+        '--wheel-dir', str(wheels_dir),
+        '--no-deps',
+        '--no-cache-dir',
+        'svglib>=1.5,<1.6',
+    ]
+    log(f'  Asama 2: pip wheel svglib (saf Python -> any)')
+    subprocess.run(cmd2, check=True)
+
+    # ---- Lock dosyasi ----
+    wheels = sorted(p.name for p in wheels_dir.glob('*.whl'))
+    lock_file.write_text('\n'.join(wheels) + '\n', encoding='utf-8')
+
+    total_bytes = sum(p.stat().st_size for p in wheels_dir.iterdir() if p.is_file())
+    log(f'  -> {len(wheels)} wheel, {total_bytes / 1024 / 1024:.1f} MB')
+    log(f'  -> Kilit: {lock_file.relative_to(BASE_DIR)}')
+    return len(wheels), total_bytes
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='CYBER Cavalry offline wheel bundler.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        '--py', choices=SUPPORTED_PYTHONS, action='append',
+        help='Target Python version (39 or 311). May be repeated; '
+             'both versions are prepared when omitted.',
+    )
+    args = parser.parse_args()
+    targets = args.py or SUPPORTED_PYTHONS
+
+    if not REQS.exists():
+        sys.exit(f'[!] requirements.txt bulunamadi: {REQS}')
+
+    log(f'CYBER Cavalry -- Offline wheel bundler')
+    log(f'Hedefler: Python {", ".join(targets)} / RHEL 9.x / x86_64')
+
+    total_w = 0
+    total_b = 0
+    for v in targets:
+        n, b = download_for(v)
+        total_w += n
+        total_b += b
+
+    print()
+    log('=' * 60)
+    log(f'  Tum hedefler tamamlandi.')
+    log(f'  Toplam: {total_w} wheel  |  {total_b / 1024 / 1024:.1f} MB')
+    log('=' * 60)
+    print()
+    log('Hedef RHEL\'de kurulum:')
+    log('  PY=py$(python3 -c "import sys; print(f\'{sys.version_info.major}{sys.version_info.minor}\')")')
+    log('  ./venv/bin/pip install --no-index --find-links deploy/wheels/$PY/ \\')
+    log('      -r requirements.txt gunicorn')
+
+
+if __name__ == '__main__':
+    main()

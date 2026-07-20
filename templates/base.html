@@ -1,0 +1,614 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}{{ platform_name }}{% endblock %} | {{ platform_name }}</title>
+  <link rel="icon" href="{{ brand_favicon_url }}">
+  <link rel="stylesheet" href="{% static 'css/main.css' %}">
+  {% include "partials/brand_color_override.html" %}
+  <!-- Prevent theme flash: apply the theme before CSS loads -->
+  <script nonce="{{ csp_nonce }}">
+    (function() {
+      // Admin default wins until the user explicitly clicks the toggle; once
+      // they do, the 'ag-theme-user-set' flag locks in their personal choice
+      // (so changing the default in Settings then no longer overrides them).
+      var fallback  = '{{ default_theme|default:"light" }}';
+      var userSet   = localStorage.getItem('ag-theme-user-set') === '1';
+      var t = userSet ? (localStorage.getItem('ag-theme') || fallback) : fallback;
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+
+    // Pre-collapse sidebar via an html-level class so the CSS already applies
+    // the narrow width before .sidebar / .main-wrapper enter the DOM. The
+    // class stays as the source of truth for the collapsed state — toggleSidebar
+    // flips it together with the Alpine state so there is no gap window where
+    // CSS could fall back to the expanded styles between Alpine init and the
+    // :class binding being applied.
+    (function() {
+      if (localStorage.getItem('ag-sidebar') === 'false') {
+        document.documentElement.classList.add('sb-init-collapsed');
+      }
+    })();
+
+    // ── CSP-safe global event delegation ─────────────────────────────────
+    // Replaces inline onclick/onchange/oninput attributes (blocked by CSP
+    // when unsafe-inline is removed from script-src).
+    // Usage in HTML: data-on-click="myFn()" or data-on-click="myFn('arg')"
+    // Only simple global function calls are supported (no arbitrary eval).
+    (function () {
+      var _SIMPLE = /^(\w+)\(\s*(?:'([^']*)'|"([^"]*)"|(\btrue\b|\bfalse\b))?\s*\)$/;
+      function dispatch(attrName, event) {
+        var el = event.target && event.target.closest && event.target.closest('[' + attrName + ']');
+        if (!el) return;
+        var expr = el.getAttribute(attrName);
+        var m = expr.match(_SIMPLE);
+        if (!m) return;
+        var fn = window[m[1]];
+        if (typeof fn !== 'function') return;
+        var arg = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4];
+        arg !== undefined ? fn.call(el, arg) : fn.call(el);
+      }
+      document.addEventListener('click',  function(e) { dispatch('data-on-click',  e); }, true);
+      document.addEventListener('change', function(e) { dispatch('data-on-change', e); }, true);
+      document.addEventListener('input',  function(e) { dispatch('data-on-input',  e); }, true);
+    })();
+
+    // ── Copy-to-clipboard for [data-copy] buttons ─────────────────────────
+    // Usage: <button class="copy-btn" data-copy="value to copy">...</button>
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('.copy-btn');
+      if (!btn) return;
+      e.stopPropagation();
+      var text = btn.dataset.copy;
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(function () {
+        var prev = btn.innerHTML;
+        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+        btn.style.color = 'var(--success)';
+        setTimeout(function () { btn.innerHTML = prev; btn.style.color = ''; }, 1500);
+      }).catch(function () {});
+    }, true);
+
+    // ── Global utilities callable via data-on-click ────────────────────────
+    window.removeById = function (id) { var el = document.getElementById(id); if (el) el.remove(); };
+    window.reloadPage = window.reloadPage || function () { window.location.reload(); };
+    // Page-size selector used by the shared pagination partial. The dispatcher
+    // calls this with `this` bound to the <select>, so we navigate to a URL
+    // with the new size and reset to page 1 (the current page may be out of
+    // range under a larger size).
+    window.pageSizeChange = function () {
+      try {
+        var u = new URL(window.location.href);
+        u.searchParams.set('page_size', String(this.value));
+        u.searchParams.set('page', '1');
+        window.location.href = u.toString();
+      } catch (e) { /* very old browsers without URL — silently no-op */ }
+      document.body.classList.add('nav-loading');
+    };
+
+    // ── Top progress bar shown during pagination navigation ─────────────
+    // Click on any pagination link (or anything with [data-nav-loading])
+    // toggles a body class that drives a tiny CSS animation at the top of
+    // the viewport. The bar disappears with the old page as soon as the
+    // browser starts rendering the next one — no JS cleanup needed.
+    document.addEventListener('click', function (e) {
+      var link = e.target.closest('a.page-link, a[data-nav-loading]');
+      if (!link || link.classList.contains('disabled')) return;
+      if (!link.getAttribute('href') || link.target === '_blank') return;
+      // Modifier keys (Ctrl/Cmd/Shift) open in a new tab/window — the
+      // current page isn't navigating, so don't flash the loading bar.
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return;
+      document.body.classList.add('nav-loading');
+    }, true);
+    // pageshow fires on both fresh loads and bfcache restores — make sure we
+    // never get stuck showing the bar if a user hits Back to a stale page.
+    window.addEventListener('pageshow', function () {
+      document.body.classList.remove('nav-loading');
+    });
+  </script>
+  <script defer src="{% static 'js/alpine.min.js' %}"></script>
+  <script defer src="{% static 'js/app.js' %}"></script>
+  <style>
+    /* ── App-wide background (same theme as login) ───────────────────────── */
+    body {
+      background: linear-gradient(150deg, #ddeaf8 0%, #eef3fb 45%, #e2ecf7 100%) !important;
+    }
+    [data-theme="dark"] body {
+      background: linear-gradient(150deg, #060d18 0%, #0b1524 50%, #080f1c 100%) !important;
+    }
+
+    /* Fixed glow layer */
+    .app-glow {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .app-glow-blue {
+      position: absolute;
+      width: 700px; height: 700px;
+      border-radius: 50%;
+      top: -200px; left: -200px;
+      background: radial-gradient(circle, rgba(31,126,196,.14) 0%, transparent 65%);
+    }
+    .app-glow-green {
+      position: absolute;
+      width: 500px; height: 500px;
+      border-radius: 50%;
+      bottom: -150px; right: -150px;
+      background: radial-gradient(circle, rgba(127,191,63,.09) 0%, transparent 65%);
+    }
+    .app-glow-accent {
+      position: absolute;
+      width: 350px; height: 350px;
+      border-radius: 50%;
+      top: 40%; right: 10%;
+      background: radial-gradient(circle, rgba(31,126,196,.06) 0%, transparent 70%);
+    }
+    [data-theme="dark"] .app-glow-blue {
+      background: radial-gradient(circle, rgba(31,126,196,.24) 0%, transparent 65%);
+    }
+    [data-theme="dark"] .app-glow-green {
+      background: radial-gradient(circle, rgba(127,191,63,.14) 0%, transparent 65%);
+    }
+    [data-theme="dark"] .app-glow-accent {
+      background: radial-gradient(circle, rgba(31,126,196,.10) 0%, transparent 70%);
+    }
+
+    /* Fixed watermark logo layer */
+    .app-logos {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .app-logos img {
+      position: absolute;
+      user-select: none;
+    }
+    .al-1 { width:320px; top:-60px;  left:-60px;  transform:rotate(-22deg); filter:grayscale(55%) opacity(.05); }
+    .al-2 { width:160px; top:6%;     right:4%;    transform:rotate(18deg);  filter:grayscale(50%) opacity(.04); }
+    .al-3 { width:240px; top:44%;    left:-40px;  transform:rotate(12deg);  filter:grayscale(55%) opacity(.04); }
+    .al-4 { width:120px; bottom:16%; right:10%;   transform:rotate(-10deg); filter:grayscale(50%) opacity(.05); }
+    .al-5 { width:380px; top:30%;    left:50%;    transform:translateX(-50%) rotate(6deg); filter:grayscale(45%) opacity(.03); }
+    .al-6 { width:90px;  bottom:6%;  left:20%;    transform:rotate(-14deg); filter:grayscale(55%) opacity(.04); }
+
+    [data-theme="dark"] .al-1 { filter:grayscale(20%) opacity(.07) brightness(1.6); }
+    [data-theme="dark"] .al-2 { filter:grayscale(15%) opacity(.06) brightness(1.7); }
+    [data-theme="dark"] .al-3 { filter:grayscale(20%) opacity(.06) brightness(1.5); }
+    [data-theme="dark"] .al-4 { filter:grayscale(15%) opacity(.07) brightness(1.6); }
+    [data-theme="dark"] .al-5 { filter:grayscale(10%) opacity(.05) brightness(1.8); }
+    [data-theme="dark"] .al-6 { filter:grayscale(20%) opacity(.06) brightness(1.6); }
+
+    /* Background image — bundled default at static/img/background.svg, or
+       admin upload from Settings → General. The image is dark-themed, so we
+       fade it on light theme so cards stay readable; on dark it stays full. */
+    .app-bg-image {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      pointer-events: none;
+      opacity: 0.25;   /* default (dark) — subtle: brand pattern is hinted, not loud */
+    }
+    [data-theme="light"] .app-bg-image { opacity: 0.10; }
+
+    /* Layout sits above background layers */
+    .layout { position: relative; z-index: 1; }
+  </style>
+</head>
+<body x-data="{
+  sidebarOpen: !document.documentElement.classList.contains('sb-init-collapsed'),
+  toggleSidebar() {
+    this.sidebarOpen = !this.sidebarOpen;
+    localStorage.setItem('ag-sidebar', this.sidebarOpen);
+    document.documentElement.classList.toggle('sb-init-collapsed', !this.sidebarOpen);
+  }
+}">
+
+{% if brand_background_url %}
+<!-- Custom background image (Settings → General) -->
+<div class="app-bg-image" style="background-image:url('{{ brand_background_url }}');" aria-hidden="true"></div>
+{% endif %}
+
+<!-- Ambient glow layer -->
+<div class="app-glow" aria-hidden="true">
+  <div class="app-glow-blue"></div>
+  <div class="app-glow-green"></div>
+  <div class="app-glow-accent"></div>
+</div>
+
+{% if not brand_background_url %}
+<!-- Watermark logo layer (hidden when a custom background image is set) -->
+<div class="app-logos" aria-hidden="true">
+  <img src="{{ brand_logo_url }}" class="al-1" alt="">
+  <img src="{{ brand_logo_url }}" class="al-2" alt="">
+  <img src="{{ brand_logo_url }}" class="al-3" alt="">
+  <img src="{{ brand_logo_url }}" class="al-4" alt="">
+  <img src="{{ brand_logo_url }}" class="al-5" alt="">
+  <img src="{{ brand_logo_url }}" class="al-6" alt="">
+</div>
+{% endif %}
+
+<div class="layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" :class="{ 'sidebar-collapsed': !sidebarOpen }">
+    <a href="{% url 'dashboard:index' %}" class="sidebar-logo">
+      {% if brand_login_url %}
+      <img src="{{ brand_login_url }}" alt="{{ platform_name }}" class="sidebar-login-logo">
+      {% else %}
+      <img src="{{ brand_logo_url }}" alt="{{ platform_name }}" class="sidebar-logo-mark">
+      <span class="sidebar-logo-text">{{ platform_name_primary }}<span>{{ platform_name_suffix }}</span></span>
+      {% endif %}
+    </a>
+    <nav class="sidebar-nav">
+      {% include "partials/sidebar.html" %}
+    </nav>
+    <div class="sidebar-footer">
+      <!-- When open: normal text content -->
+      <div class="sidebar-footer-full" x-show="sidebarOpen" x-cloak>
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:4px;">
+              <img src="{{ brand_logo_url }}" alt="{{ platform_name }}" style="width:20px;height:20px;flex-shrink:0;">
+              <small class="sidebar-logo-text" style="font-size:small;">{{ platform_name_primary }}<span>{{ platform_name_suffix }}</span></small>
+        </div>
+        {% if platform_email %}<small>{{ platform_email }}</small><br>{% endif %}
+        <small style="color:var(--text-muted);font-size:10px;">© {% now "Y" %} {{ platform_name }} | v{{ platform_version }}</small>
+      </div>
+      <!-- When collapsed: logo + tooltip only -->
+      <div class="sidebar-footer-mini" x-show="!sidebarOpen" x-cloak>
+        <img src="{{ brand_logo_url }}" alt="{{ platform_name }}" class="sidebar-footer-icon">
+        <div class="sidebar-footer-tooltip">
+          <span class="sidebar-footer-tooltip-title">{{ platform_name_primary }}<span>{{ platform_name_suffix }}</span></span>
+          {% if platform_email %}<span>{{ platform_email }}</span>{% endif %}
+          <span style="font-size:10px;color:var(--text-muted);">© {% now "Y" %} {{ platform_name }} | v{{ platform_version }}</span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main-wrapper" :class="{ 'sidebar-collapsed': !sidebarOpen }">
+    <header class="topbar">
+
+      <!-- Left: hamburger + (logo/name if the sidebar is collapsed) -->
+      <div class="topbar-left">
+        <button @click="toggleSidebar()" class="btn btn-ghost btn-sm sidebar-toggle-btn" title="Toggle sidebar">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="6" x2="21" y2="6"/>
+            <line x1="3" y1="12" x2="21" y2="12"/>
+            <line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
+        <a href="{% url 'dashboard:index' %}" class="topbar-brand" x-show="!sidebarOpen" x-cloak>
+          <img src="{{ brand_logo_url }}" alt="{{ platform_name }}" class="topbar-brand-mark">
+          <span class="topbar-brand-text">{{ platform_name_primary }}<span>{{ platform_name_suffix }}</span></span>
+        </a>
+      </div>
+
+      <!-- Center: logo/name centred when the sidebar is open -->
+      <div class="topbar-center">
+        <a href="{% url 'dashboard:index' %}" class="topbar-brand" x-show="sidebarOpen" x-cloak>
+          <img src="{{ brand_logo_url }}" alt="{{ platform_name }}" class="topbar-brand-mark">
+          <span class="topbar-brand-text">{{ platform_name_primary }}<span>{{ platform_name_suffix }}</span></span>
+        </a>
+      </div>
+
+      <!-- Right: theme toggle + user menu -->
+      <div class="topbar-right">
+        <a class="btn btn-brand btn-sm" id="theme-toggle-btn">
+          <svg id="theme-icon-moon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+          <svg id="theme-icon-sun" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+            <circle cx="12" cy="12" r="5"/>
+            <line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+          <span id="theme-label"></span>
+        </a>
+        {% if request.user.is_authenticated %}
+        <div class="topbar-user-menu" x-data="{ open: false }" @keydown.escape.window="open = false">
+          {% with fname=request.user.first_name lname=request.user.last_name %}
+          <button type="button"
+                  class="topbar-avatar"
+                  @click="open = !open"
+                  @click.outside="open = false"
+                  :aria-expanded="open"
+                  aria-haspopup="true"
+                  title="{{ request.user.username }}{% if request.user.get_full_name %} ({{ request.user.get_full_name }}){% endif %}">
+            {% if fname or lname %}{{ fname|first|upper }}{{ lname|first|upper }}{% else %}{{ request.user.username|first|upper }}{% endif %}
+          </button>
+          <div class="topbar-user-dropdown" x-show="open" x-cloak x-transition.opacity.duration.150ms>
+            <div class="topbar-user-dropdown-head">
+              <div class="topbar-user-dropdown-name">
+                {{ request.user.username }}{% if request.user.profile.role %} <span class="topbar-user-dropdown-role">({{ request.user.profile.role.get_name_display }})</span>{% endif %}
+              </div>
+              {% if request.user.get_full_name %}
+              <div class="topbar-user-dropdown-fullname">{{ request.user.get_full_name }}</div>
+              {% endif %}
+            </div>
+            <div class="topbar-user-dropdown-sep"></div>
+            <a href="{% url 'accounts:profile' %}" class="topbar-user-dropdown-item">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              Profile
+            </a>
+            <a href="{% url 'accounts:logout' %}" class="topbar-user-dropdown-item topbar-user-dropdown-brand">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              Sign out
+            </a>
+          </div>
+          {% endwith %}
+        </div>
+        {% endif %}
+      </div>
+
+    </header>
+
+    <main class="page-content">
+      {% include "partials/messages.html" %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+</div>
+
+<script nonce="{{ csp_nonce }}">
+(function () {
+  var html   = document.documentElement;
+  var btn    = document.getElementById('theme-toggle-btn');
+  var moon   = document.getElementById('theme-icon-moon');
+  var sun    = document.getElementById('theme-icon-sun');
+  var label  = document.getElementById('theme-label');
+
+  var DEFAULT_THEME = '{{ default_theme|default:"light" }}';
+
+  function applyTheme(theme, userChoice) {
+    html.setAttribute('data-theme', theme);
+    localStorage.setItem('ag-theme', theme);
+    if (userChoice) localStorage.setItem('ag-theme-user-set', '1');
+    if (theme === 'dark') {
+      sun.style.display  = 'block';
+      moon.style.display = 'none';
+      label.textContent  = 'Light';
+    } else {
+      moon.style.display = 'block';
+      sun.style.display  = 'none';
+      label.textContent  = 'Dark';
+    }
+  }
+
+  // On first load: use the user's choice if they toggled at least once,
+  // otherwise the default theme set by the admin in Settings → General.
+  var userSet = localStorage.getItem('ag-theme-user-set') === '1';
+  applyTheme(userSet ? (localStorage.getItem('ag-theme') || DEFAULT_THEME) : DEFAULT_THEME, false);
+
+  btn.addEventListener('click', function () {
+    var current = html.getAttribute('data-theme');
+    applyTheme(current === 'dark' ? 'light' : 'dark', true);   // user choice → flag
+  });
+})();
+</script>
+
+<!-- ── Global reason/description floating tooltip ──────────────────── -->
+<div id="reason-tip-box" style="display:none;position:fixed;z-index:9990;pointer-events:none;max-width:300px;padding:9px 13px 10px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 8px 28px rgba(0,0,0,.28);word-break:break-word;">
+  <p style="margin:0 0 4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--accent);line-height:1;">Reason</p>
+  <p id="reason-tip-text" style="margin:0;font-size:12px;line-height:1.55;color:var(--text-primary);"></p>
+</div>
+<script nonce="{{ csp_nonce }}">
+(function () {
+  var box  = document.getElementById('reason-tip-box');
+  var text = document.getElementById('reason-tip-text');
+  var timer = null;
+
+  function reposition(e) {
+    var gap = 16, bw = box.offsetWidth, bh = box.offsetHeight;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var x = e.clientX + gap, y = e.clientY - bh - gap;
+    if (x + bw > vw - 8) x = e.clientX - bw - gap;
+    if (y < 8)           y = e.clientY + gap;
+    box.style.left = x + 'px';
+    box.style.top  = y + 'px';
+  }
+
+  document.addEventListener('mouseover', function (e) {
+    var el = e.target.closest('[data-reason-tip]');
+    if (!el) return;
+    var content = el.dataset.reasonTip;
+    if (!content || content === '—') return;
+    clearTimeout(timer);
+    timer = setTimeout(function () {
+      text.textContent = content;
+      box.style.display = 'block';
+      reposition(e);
+    }, 180);
+  }, true);
+
+  document.addEventListener('mousemove', function (e) {
+    if (box.style.display === 'none') return;
+    if (!e.target.closest('[data-reason-tip]')) return;
+    reposition(e);
+  }, true);
+
+  document.addEventListener('mouseout', function (e) {
+    var el = e.target.closest('[data-reason-tip]');
+    if (!el) return;
+    clearTimeout(timer);
+    box.style.display = 'none';
+  }, true);
+})();
+</script>
+
+<!-- ── Threat-intel floating tooltip (AbuseIPDB IP + VirusTotal hash) ──── -->
+<div id="ip-intel-box" style="display:none;position:fixed;z-index:9991;pointer-events:none;min-width:230px;max-width:360px;padding:11px 14px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 8px 28px rgba(0,0,0,.3);">
+  <p style="margin:0 0 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--accent);line-height:1;display:flex;align-items:center;gap:5px;">
+    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    <span id="ip-intel-title">AbuseIPDB Intel</span>
+  </p>
+  <div id="ip-intel-rows"></div>
+</div>
+<script nonce="{{ csp_nonce }}">
+(function () {
+  var box   = document.getElementById('ip-intel-box');
+  var rows  = document.getElementById('ip-intel-rows');
+  var title = document.getElementById('ip-intel-title');
+  if (!box || !rows) return;
+  var timer = null;
+  // [dataset key, label] — order shown in the tooltip
+  var IP_FIELDS = [
+    ['intelIsp', 'ISP'], ['intelUsage', 'Usage Type'], ['intelAsn', 'ASN'],
+    ['intelHostnames', 'Hostname(s)'], ['intelDomain', 'Domain'],
+    ['intelCountry', 'Country'], ['intelCity', 'City'],
+    ['intelTotalreports', 'Total Reports'], ['intelLastreported', 'Last Reported'],
+  ];
+  var HASH_FIELDS = [
+    ['intelFullhash', 'Hash'],
+    ['intelThreat', 'Threat Label'], ['intelFiletype', 'File Type'],
+    ['intelSize', 'File Size'], ['intelFilename', 'File Name'],
+    ['intelFirstseen', 'First Seen'], ['intelLastanalysis', 'Last Analysis'],
+    ['intelSubmitted', 'Times Submitted'],
+  ];
+  // Fields whose value should render in monospace (e.g. the full hash).
+  var MONO_FIELDS = { intelFullhash: 1 };
+
+  function reposition(e) {
+    var gap = 16, bw = box.offsetWidth, bh = box.offsetHeight;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var x = e.clientX + gap, y = e.clientY - bh - gap;
+    if (x + bw > vw - 8) x = e.clientX - bw - gap;
+    if (y < 8)           y = e.clientY + gap;
+    if (y + bh > vh - 8) y = vh - bh - 8;
+    box.style.left = x + 'px';
+    box.style.top  = y + 'px';
+  }
+
+  function build(el) {
+    rows.innerHTML = '';
+    var isHash = el.hasAttribute('data-hash-intel');
+    var fields = isHash ? HASH_FIELDS : IP_FIELDS;
+    if (title) title.textContent = isHash ? 'VirusTotal Intel' : 'AbuseIPDB Intel';
+    var any = false;
+    fields.forEach(function (f) {
+      var val = el.dataset[f[0]];
+      if (!val) return;
+      any = true;
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:10px;font-size:12px;line-height:1.5;margin-bottom:4px;';
+      var label = document.createElement('span');
+      label.style.cssText = 'color:var(--text-muted);min-width:88px;flex-shrink:0;';
+      label.textContent = f[1];
+      var value = document.createElement('span');
+      value.style.cssText = 'color:var(--text-primary);'
+        + (MONO_FIELDS[f[0]]
+            ? 'word-break:break-all;font-family:var(--font-mono);font-size:11px;'
+            : 'word-break:break-word;');
+      value.textContent = val;            // textContent → safe against injection
+      row.appendChild(label);
+      row.appendChild(value);
+      rows.appendChild(row);
+    });
+    return any;
+  }
+
+  var SELECTOR = '[data-ip-intel],[data-hash-intel]';
+
+  document.addEventListener('mouseover', function (e) {
+    var el = e.target.closest(SELECTOR);
+    if (!el) return;
+    clearTimeout(timer);
+    timer = setTimeout(function () {
+      if (!build(el)) return;
+      box.style.display = 'block';
+      reposition(e);
+    }, 180);
+  }, true);
+
+  document.addEventListener('mousemove', function (e) {
+    if (box.style.display === 'none') return;
+    if (!e.target.closest(SELECTOR)) return;
+    reposition(e);
+  }, true);
+
+  document.addEventListener('mouseout', function (e) {
+    if (!e.target.closest(SELECTOR)) return;
+    clearTimeout(timer);
+    box.style.display = 'none';
+  }, true);
+})();
+</script>
+
+{% if request.user.is_authenticated %}
+<script nonce="{{ csp_nonce }}">
+(function () {
+  var TIMEOUT_MS  = {{ session_timeout_minutes }} * 60 * 1000;
+  var WARNING_MS  = 60 * 1000;   // show the warning 1 minute before the timeout
+  var LOGIN_URL   = '{% url "accounts:login" %}';
+  var lastActivity = Date.now();
+  var warningShown = false;
+
+  // Reset the timer on any user interaction
+  ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'].forEach(function (ev) {
+    document.addEventListener(ev, function () {
+      lastActivity = Date.now();
+      if (warningShown) {
+        warningShown = false;
+        var w = document.getElementById('session-warning');
+        if (w) w.style.display = 'none';
+      }
+    }, { passive: true });
+  });
+
+  // Attach the warning box to the DOM
+  var warning = document.createElement('div');
+  warning.id = 'session-warning';
+  warning.style.cssText = [
+    'display:none',
+    'position:fixed',
+    'top:16px',
+    'left:50%',
+    'transform:translateX(-50%)',
+    'z-index:9999',
+    'background:var(--warning-bg,#fef3cd)',
+    'color:var(--warning-text,#856404)',
+    'border:1px solid var(--warning,#f0ad4e)',
+    'border-radius:var(--radius,6px)',
+    'padding:12px 20px',
+    'font-size:13px',
+    'font-weight:600',
+    'box-shadow:0 4px 16px rgba(0,0,0,.15)',
+    'white-space:nowrap',
+  ].join(';');
+  warning.textContent = 'Your session will expire in 1 minute. Click anywhere to stay signed in.';
+  document.body.appendChild(warning);
+
+  // Check every 10 seconds
+  setInterval(function () {
+    var idle = Date.now() - lastActivity;
+
+    if (idle >= TIMEOUT_MS) {
+      // End the session and redirect to the login page
+      window.location.replace(
+        LOGIN_URL + '?next=' + encodeURIComponent(window.location.pathname + window.location.search)
+      );
+      return;
+    }
+
+    if (!warningShown && idle >= TIMEOUT_MS - WARNING_MS) {
+      warningShown = true;
+      warning.style.display = 'block';
+    }
+  }, 10000);
+})();
+</script>
+{% endif %}
+</body>
+</html>

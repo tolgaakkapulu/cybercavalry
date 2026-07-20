@@ -1,0 +1,1290 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block topbar_title %}User Management{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">USERS</h1>
+  </div>
+</div>
+
+<!-- Filters + Status tabs + Action buttons -->
+<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+  <!-- Left: status tabs + search -->
+  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+    <a href="?status=active{% if search %}&search={{ search }}{% endif %}"
+       class="btn btn-sm {% if status == 'active' %}btn-brand{% else %}btn-ghost{% endif %}">Active <span style="opacity:.7;font-size:11px;">{{ count_active }}</span></a>
+    <a href="?status=inactive{% if search %}&search={{ search }}{% endif %}"
+       class="btn btn-sm {% if status == 'inactive' %}btn-brand{% else %}btn-ghost{% endif %}">Inactive <span style="opacity:.7;font-size:11px;">{{ count_inactive }}</span></a>
+    <a href="?status=all{% if search %}&search={{ search }}{% endif %}"
+       class="btn btn-sm {% if status == 'all' %}btn-brand{% else %}btn-ghost{% endif %}">All <span style="opacity:.7;font-size:11px;">{{ count_all }}</span></a>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+    <form method="get" style="display:flex;gap:6px;align-items:center;">
+      <input type="hidden" name="status" value="{{ status }}">
+      <input type="search" name="search" class="form-input" style="height:30px;font-size:12px;padding:4px 16px;"
+             placeholder="Search user or e-mail…" value="{{ search }}">
+      <button type="submit" class="btn btn-info btn-sm">Search</button>
+      {% if search %}<a href="?status={{ status }}" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
+    </form>
+  </div>
+  <!-- Right: action buttons -->
+  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+    <button type="button" class="btn btn-info btn-sm" id="ldap-import-btn">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+      LDAP Users
+    </button>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+    <button type="button" class="btn btn-info btn-sm" id="btn-new-user">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      New User
+    </button>
+  </div>
+</div>
+
+<!-- Bulk form -->
+<form method="post" action="{% url 'accounts:user_bulk_deactivate' %}" id="user-bulk-form">
+  {% csrf_token %}
+
+  <!-- Bulk toolbar -->
+  <div id="user-bulk-toolbar" style="display:none;margin-bottom:10px;align-items:center;gap:10px;">
+    <span id="user-bulk-count" class="text-muted text-sm"></span>
+    {% if status == 'inactive' %}
+    <a type="button" class="btn btn-success btn-sm" id="btn-bulk-activate"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg> Activate</a>
+    {% if request.user.is_superuser %}
+    <a type="button" class="btn btn-danger btn-sm" id="btn-bulk-delete"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg> Delete</a>
+    {% endif %}
+    {% else %}
+    <a type="button" class="btn btn-warning btn-sm" id="btn-bulk-deactivate"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg> Deactivate</a>
+    {% endif %}
+    <a type="button" class="btn btn-ghost btn-sm" id="btn-bulk-clear">Clear</a>
+  </div>
+
+  <div class="table-wrapper">
+    <table style="text-align:center;">
+      <thead>
+        <tr>
+          <th style="width:36px;text-align:center;">
+            <input type="checkbox" id="user-select-all" class="form-checkbox" title="Select all">
+          </th>
+          <th style="width:32px;" title="Row ID — hover the status icon to view, or type the number in the search box."></th>
+          <th style="text-align:center;">Username</th>
+          <th style="text-align:center;">Full Name</th>
+          <th style="text-align:center;">E-mail</th>
+          <th style="text-align:center;">Group</th>
+          <th style="text-align:center;">Role</th>
+          <th style="text-align:center;">Auth</th>
+          <th style="text-align:center;white-space:nowrap;" title="When the account was first created.">Created</th>
+          <th style="text-align:center;white-space:nowrap;" title="Most recent successful sign-in.">Last Login</th>
+          <th style="text-align:center;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for user in users %}
+        <tr>
+          <td>
+            <input type="checkbox" name="user_ids" value="{{ user.pk }}"
+                   class="form-checkbox user-row-check"
+                   {% if user == request.user %}disabled title="Cannot select yourself"{% elif user.is_superuser %}disabled title="Administrator account cannot be deactivated"{% endif %}>
+          </td>
+          <td style="text-align:center;padding:0 2px;">
+            <span class="tbl-row-icon info-tip" data-tip="ID: {{ user.pk }}" style="{% if not user.is_active %}background:var(--bg-elevated);color:var(--text-muted);{% elif user.is_superuser %}background:rgba(245,158,11,.15);color:#f59e0b;{% else %}background:rgba(56,189,248,.15);color:#0ea5e9;{% endif %}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </span>
+          </td>
+          <td class="fw-600">{{ user.username }}</td>
+          <td class="text-muted">{{ user.get_full_name|default:"—" }}</td>
+          <td class="text-muted">{{ user.email|default:"—" }}</td>
+          <td class="text-muted">{{ user.profile.ldap_ou|default:"—" }}</td>
+          <td>
+            {% if user.profile.role %}
+            <span class="role-badge role-{{ user.profile.role.name }}">{{ user.profile.role.get_name_display }}</span>
+            {% else %}<span class="role-badge" style="background:var(--bg-elevated);color:var(--text-muted);">No role</span>{% endif %}
+          </td>
+          <td><span class="badge badge-yellow">{{ user.profile.get_auth_source_display }}</span></td>
+          <td class="text-muted text-sm" style="white-space:nowrap;">{{ user.date_joined|date:"Y-m-d H:i"|default:"—" }}</td>
+          <td class="text-muted text-sm" style="white-space:nowrap;">{{ user.last_login|date:"Y-m-d H:i"|default:"—" }}</td>
+          <td>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:center;">
+              {% if not user.is_superuser or request.user.is_superuser %}
+              <a type="button" class="btn btn-orange btn-sm tip user-edit-btn"
+                      data-username="{{ user.username }}"
+                      data-first-name="{{ user.first_name }}"
+                      data-last-name="{{ user.last_name }}"
+                      data-email="{{ user.email }}"
+                      data-role-id="{{ user.profile.role.pk|default:'' }}"
+                      data-auth-source="{{ user.profile.auth_source }}"
+                      data-is-superuser="{{ user.is_superuser|lower }}"
+                      data-update-url="{% url 'accounts:user_update' user.pk %}"
+                      data-tip="Edit user" style="padding:4px 7px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </a>
+              {% if user.profile.role and user.profile.role.name == 'api_user' %}
+              <a type="button" class="btn {% if user.profile.api_token_hash %}btn-success{% else %}btn-info{% endif %} btn-sm tip user-token-btn"
+                      data-user-id="{{ user.pk }}"
+                      data-username="{{ user.username }}"
+                      data-has-token="{{ user.profile.api_token_hash|yesno:'true,false' }}"
+                      data-token-created="{{ user.profile.token_created_at|date:'Y-m-d H:i'|default:'' }}"
+                      data-gen-url="{% url 'accounts:user_generate_token' user.pk %}"
+                      data-revoke-url="{% url 'accounts:user_revoke_token' user.pk %}"
+                      data-tip="Manage API Token" style="padding:4px 7px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+              </a>
+              {% endif %}
+              {% endif %}
+              {% if user.is_active %}
+              {% if not user.is_superuser %}
+              <a type="button" class="btn btn-warning btn-sm tip user-toggle-btn"
+                      data-url="{% url 'accounts:user_toggle_active' user.pk %}"
+                      data-username="{{ user.username }}"
+                      data-action="deactivate"
+                      data-tip="{% if user == request.user %}Cannot deactivate yourself{% else %}Deactivate user{% endif %}"
+                      {% if user == request.user %}disabled{% endif %}
+                      style="padding:4px 7px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>
+              </a>
+              {% endif %}
+              {% else %}
+              <a type="button" class="btn btn-success btn-sm tip user-toggle-btn"
+                      data-url="{% url 'accounts:user_toggle_active' user.pk %}"
+                      data-username="{{ user.username }}"
+                      data-action="activate"
+                      data-tip="Activate user" style="padding:4px 7px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+              </a>
+              {% if request.user.is_superuser %}
+              <a type="button" class="btn btn-danger btn-sm tip user-delete-btn"
+                      data-url="{% url 'accounts:user_delete' user.pk %}"
+                      data-username="{{ user.username }}"
+                      data-tip="Permanently delete user" style="padding:4px 7px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+              </a>
+              {% endif %}
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="11" class="table-empty">
+          <div class="empty-state">
+            <div class="empty-state-title">No users found</div>
+          </div>
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</form>
+
+<!-- Hidden single-toggle form -->
+<form method="post" id="user-single-form" style="display:none;">
+  {% csrf_token %}
+</form>
+
+<!-- Hidden delete form -->
+<form method="post" id="user-delete-form" style="display:none;">
+  {% csrf_token %}
+</form>
+
+<!-- Delete Confirm Modal -->
+<div id="user-delete-modal" style="display:none;position:fixed;inset:0;z-index:1100;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div class="card" style="width:420px;max-width:90vw;">
+    <div class="card-header">
+      <span class="card-title" style="color:var(--danger);">Delete User</span>
+    </div>
+    <div class="card-body">
+      <p class="text-sm" style="margin-bottom:4px;">You are about to <strong>permanently delete</strong> this user. This action cannot be undone.</p>
+      <p class="text-sm text-muted">Username: <strong id="delete-modal-username" style="color:var(--text-primary);"></strong></p>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--border);">
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-close-delete-modal">Cancel</button>
+      <button type="button" class="btn btn-danger btn-sm" id="btn-confirm-delete">Delete Permanently</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Edit Modal ─────────────────────────────────────────────────── -->
+<div id="user-edit-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:480px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);max-height:90vh;overflow-y:auto;">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <div>
+        <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0 0 2px;">Edit User</h2>
+        <p id="edit-modal-username" style="font-size:13px;color:var(--text-muted);margin:0;"></p>
+      </div>
+      <a type="button" id="btn-close-edit-x" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</a>
+    </div>
+
+    <form id="edit-user-form" method="post">
+      {% csrf_token %}
+
+      <div id="edit-user-error" style="display:none;margin-bottom:12px;">
+        <div class="alert alert-error" id="edit-user-error-msg"></div>
+      </div>
+
+      <!-- Profile (always visible) -->
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">First Name</label>
+          <input type="text" name="first_name" id="edit-first-name" class="form-input" placeholder="First name">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Last Name</label>
+          <input type="text" name="last_name" id="edit-last-name" class="form-input" placeholder="Last name">
+        </div>
+      </div>
+      <div class="form-group" style="margin-top:10px;">
+        <label class="form-label">E-mail</label>
+        <input type="email" name="email" id="edit-email" class="form-input" placeholder="E-mail address">
+      </div>
+
+      <!-- Role (hidden for superusers) -->
+      <div id="edit-role-section" style="border-top:1px solid var(--border);margin-top:16px;padding-top:16px;">
+        <label class="form-label">Role</label>
+        <select name="role" id="edit-role-select" class="form-select" style="margin-top:6px;">
+          <option value="">— No Role —</option>
+          {% for role in roles %}
+          <option value="{{ role.pk }}">{{ role.get_name_display }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Password (hidden for LDAP users) -->
+      <div id="edit-password-section" style="border-top:1px solid var(--border);margin-top:16px;padding-top:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <label class="form-label" style="margin:0;">New Password <span class="text-muted" style="font-weight:400;font-size:11px;">(leave blank to keep current)</span></label>
+          <button type="button" id="btn-gen-edit-pw" class="btn-gen-pw btn-gen-pw--sm">
+            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+            Generate
+          </button>
+        </div>
+        <input type="password" name="new_password" id="edit-new-password" class="form-input"
+               placeholder="New password" autocomplete="new-password">
+        <!-- Generated password display -->
+        <div id="edit-gen-pw-box" class="gen-pw-box" style="display:none;margin-top:6px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.5" style="flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>
+          <code id="edit-gen-pw-text" class="gen-pw-text"></code>
+          <button type="button" class="gen-pw-copy-btn" id="edit-gen-pw-copy">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Copy
+          </button>
+        </div>
+        <p class="text-muted text-sm" style="margin-top:6px;">
+          Min. {{ pw_policy.min_length }} characters
+          {% if pw_policy.require_digits %} · digit{% endif %}
+          {% if pw_policy.require_uppercase %} · uppercase{% endif %}
+          {% if pw_policy.require_lowercase %} · lowercase{% endif %}
+          {% if pw_policy.require_symbols %} · symbol{% endif %}
+        </p>
+        <div style="margin-top:10px;">
+          <label class="form-label">Confirm Password</label>
+          <input type="password" name="confirm_password" id="edit-confirm-password" class="form-input"
+                 style="margin-top:6px;" placeholder="Repeat new password" autocomplete="new-password">
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px;border-top:1px solid var(--border);padding-top:16px;">
+        <a type="button" id="btn-close-edit" class="btn btn-ghost">Cancel</a>
+        <button type="submit" class="btn btn-info">Save</button>
+      </div>
+    </form>
+
+  </div>
+</div>
+
+<!-- ── New User Modal ─────────────────────────────────────────────── -->
+<div id="user-create-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:520px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);max-height:90vh;overflow-y:auto;">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;">New User</h2>
+      <a type="button" id="btn-close-create-x" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</a>
+    </div>
+
+    <form id="create-user-form" method="post" action="{% url 'accounts:user_create' %}">
+      {% csrf_token %}
+      <div id="create-user-error" style="display:none;margin-bottom:12px;">
+        <div class="alert alert-error" id="create-user-error-msg"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Username <span class="required">*</span></label>
+          <input type="text" name="username" class="form-input" placeholder="Username" required autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label class="form-label">E-mail</label>
+          <input type="email" name="email" class="form-input" placeholder="E-mail address" autocomplete="off">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">First Name</label>
+          <input type="text" name="first_name" class="form-input" placeholder="First name">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Last Name</label>
+          <input type="text" name="last_name" class="form-input" placeholder="Last name">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Password <span class="required">*</span></label>
+          <input type="password" name="password" id="create-pw" class="form-input" placeholder="Password" required autocomplete="new-password">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Confirm Password <span class="required">*</span></label>
+          <input type="password" name="confirm_password" id="create-confirm-pw" class="form-input" placeholder="Repeat password" required autocomplete="new-password">
+        </div>
+      </div>
+      <!-- Generate password strip -->
+      <div style="display:flex;align-items:center;gap:8px;margin-top:4px;margin-bottom:8px;flex-wrap:wrap;">
+        <button type="button" id="btn-gen-create-pw" class="btn-gen-pw">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+          Generate Password
+        </button>
+        <div id="create-gen-pw-box" class="gen-pw-box" style="display:none;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.5" style="flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>
+          <code id="create-gen-pw-text" class="gen-pw-text"></code>
+          <button type="button" class="gen-pw-copy-btn btn-brand" id="create-gen-pw-copy">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Copy
+          </button>
+        </div>
+      </div>
+      <p class="text-muted text-sm" style="margin-bottom:12px;">
+        Min. {{ pw_policy.min_length }} characters
+        {% if pw_policy.require_digits %} · digit{% endif %}
+        {% if pw_policy.require_uppercase %} · uppercase{% endif %}
+        {% if pw_policy.require_lowercase %} · lowercase{% endif %}
+        {% if pw_policy.require_symbols %} · symbol{% endif %}
+      </p>
+      <div class="form-group">
+        <label class="form-label">Role</label>
+        <select name="role" class="form-select">
+          <option value="">— No Role —</option>
+          {% for role in roles %}
+          <option value="{{ role.pk }}">{{ role.get_name_display }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:16px;">
+        <a type="button" id="btn-close-create" class="btn btn-ghost">Cancel</a>
+        <button type="submit" id="btn-create-user-submit" class="btn btn-info">Create User</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Confirm Modal ──────────────────────────────────────────────── -->
+<div id="user-confirm-modal" style="display:none;position:fixed;inset:0;z-index:1000;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:32px;max-width:420px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+      <svg id="user-modal-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" style="width:26px;height:26px;flex-shrink:0;"></svg>
+      <h2 id="user-modal-title" style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0;"></h2>
+    </div>
+    <p id="user-modal-body" style="color:var(--text-secondary);font-size:14px;margin-bottom:24px;"></p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <a id="btn-cancel-confirm" class="btn btn-ghost btn-sm">Cancel</a>
+      <a id="user-modal-confirm-btn" class="btn btn-sm"></a>
+    </div>
+  </div>
+</div>
+
+<!-- ── Token Management Modal ──────────────────────────────────────── -->
+<div id="user-token-modal" style="display:none;position:fixed;inset:0;z-index:1100;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 32px;max-width:460px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <div>
+        <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0 0 2px;">API Token</h2>
+        <p id="token-modal-username" style="font-size:13px;color:var(--text-muted);margin:0;"></p>
+      </div>
+      <a type="button" id="btn-close-token-x" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</a>
+    </div>
+
+    <!-- Status row -->
+    <div style="display:flex;align-items:center;margin-bottom:16px;" id="token-status-row"></div>
+
+    <!-- Error -->
+    <div id="token-modal-err" style="display:none;color:var(--danger);font-size:13px;margin-bottom:12px;"></div>
+
+    <!-- Generated token (shown once) -->
+    <div id="token-result-row" style="display:none;margin-bottom:16px;">
+      <label class="form-label" style="color:var(--warning);margin-bottom:6px;">
+        Copy this token now — it will not be shown again.
+      </label>
+      <div style="display:flex;gap:6px;">
+        <input id="token-result-value" type="text" class="form-input" readonly
+               style="font-family:monospace;font-size:12px;flex:1;">
+        <button id="token-copy-btn" type="button" class="btn btn-ghost btn-sm">Copy</button>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;border-top:1px solid var(--border);padding-top:16px;">
+      <button id="token-revoke-btn" type="button" class="btn btn-danger btn-sm" style="display:none;margin-right:auto;">Revoke Token</button>
+      <button id="token-gen-btn" type="button" class="btn btn-info btn-sm">Generate Token</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-close-token">Close</button>
+    </div>
+
+  </div>
+</div>
+
+<script nonce="{{ csp_nonce }}">
+(function () {
+  const selectAll = document.getElementById('user-select-all');
+  const toolbar   = document.getElementById('user-bulk-toolbar');
+  const countEl   = document.getElementById('user-bulk-count');
+  let pendingIsBulk = true;
+  let pendingBulkAction = null;
+  let pendingSingleUrl  = null;
+
+  function updateToolbar() {
+    const checked = document.querySelectorAll('.user-row-check:checked');
+    if (checked.length > 0) {
+      toolbar.style.display = 'flex';
+      countEl.textContent = checked.length + ' selected';
+    } else {
+      toolbar.style.display = 'none';
+    }
+  }
+
+  if (selectAll) {
+    selectAll.addEventListener('change', function () {
+      document.querySelectorAll('.user-row-check:not(:disabled)').forEach(cb => cb.checked = this.checked);
+      updateToolbar();
+    });
+  }
+
+  document.querySelectorAll('.user-row-check').forEach(cb => {
+    cb.addEventListener('change', function () {
+      if (!this.checked && selectAll) selectAll.checked = false;
+      updateToolbar();
+    });
+  });
+
+  window.clearUserSelection = function () {
+    document.querySelectorAll('.user-row-check').forEach(cb => cb.checked = false);
+    if (selectAll) selectAll.checked = false;
+    updateToolbar();
+  };
+
+  // ── Edit modal ──────────────────────────────────────────────────
+  const editRoleSection     = document.getElementById('edit-role-section');
+  const editPasswordSection = document.getElementById('edit-password-section');
+
+  document.querySelectorAll('.user-edit-btn').forEach(btn => {
+    btn.addEventListener('click', function () {
+      const username    = this.dataset.username;
+      const roleId      = this.dataset.roleId;
+      const authSource  = this.dataset.authSource;
+      const isSuperuser = this.dataset.isSuperuser === 'true';
+      const updateUrl   = this.dataset.updateUrl;
+
+      document.getElementById('edit-modal-username').textContent = username;
+
+      // Single form
+      document.getElementById('edit-user-form').action = updateUrl;
+      document.getElementById('edit-first-name').value    = this.dataset.firstName || '';
+      document.getElementById('edit-last-name').value     = this.dataset.lastName  || '';
+      document.getElementById('edit-email').value         = this.dataset.email     || '';
+      document.getElementById('edit-role-select').value   = roleId || '';
+      document.getElementById('edit-new-password').value  = '';
+      document.getElementById('edit-confirm-password').value = '';
+
+      // Visibility: superuser → no role; LDAP → no password
+      const isLdap = authSource === 'ldap';
+      editRoleSection.style.display     = isSuperuser ? 'none' : 'block';
+      editPasswordSection.style.display = isLdap      ? 'none' : 'block';
+
+      document.getElementById('user-edit-modal').style.display = 'flex';
+    });
+  });
+
+  window.closeEditModal = function () {
+    document.getElementById('user-edit-modal').style.display = 'none';
+    document.getElementById('edit-user-error').style.display = 'none';
+  };
+  document.getElementById('user-edit-modal').addEventListener('click', function (e) {
+    if (e.target === this) closeEditModal();
+  });
+
+  // ── Edit form AJAX submit ───────────────────────────────────────
+  document.getElementById('edit-user-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    const errBox = document.getElementById('edit-user-error');
+    const errMsg = document.getElementById('edit-user-error-msg');
+    errBox.style.display = 'none';
+
+    const fd = new FormData(this);
+    fetch(this.action, {
+      method: 'POST',
+      body: fd,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) {
+          window.location.reload();
+        } else {
+          errMsg.textContent = d.error || 'An error occurred.';
+          errBox.style.display = '';
+          errBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      })
+      .catch(() => {
+        errMsg.textContent = 'Request failed. Please try again.';
+        errBox.style.display = '';
+      });
+  });
+
+  // ── New User modal ──────────────────────────────────────────────
+  window.openCreateModal = function () {
+    document.getElementById('user-create-modal').style.display = 'flex';
+  };
+  window.closeCreateModal = function () {
+    document.getElementById('user-create-modal').style.display = 'none';
+    document.getElementById('create-user-error').style.display = 'none';
+  };
+  document.getElementById('user-create-modal').addEventListener('click', function (e) {
+    if (e.target === this) closeCreateModal();
+  });
+
+  // ── New User form AJAX submit ───────────────────────────────────
+  document.getElementById('create-user-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    const errBox = document.getElementById('create-user-error');
+    const errMsg = document.getElementById('create-user-error-msg');
+    errBox.style.display = 'none';
+
+    const fd = new FormData(this);
+    fetch(this.action, {
+      method: 'POST',
+      body: fd,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) {
+          window.location.reload();
+        } else {
+          errMsg.textContent = d.error || 'An error occurred.';
+          errBox.style.display = '';
+          errBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      })
+      .catch(() => {
+        errMsg.textContent = 'Request failed. Please try again.';
+        errBox.style.display = '';
+      });
+  });
+
+  // ── Single toggle buttons ───────────────────────────────────────
+  document.querySelectorAll('.user-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', function () {
+      const action   = this.dataset.action;
+      const username = this.dataset.username;
+      const url      = this.dataset.url;
+      const isDeact  = action === 'deactivate';
+      showModal({
+        title: isDeact ? 'Deactivate User' : 'Activate User',
+        body:  isDeact
+          ? 'User "' + username + '" will be deactivated and will no longer be able to log in.'
+          : 'User "' + username + '" will be activated and can log in again.',
+        btnText:    isDeact ? 'Deactivate' : 'Activate',
+        btnClass:   isDeact ? 'btn-warning' : 'btn-success',
+        iconStroke: isDeact ? 'var(--warning)' : 'var(--success)',
+        iconPath:   isDeact
+          ? '<circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/>'
+          : '<polyline points="20 6 9 17 4 12"/>',
+      });
+      pendingIsBulk    = false;
+      pendingSingleUrl = url;
+    });
+  });
+
+  const bulkConfigs = {
+    activate: {
+      title: 'Activate Users',
+      body: 'Selected users will be activated and can log in again.',
+      btnText: 'Activate',
+      btnClass: 'btn-success',
+      iconStroke: 'var(--success)',
+      iconPath: '<polyline points="20 6 9 17 4 12"/>',
+      action: '{% url "accounts:user_bulk_activate" %}',
+    },
+    deactivate: {
+      title: 'Deactivate Users',
+      body: 'Selected users will be deactivated and will no longer be able to log in. Your own account will be skipped.',
+      btnText: 'Deactivate',
+      btnClass: 'btn-warning',
+      iconStroke: 'var(--warning)',
+      iconPath: '<circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/>',
+      action: '{% url "accounts:user_bulk_deactivate" %}',
+    },
+    delete: {
+      title: 'Delete Users Permanently',
+      body: 'Selected inactive users will be PERMANENTLY removed. Active users, superuser accounts, and your own account are skipped automatically. This cannot be undone.',
+      btnText: 'Delete',
+      btnClass: 'btn-danger',
+      iconStroke: 'var(--danger)',
+      iconPath: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+      action: '{% url "accounts:user_bulk_delete" %}',
+    },
+  };
+
+  function showModal(cfg) {
+    document.getElementById('user-modal-title').textContent = cfg.title;
+    document.getElementById('user-modal-body').textContent  = cfg.body;
+    const btn = document.getElementById('user-modal-confirm-btn');
+    btn.textContent  = cfg.btnText;
+    btn.className    = 'btn btn-sm ' + cfg.btnClass;
+    const icon = document.getElementById('user-modal-icon');
+    icon.setAttribute('stroke', cfg.iconStroke);
+    icon.innerHTML   = cfg.iconPath;
+    document.getElementById('user-confirm-modal').style.display = 'flex';
+  }
+
+  window.userConfirm = function (action) {
+    const cfg = bulkConfigs[action];
+    pendingBulkAction = cfg.action;
+    pendingIsBulk = true;
+    showModal(cfg);
+  };
+
+  window.userDoAction = function () {
+    document.getElementById('user-confirm-modal').style.display = 'none';
+    if (pendingIsBulk) {
+      const form = document.getElementById('user-bulk-form');
+      form.action = pendingBulkAction;
+      form.submit();
+    } else {
+      const form = document.getElementById('user-single-form');
+      form.action = pendingSingleUrl;
+      form.submit();
+    }
+  };
+})();
+
+// ── Delete user ───────────────────────────────────────────────
+let _deleteUrl = '';
+
+document.querySelectorAll('.user-delete-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    _deleteUrl = btn.dataset.url;
+    document.getElementById('delete-modal-username').textContent = btn.dataset.username;
+    const modal = document.getElementById('user-delete-modal');
+    modal.style.display = 'flex';
+  });
+});
+
+function closeDeleteModal() {
+  document.getElementById('user-delete-modal').style.display = 'none';
+}
+
+function confirmDelete() {
+  const form = document.getElementById('user-delete-form');
+  form.action = _deleteUrl;
+  form.submit();
+}
+
+document.getElementById('user-delete-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeDeleteModal();
+});
+
+// ── Token Management ─────────────────────────────────────────
+let _tokenGenUrl    = '';
+let _tokenRevokeUrl = '';
+let _tokenUsername  = '';
+let _tokenRowBtn    = null;
+
+document.querySelectorAll('.user-token-btn').forEach(btn => {
+  btn.addEventListener('click', function () {
+    _tokenGenUrl    = this.dataset.genUrl;
+    _tokenRevokeUrl = this.dataset.revokeUrl;
+    _tokenUsername  = this.dataset.username;
+    _tokenRowBtn    = this;
+    const hasToken  = this.dataset.hasToken === 'true';
+    const created   = this.dataset.tokenCreated;
+
+    document.getElementById('token-modal-username').textContent = _tokenUsername;
+    document.getElementById('token-result-row').style.display   = 'none';
+    document.getElementById('token-result-value').value         = '';
+
+    const statusEl = document.getElementById('token-status-row');
+    if (hasToken) {
+      statusEl.innerHTML = '<span class="badge badge-green badge-dot">Token active</span>'
+        + (created ? '<span class="text-muted text-sm" style="margin-left:8px;">Generated: ' + created + '</span>' : '');
+    } else {
+      statusEl.innerHTML = '<span class="badge badge-red badge-dot">No token</span>';
+    }
+
+    document.getElementById('token-revoke-btn').style.display = hasToken ? '' : 'none';
+    document.getElementById('token-gen-btn').textContent      = hasToken ? 'Regenerate Token' : 'Generate Token';
+    document.getElementById('token-gen-btn').className        = hasToken ? 'btn btn-warning btn-sm' : 'btn btn-info btn-sm';
+    document.getElementById('token-modal-err').style.display  = 'none';
+
+    document.getElementById('user-token-modal').style.display = 'flex';
+  });
+});
+
+document.getElementById('user-token-modal').addEventListener('click', function (e) {
+  if (e.target === this) closeTokenModal();
+});
+
+window.closeTokenModal = function () {
+  document.getElementById('user-token-modal').style.display = 'none';
+};
+
+window.tokenGenerate = function () {
+  const btn = document.getElementById('token-gen-btn');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'Generating…';
+
+  const csrf = document.querySelector('[name=csrfmiddlewaretoken]').value;
+  fetch(_tokenGenUrl, { method: 'POST', headers: { 'X-CSRFToken': csrf } })
+    .then(r => r.json())
+    .then(data => {
+      btn.disabled = false;
+      btn.textContent = orig;
+      if (data.ok) {
+        document.getElementById('token-result-value').value = data.token;
+        document.getElementById('token-result-row').style.display = '';
+        document.getElementById('token-status-row').innerHTML =
+          '<span class="badge badge-green badge-dot">Token active</span>';
+        document.getElementById('token-revoke-btn').style.display = '';
+        btn.textContent  = 'Regenerate Token';
+        btn.className    = 'btn btn-warning btn-sm';
+        document.getElementById('token-modal-err').style.display = 'none';
+        if (_tokenRowBtn) {
+          _tokenRowBtn.classList.remove('btn-info');
+          _tokenRowBtn.classList.add('btn-success');
+          _tokenRowBtn.dataset.hasToken = 'true';
+        }
+      } else {
+        document.getElementById('token-modal-err').textContent = data.message || 'Error generating token.';
+        document.getElementById('token-modal-err').style.display = '';
+      }
+    })
+    .catch(() => {
+      btn.disabled = false;
+      btn.textContent = orig;
+      document.getElementById('token-modal-err').textContent = 'Network error.';
+      document.getElementById('token-modal-err').style.display = '';
+    });
+};
+
+window.tokenRevoke = function () {
+  if (!confirm('Revoke the API token for "' + _tokenUsername + '"? The user will not be able to use the API until a new token is generated.')) return;
+  const csrf = document.querySelector('[name=csrfmiddlewaretoken]').value;
+  fetch(_tokenRevokeUrl, { method: 'POST', headers: { 'X-CSRFToken': csrf } })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        document.getElementById('token-status-row').innerHTML =
+          '<span class="badge badge-red badge-dot">No token</span>';
+        document.getElementById('token-revoke-btn').style.display = 'none';
+        document.getElementById('token-result-row').style.display = 'none';
+        document.getElementById('token-result-value').value = '';
+        const genBtn = document.getElementById('token-gen-btn');
+        genBtn.textContent = 'Generate Token';
+        genBtn.className   = 'btn btn-info btn-sm';
+        document.getElementById('token-modal-err').style.display = 'none';
+        if (_tokenRowBtn) {
+          _tokenRowBtn.classList.remove('btn-success');
+          _tokenRowBtn.classList.add('btn-info');
+          _tokenRowBtn.dataset.hasToken = 'false';
+        }
+      }
+    })
+    .catch(() => {
+      document.getElementById('token-modal-err').textContent = 'Network error.';
+      document.getElementById('token-modal-err').style.display = '';
+    });
+};
+
+window.tokenCopy = function () {
+  const input = document.getElementById('token-result-value');
+  input.select();
+  document.execCommand('copy');
+  const btn = document.getElementById('token-copy-btn');
+  const orig = btn.textContent;
+  btn.textContent = 'Copied!';
+  setTimeout(() => { btn.textContent = orig; }, 1500);
+};
+
+// ── CSP-safe button wiring (replaces inline onclick attributes) ───────
+(function () {
+  function bind(id, fn) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', fn);
+  }
+  bind('btn-new-user',           () => openCreateModal());
+  bind('btn-bulk-activate',      () => userConfirm('activate'));
+  bind('btn-bulk-deactivate',    () => userConfirm('deactivate'));
+  bind('btn-bulk-delete',        () => userConfirm('delete'));
+  bind('btn-bulk-clear',         () => clearUserSelection());
+  bind('btn-close-delete-modal', () => closeDeleteModal());
+  bind('btn-confirm-delete',     () => confirmDelete());
+  bind('btn-close-edit-x',       () => closeEditModal());
+  bind('btn-close-edit',         () => closeEditModal());
+  bind('btn-close-create-x',     () => closeCreateModal());
+  bind('btn-close-create',       () => closeCreateModal());
+  bind('btn-cancel-confirm',     () => { document.getElementById('user-confirm-modal').style.display = 'none'; });
+  bind('user-modal-confirm-btn', () => userDoAction());
+  bind('btn-close-token-x',      () => closeTokenModal());
+  bind('btn-close-token',        () => closeTokenModal());
+  bind('token-copy-btn',         () => tokenCopy());
+  bind('token-revoke-btn',       () => tokenRevoke());
+  bind('token-gen-btn',          () => tokenGenerate());
+  bind('ldap-import-btn',        () => openLdapModal());
+  const tokenInput = document.getElementById('token-result-value');
+  if (tokenInput) tokenInput.addEventListener('click', function () { this.select(); });
+})();
+</script>
+
+<!-- ── LDAP Import Modal ───────────────────────────────────────────── -->
+<div id="ldap-import-modal" style="display:none;position:fixed;inset:0;z-index:1200;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);max-width:880px;width:calc(100% - 32px);box-shadow:0 8px 40px rgba(0,0,0,0.4);display:flex;flex-direction:column;max-height:88vh;">
+
+    <!-- Header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px 16px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <div>
+        <h2 style="font-size:16px;font-weight:700;color:var(--text-primary);margin:0 0 2px;">Import LDAP Users</h2>
+        <p id="ldap-modal-subtitle" style="font-size:13px;color:var(--text-muted);margin:0;"></p>
+      </div>
+      <button type="button" id="btn-close-ldap-x" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:20px;line-height:1;padding:4px;">✕</button>
+    </div>
+    
+    <!-- Loading state -->
+    <div id="ldap-loading" style="padding:48px;text-align:center;color:var(--text-muted);">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           style="width:32px;height:32px;animation:ldap-spin 1s linear infinite;margin-bottom:12px;">
+        <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+      </svg>
+      <p style="margin:0;font-size:14px;">Connecting to LDAP…</p>
+    </div>
+
+    <!-- Error state -->
+    <div id="ldap-error" style="display:none;padding:32px 24px;">
+      <div style="background:var(--danger-bg,rgba(239,68,68,.1));border:1px solid var(--danger,#ef4444);border-radius:var(--radius);padding:16px;display:flex;gap:12px;align-items:flex-start;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="var(--danger,#ef4444)" stroke-width="2" style="width:20px;height:20px;flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div>
+          <p id="ldap-error-msg" style="margin:0;font-size:14px;color:var(--danger,#ef4444);font-weight:600;"></p>
+          <p style="margin:4px 0 0;font-size:12px;color:var(--text-muted);">Go to <strong>Settings → LDAP</strong> to configure the connection.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- User list state -->
+    <div id="ldap-list-wrap" style="display:none;flex:1;min-height:0;flex-direction:column;">
+      <!-- Search + select-all bar -->
+      <div style="padding:12px 24px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center;flex-shrink:0;">
+        <input type="search" id="ldap-search" class="form-input"
+               style="flex:1;height:32px;font-size:13px;padding:4px 12px;" placeholder="Filter by username, name, e-mail or group…"
+               >
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);white-space:nowrap;cursor:pointer;">
+          <input type="checkbox" id="ldap-select-all" class="form-checkbox">
+          Select all
+        </label>
+      </div>
+
+      <!-- Scrollable list -->
+      <div style="overflow-y:auto;flex:1;">
+        <table style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr style="position:sticky;top:0;background:var(--bg-surface);z-index:1;">
+              <th style="width:36px;padding:8px 0 8px 16px;"></th>
+              <th style="text-align:left;padding:8px 12px;font-size:12px;color:var(--text-muted);font-weight:600;">USERNAME</th>
+              <th style="text-align:left;padding:8px 12px;font-size:12px;color:var(--text-muted);font-weight:600;">DISPLAY NAME</th>
+              <th style="text-align:left;padding:8px 12px;font-size:12px;color:var(--text-muted);font-weight:600;">E-MAIL</th>
+              <th style="text-align:left;padding:8px 12px;font-size:12px;color:var(--text-muted);font-weight:600;">GROUP</th>
+            </tr>
+          </thead>
+          <tbody id="ldap-user-tbody"></tbody>
+        </table>
+        <div id="ldap-empty" style="display:none;padding:32px;text-align:center;color:var(--text-muted);font-size:14px;">
+          No users found
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div id="ldap-modal-footer" style="display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-top:1px solid var(--border);flex-shrink:0;gap:10px;">
+      <span id="ldap-selected-count" style="font-size:13px;color:var(--text-muted);"></span>
+      <div style="display:flex;gap:8px;">
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-close-ldap">Cancel</button>
+        <button type="button" class="btn btn-info btn-sm" id="ldap-import-confirm-btn"
+                disabled>Import Selected</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<style>
+@keyframes ldap-spin { to { transform: rotate(360deg); } }
+#ldap-user-tbody tr { border-bottom: 1px solid var(--border); }
+#ldap-user-tbody tr:hover { background: var(--bg-elevated); }
+#ldap-user-tbody tr.ldap-hidden { display: none; }
+#ldap-user-tbody td { padding: 9px 12px; font-size: 13px; vertical-align: middle; }
+#ldap-user-tbody td:first-child { padding-left: 16px; }
+</style>
+
+<script nonce="{{ csp_nonce }}">
+(function () {
+  const LDAP_URL = '{% url "accounts:ldap_users_import" %}';
+  const CSRF     = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+  let _allLdapUsers = [];
+
+  // ── Open / Close ──────────────────────────────────────────────────
+  window.openLdapModal = function () {
+    const modal = document.getElementById('ldap-import-modal');
+    modal.style.display = 'flex';
+
+    // Reset states
+    _allLdapUsers = [];
+    document.getElementById('ldap-loading').style.display = 'block';
+    document.getElementById('ldap-error').style.display   = 'none';
+    document.getElementById('ldap-list-wrap').style.display = 'none';
+    document.getElementById('ldap-modal-subtitle').textContent = '';
+    document.getElementById('ldap-search').value = '';
+    document.getElementById('ldap-select-all').checked = false;
+    document.getElementById('ldap-import-confirm-btn').disabled = true;
+    document.getElementById('ldap-selected-count').textContent = '';
+
+    fetch(LDAP_URL, {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('ldap-loading').style.display = 'none';
+      if (!data.ok) {
+        document.getElementById('ldap-error-msg').textContent = data.message;
+        document.getElementById('ldap-error').style.display = 'block';
+        return;
+      }
+      _allLdapUsers = data.users;
+      ldapRenderUsers(_allLdapUsers);
+      document.getElementById('ldap-list-wrap').style.display = 'flex';
+      const importable = _allLdapUsers.filter(u => !u.already_imported).length;
+      const imported   = _allLdapUsers.length - importable;
+      document.getElementById('ldap-modal-subtitle').textContent =
+        importable + ' available · ' + imported + ' already imported · ' +
+        _allLdapUsers.length + ' total';
+    })
+    .catch(() => {
+      document.getElementById('ldap-loading').style.display = 'none';
+      document.getElementById('ldap-error-msg').textContent = 'Unexpected error. Please try again.';
+      document.getElementById('ldap-error').style.display = 'block';
+    });
+  };
+
+  window.closeLdapModal = function () {
+    document.getElementById('ldap-import-modal').style.display = 'none';
+  };
+
+  document.getElementById('ldap-import-modal').addEventListener('click', function (e) {
+    if (e.target === this) closeLdapModal();
+  });
+
+  // ── Render rows ──────────────────────────────────────────────────
+  function ldapRenderUsers(users) {
+    const tbody = document.getElementById('ldap-user-tbody');
+    tbody.innerHTML = '';
+    users.forEach(u => {
+      const tr = document.createElement('tr');
+      tr.dataset.username = u.username.toLowerCase();
+      tr.dataset.display  = (u.display_name || '').toLowerCase();
+      tr.dataset.email    = (u.email || '').toLowerCase();
+      tr.dataset.ou       = (u.ou || '').toLowerCase();
+      // Imported rows: tag for filter logic + dim + lock the checkbox so they
+      // can't be re-imported.
+      const imported = !!u.already_imported;
+      tr.dataset.imported = imported ? '1' : '0';
+      if (imported) tr.style.opacity = '0.55';
+      const cbAttrs = imported ? ' disabled title="Already imported into the platform."' : '';
+      const importedTag = imported
+        ? ' <span class="badge badge-muted" style="margin-left:6px;font-size:10px;vertical-align:middle;">Imported</span>'
+        : '';
+      tr.innerHTML = `
+        <td><input type="checkbox" class="form-checkbox ldap-row-check" data-username="${esc(u.username)}"
+             data-email="${esc(u.email)}" data-display="${esc(u.display_name)}" data-ou="${esc(u.ou)}"${cbAttrs}></td>
+        <td class="fw-600">${esc(u.username)}${importedTag}</td>
+        <td style="color:var(--text-secondary);">${esc(u.display_name || '—')}</td>
+        <td style="color:var(--text-muted);">${esc(u.email || '—')}</td>
+        <td style="color:var(--text-muted);">${u.ou ? esc(u.ou) : '—'}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+    ldapUpdateCount();
+    document.getElementById('ldap-empty').style.display = users.length ? 'none' : 'block';
+  }
+
+  function esc(str) {
+    return String(str || '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  // ── Filter ───────────────────────────────────────────────────────
+  window.ldapFilterUsers = function () {
+    const q = document.getElementById('ldap-search').value.toLowerCase().trim();
+    let visible = 0;
+    document.querySelectorAll('#ldap-user-tbody tr').forEach(tr => {
+      const match = !q
+        || tr.dataset.username.includes(q)
+        || tr.dataset.display.includes(q)
+        || tr.dataset.email.includes(q)
+        || tr.dataset.ou.includes(q);
+      tr.classList.toggle('ldap-hidden', !match);
+      if (match) visible++;
+    });
+    document.getElementById('ldap-empty').style.display = visible ? 'none' : 'block';
+    // uncheck select-all if any visible row is unchecked
+    const allChecked = [...document.querySelectorAll('#ldap-user-tbody tr:not(.ldap-hidden) .ldap-row-check:not(:disabled)')]
+                         .every(cb => cb.checked);
+    document.getElementById('ldap-select-all').checked = allChecked && visible > 0;
+    ldapUpdateCount();
+  };
+
+  // ── Select all ───────────────────────────────────────────────────
+  window.ldapToggleAll = function (checked) {
+    document.querySelectorAll('#ldap-user-tbody tr:not(.ldap-hidden) .ldap-row-check:not(:disabled)')
+            .forEach(cb => cb.checked = checked);
+    ldapUpdateCount();
+  };
+
+  // ── Count selected ───────────────────────────────────────────────
+  window.ldapUpdateCount = function () {
+    const n = document.querySelectorAll('.ldap-row-check:checked').length;
+    const btn = document.getElementById('ldap-import-confirm-btn');
+    btn.disabled = n === 0;
+    document.getElementById('ldap-selected-count').textContent =
+      n ? n + ' user' + (n !== 1 ? 's' : '') + ' selected' : '';
+  };
+
+  // ── Event delegation for dynamically rendered checkboxes ─────────
+  document.getElementById('ldap-user-tbody').addEventListener('change', function (e) {
+    if (e.target.classList.contains('ldap-row-check')) ldapUpdateCount();
+  });
+
+  // ── CSP-safe wiring for LDAP modal buttons ─────────────────────
+  (function () {
+    function bind(id, fn) { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); }
+    bind('btn-close-ldap-x', () => closeLdapModal());
+    bind('btn-close-ldap',   () => closeLdapModal());
+    bind('ldap-import-confirm-btn', () => ldapDoImport());
+    const search = document.getElementById('ldap-search');
+    if (search) search.addEventListener('input', () => ldapFilterUsers());
+    const selAll = document.getElementById('ldap-select-all');
+    if (selAll) selAll.addEventListener('change', function () { ldapToggleAll(this.checked); });
+  })();
+
+  // ── Import ───────────────────────────────────────────────────────
+  window.ldapDoImport = function () {
+    const checks = document.querySelectorAll('.ldap-row-check:checked');
+    const users  = [...checks].map(cb => ({
+      username:     cb.dataset.username,
+      email:        cb.dataset.email,
+      display_name: cb.dataset.display,
+      ou:           cb.dataset.ou || '',
+    }));
+    if (!users.length) return;
+
+    const btn = document.getElementById('ldap-import-confirm-btn');
+    btn.disabled = true;
+    btn.textContent = 'Importing…';
+
+    fetch(LDAP_URL, {
+      method:  'POST',
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'Content-Type':     'application/json',
+        'X-CSRFToken':      CSRF,
+      },
+      body: JSON.stringify({ users }),
+    })
+    .then(r => r.json())
+    .then(data => {
+      closeLdapModal();
+      if (data.ok) {
+        // reload to reflect new users
+        window.location.reload();
+      } else {
+        alert(data.message || 'Import failed.');
+      }
+    })
+    .catch(() => {
+      btn.disabled    = false;
+      btn.textContent = 'Import Selected';
+      alert('Unexpected error. Please try again.');
+    });
+  };
+})();
+
+// ── Password Generator ────────────────────────────────────────────
+(function () {
+  const POLICY = {
+    minLen:   {{ pw_policy.min_length }},
+    upper:    {{ pw_policy.require_uppercase|yesno:"true,false" }},
+    lower:    {{ pw_policy.require_lowercase|yesno:"true,false" }},
+    digits:   {{ pw_policy.require_digits|yesno:"true,false" }},
+    symbols:  {{ pw_policy.require_symbols|yesno:"true,false" }},
+  };
+
+  const CHARS = {
+    upper:   'ABCDEFGHJKLMNPQRSTUVWXYZ',
+    lower:   'abcdefghjkmnpqrstuvwxyz',
+    digits:  '23456789',
+    symbols: '!@#$%^&*-_=+?',
+  };
+
+  function rand(n) {
+    const arr = new Uint32Array(1);
+    crypto.getRandomValues(arr);
+    return arr[0] % n;
+  }
+
+  function generatePassword() {
+    const required = [];
+    let pool = '';
+
+    if (POLICY.upper)   { required.push(CHARS.upper[rand(CHARS.upper.length)]);     pool += CHARS.upper;   }
+    if (POLICY.lower)   { required.push(CHARS.lower[rand(CHARS.lower.length)]);     pool += CHARS.lower;   }
+    if (POLICY.digits)  { required.push(CHARS.digits[rand(CHARS.digits.length)]);   pool += CHARS.digits;  }
+    if (POLICY.symbols) { required.push(CHARS.symbols[rand(CHARS.symbols.length)]); pool += CHARS.symbols; }
+    if (!pool) { pool = CHARS.lower + CHARS.upper + CHARS.digits; }
+
+    const len = Math.max(POLICY.minLen + 4, required.length + 4);
+    while (required.length < len) {
+      required.push(pool[rand(pool.length)]);
+    }
+
+    // Fisher-Yates shuffle
+    for (let i = required.length - 1; i > 0; i--) {
+      const j = rand(i + 1);
+      [required[i], required[j]] = [required[j], required[i]];
+    }
+    return required.join('');
+  }
+
+  function setupGenerator(btnId, pw1Id, pw2Id, boxId, textId, copyBtnId) {
+    const btn     = document.getElementById(btnId);
+    const pw1     = document.getElementById(pw1Id);
+    const pw2     = document.getElementById(pw2Id);
+    const box     = document.getElementById(boxId);
+    const textEl  = document.getElementById(textId);
+    const copyBtn = document.getElementById(copyBtnId);
+    if (!btn || !pw1) return;
+
+    btn.addEventListener('click', function () {
+      const pw = generatePassword();
+      pw1.value = pw;
+      if (pw2) pw2.value = pw;
+      textEl.textContent = pw;
+      box.style.display = 'flex';
+      // Brief pulse on button
+      btn.classList.add('btn-gen-pw--done');
+      setTimeout(() => btn.classList.remove('btn-gen-pw--done'), 600);
+    });
+
+    copyBtn.addEventListener('click', function () {
+      const pw = textEl.textContent;
+      if (!pw) return;
+      navigator.clipboard.writeText(pw).then(() => {
+        const orig = copyBtn.innerHTML;
+        copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Copied!';
+        copyBtn.style.color = 'var(--success)';
+        setTimeout(() => { copyBtn.innerHTML = orig; copyBtn.style.color = ''; }, 2000);
+      });
+    });
+  }
+
+  setupGenerator(
+    'btn-gen-create-pw', 'create-pw', 'create-confirm-pw',
+    'create-gen-pw-box', 'create-gen-pw-text', 'create-gen-pw-copy'
+  );
+  setupGenerator(
+    'btn-gen-edit-pw', 'edit-new-password', 'edit-confirm-password',
+    'edit-gen-pw-box', 'edit-gen-pw-text', 'edit-gen-pw-copy'
+  );
+})();
+</script>
+
+<style>
+.btn-gen-pw {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btn-gen-pw:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-gen-pw--sm {
+  padding: 3px 9px;
+  font-size: 11px;
+}
+.btn-gen-pw--done {
+  transform: scale(0.95);
+  background: var(--accent);
+  color: #fff;
+}
+.gen-pw-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  flex: 1;
+  min-width: 0;
+}
+.gen-pw-text {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: all;
+  cursor: text;
+}
+.gen-pw-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.gen-pw-copy-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+</style>
+{% endblock %}

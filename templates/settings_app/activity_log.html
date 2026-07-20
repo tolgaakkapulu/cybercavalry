@@ -1,0 +1,633 @@
+{% extends "base.html" %}
+{% block title %}Activity Log{% endblock %}
+{% block topbar_title %}Activity Log{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">ACTIVITY LOG</h1>
+  </div>
+</div>
+
+<!-- Filters -->
+<form method="get" style="margin-bottom:16px;"
+      x-data="{ dateRange: '{{ date_range }}' }">
+  <div class="filter-bar">
+
+    <!-- Action & User & Detail search -->
+    <input type="search" name="action" class="form-input form-input-sm" placeholder="Filter by action..."
+           value="{{ action_filter }}" style="min-width:140px;">
+    <input type="search" name="user" class="form-input form-input-sm" placeholder="Filter by user..."
+           value="{{ user_filter }}" style="min-width:120px;">
+    <input type="search" name="detail" class="form-input form-input-sm" placeholder="Search inside detail..."
+           value="{{ detail_filter }}" style="min-width:170px;"
+           title="Case-insensitive substring search inside the JSON detail field (target IDs, IPs, reasons, etc.)">
+
+    <!-- Type -->
+    <select name="type" class="form-select form-select-sm" style="min-width:160px;">
+      <option value="">All Types</option>
+      <option value="page"         {% if type_filter == 'page'         %}selected{% endif %}>Page Visits</option>
+      <option value="auth"         {% if type_filter == 'auth'         %}selected{% endif %}>Authentication</option>
+      <option value="user"         {% if type_filter == 'user'         %}selected{% endif %}>User Management</option>
+      <option value="threat_intel" {% if type_filter == 'threat_intel' %}selected{% endif %}>Threat Intel &amp; IP Blacklist</option>
+      <option value="ip_blacklist" {% if type_filter == 'ip_blacklist' %}selected{% endif %}>IP Blacklist &amp; AbuseIPDB</option>
+      <option value="whitelist"    {% if type_filter == 'whitelist'    %}selected{% endif %}>IP Whitelist</option>
+      <option value="hashlist"     {% if type_filter == 'hashlist'     %}selected{% endif %}>Hash Blacklist</option>
+      <option value="hash_blacklist" {% if type_filter == 'hash_blacklist' %}selected{% endif %}>Hash Blacklist &amp; VirusTotal</option>
+      <option value="rate_limit"   {% if type_filter == 'rate_limit'   %}selected{% endif %}>Rate Limit</option>
+      <option value="report"       {% if type_filter == 'report'       %}selected{% endif %}>Report Downloads</option>
+      <option value="action"       {% if type_filter == 'action'       %}selected{% endif %}>Actions Only</option>
+    </select>
+
+    <!-- Date range -->
+    <div style="width:1px;height:20px;background:var(--border);margin:0 2px;flex-shrink:0;"></div>
+    <select name="date_range" class="form-select form-select-sm" style="min-width:120px;"
+            x-model="dateRange">
+      <option value="24h">Last 24 Hours</option>
+      <option value="7d">Last 7 Days</option>
+      <option value="30d">Last 30 Days</option>
+      <option value="all">All Time</option>
+      <option value="custom">Custom Range</option>
+    </select>
+
+    <!-- Custom date inputs — shown only when "custom" is selected -->
+    <template x-if="dateRange === 'custom'">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <input type="date" name="date_from" class="form-input form-input-sm" value="{{ date_from }}"
+               style="min-width:120px;" max="{% now 'Y-m-d' %}">
+        <span class="text-muted text-sm">→</span>
+        <input type="date" name="date_to" class="form-input form-input-sm" value="{{ date_to }}"
+               style="min-width:120px;" max="{% now 'Y-m-d' %}">
+      </div>
+    </template>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 2px;flex-shrink:0;"></div>
+    <button type="submit" class="btn btn-brand btn-sm">Apply</button>
+    <a href="{% url 'settings_app:activity_log' %}" class="btn btn-ghost btn-sm">Clear</a>
+
+    <!-- Active filter badges -->
+    <div style="flex:1;"></div>
+    {% if action_filter %}<span class="badge badge-blue">Action: {{ action_filter }}</span>{% endif %}
+    {% if user_filter %}<span class="badge badge-blue">User: {{ user_filter }}</span>{% endif %}
+    {% if type_filter %}<span class="badge badge-blue">Type: {{ type_filter }}</span>{% endif %}
+    {% if date_range == 'custom' and date_from %}<span class="badge badge-yellow">From: {{ date_from }}</span>{% endif %}
+    {% if date_range == 'custom' and date_to %}<span class="badge badge-yellow">To: {{ date_to }}</span>{% endif %}
+    {% if date_range != '24h' and date_range != 'custom' %}<span class="badge badge-yellow">{{ date_range }}</span>{% endif %}
+
+    <a href="{% url 'settings_app:activity_log_export' %}?date_range={{ date_range }}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if action_filter %}&action={{ action_filter }}{% endif %}{% if user_filter %}&user={{ user_filter }}{% endif %}{% if type_filter %}&type={{ type_filter }}{% endif %}"
+       class="btn btn-success btn-sm" style="flex-shrink:0;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export
+    </a>
+
+  </div>
+</form>
+
+
+<div class="table-wrapper">
+  <table style="text-align:center;min-width:1100px;" class="text-sm">
+    <colgroup>
+      <col style="width:148px;">
+      <col style="width:160px;">
+      <col style="width:100px;">
+      <col style="width:130px;">
+      <col style="width:200px;">
+      <col style="width:180px;">
+      <col style="width:180px;">
+    </colgroup>
+    <thead>
+      <tr>
+        <th style="text-align:center;">Timestamp</th>
+        <th style="text-align:center;">User</th>
+        <th style="text-align:center;">Type</th>
+        <th style="text-align:center;">Source IP</th>
+        <th style="text-align:center;">Action</th>
+        <th style="text-align:center;">Target</th>
+        <th style="text-align:center;">Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for log in logs %}
+      {% with is_page=log.action|slice:":5" %}
+      <tr>
+        <td >
+           <span >{{ log.timestamp|date:"Y-m-d H:i:s" }}</span></td>
+        <td>
+          {% if log.user %}
+            <span class="badge badge-blue">{{ log.user.username }}{% if log.user.get_full_name %} <br>({{ log.user.get_full_name }}){% endif %}
+              </span>
+          {% else %} <span class="badge badge-blue">system</span>{% endif %}
+        </td>
+        <td>
+          {% if log.action == "auth.login.failed" %}
+          <span class="badge badge-red">fail</span>
+          {% elif log.action == "auth.login.success" %}
+          <span class="badge badge-green">login</span>
+          {% elif log.action == "auth.logout" %}
+          <span class="badge badge-blue">logout</span>
+          {% elif log.action == "api.rate_limit" %}
+          <span class="badge badge-red">rate limit</span>
+          {% elif log.action == "report.download" %}
+          <span class="badge badge-purple">download</span>
+          {% elif log.action|slice:":4" == "api." %}
+          <span class="badge badge-blue">api</span>
+          {% elif log.action|slice:":5" == "page." %}
+          <span class="badge badge-teal">visit</span>
+          {% elif log.action == "user.create" %}
+          <span class="badge badge-green">create</span>
+          {% elif log.action == "user.activate" %}
+          <span class="badge badge-green">activate</span>
+          {% elif log.action == "user.deactivate" %}
+          <span class="badge badge-yellow">deactivate</span>
+          {% elif log.action == "user.delete" %}
+          <span class="badge badge-red">delete</span>
+          {% elif log.action == "actions.quota_alert_sent" %}
+          <span class="badge badge-red">quota alert</span>
+          {% elif log.action == "actions.quota_alert_test" %}
+          <span class="badge badge-blue">test mail</span>
+          {% elif log.action == "actions.rate_limit_alert_sent" %}
+          <span class="badge badge-red">rate alert</span>
+          {% elif log.action == "actions.rate_limit_alert_test" %}
+          <span class="badge badge-blue">test mail</span>
+          {% elif log.action == "actions.smtp_test" %}
+          <span class="badge badge-blue">smtp test</span>
+          {% elif log.action == "actions.syslog_test" %}
+          <span class="badge badge-blue">syslog test</span>
+          {% elif log.action == "user.role.assign" %}
+          <span class="badge badge-blue">role</span>
+          {% elif log.action == "user.role.remove" %}
+          <span class="badge badge-yellow">role</span>
+          {% elif log.action == "user.token_generate" or log.action == "user.token_generate_self" %}
+          <span class="badge badge-blue">token</span>
+          {% elif log.action == "user.token_revoke" or log.action == "user.token_revoke_self" %}
+          <span class="badge badge-yellow">token</span>
+          {% elif log.action == "threat_intel.abuseipdb_scheduled_refresh_error" %}
+          <span class="badge badge-red">sched err</span>
+          {% elif log.action == "threat_intel.abuseipdb_scheduled_refresh" %}
+          <span class="badge badge-purple">scheduled</span>
+          {% elif log.action == "threat_intel.bulk_score" %}
+          <span class="badge badge-pink">bulk score</span>
+          {% elif log.action|slice:":12" == "threat_intel" %}
+          <span class="badge badge-pink">score</span>
+          {% elif log.action == "blacklist.bulk_delete" or log.action == "blacklist.delete" %}
+          <span class="badge badge-red">delete</span>
+          {% elif log.action == "blacklist.bulk_deactivate" or log.action == "blacklist.deactivate" or log.action == "blacklist.deactivate_all" %}
+          <span class="badge badge-yellow">deactivate</span>
+          {% elif log.action == "blacklist.entry_expired" or log.action == "blacklist.entries_expired" %}
+          <span class="badge badge-yellow">expired</span>
+          {% elif log.action == "blacklist.bulk_activate" or log.action == "blacklist.reactivate" %}
+          <span class="badge badge-green">activate</span>
+          {% elif log.action == "blacklist.import_csv" %}
+          <span class="badge badge-teal">import</span>
+          {% elif log.action == "blacklist.bulk_edit_group" or log.action == "blacklist.edit" %}
+          <span class="badge badge-yellow">edit</span>
+          {% elif log.action == "blacklist.pin_toggle" %}
+          <span class="badge badge-purple">pin</span>
+          {% elif log.action == "blacklist.add" %}
+          <span class="badge badge-green">add</span>
+          {% elif log.action == "whitelist.delete" %}
+          <span class="badge badge-red">delete</span>
+          {% elif log.action == "whitelist.bulk_deactivate" or log.action == "whitelist.deactivate" %}
+          <span class="badge badge-yellow">deactivate</span>
+          {% elif log.action == "whitelist.bulk_activate" or log.action == "whitelist.activate" %}
+          <span class="badge badge-green">activate</span>
+          {% elif log.action == "whitelist.import_csv" or log.action == "whitelist.bulk_add" %}
+          <span class="badge badge-teal">import</span>
+          {% elif log.action == "whitelist.edit" %}
+          <span class="badge badge-yellow">edit</span>
+          {% elif log.action == "whitelist.add" %}
+          <span class="badge badge-green">add</span>
+          {% elif "delete" in log.action or "remove" in log.action %}
+          <span class="badge badge-red">delete</span>
+          {% elif "add" in log.action or "create" in log.action or "import" in log.action %}
+          <span class="badge badge-green">add</span>
+          {% elif "edit" in log.action or "save" in log.action or "update" in log.action %}
+          <span class="badge badge-yellow">edit</span>
+          {% else %}
+          <span class="badge badge-yellow">action</span>
+          {% endif %}
+        </td>
+        <td>
+          <span class="badge badge-red">{{ log.ip_address|default:"—" }}</span></td>
+        <td>
+          <code class="badge badge-yellow" style="color:{% if log.action|slice:':5' == 'page.' %}var(){% else %}var(){% endif %}">
+            {{ log.action }}
+          </code>
+        </td>
+        <td style="word-break:break-all;">
+          {% if log.target_model == 'Page' %}
+          <span class="badge badge-green">
+              {{ log.target_id }}
+          </span>
+          {% else %}
+           <span class="badge badge-green">
+           {{ log.target_model }}{% if log.target_id and log.target_id != "None" %}:{{ log.target_id }}{% endif %}
+           </span>
+          {% endif %}
+        </td>
+        <td style="text-align:left;">
+          {% if log.detail %}
+
+            {# ── Threat Intel ────────────────────────────────────── #}
+            {% if log.action|slice:":12" == "threat_intel" %}
+              <div style="display:flex;flex-direction:column;gap:5px;">
+                <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                  {% if log.detail.ip %}<span class="badge badge-muted" style="font-family:monospace;font-size:10px;">{{ log.detail.ip }}</span>{% endif %}
+                  {% if log.detail.hash %}<span class="badge badge-muted" style="font-family:monospace;font-size:10px;">{{ log.detail.hash }}</span>{% endif %}
+                  {% if log.detail.hash_type %}<span class="badge badge-blue" style="font-size:10px;">{{ log.detail.hash_type }}</span>{% endif %}
+                  {% if log.detail.malicious is not None and log.detail.total is not None %}
+                    <span class="badge {% if log.detail.malicious %}badge-red{% else %}badge-green{% endif %}" style="font-size:10px;">{{ log.detail.malicious }}/{{ log.detail.total }} engines</span>
+                  {% endif %}
+                  {% if log.detail.deactivated %}<span class="badge badge-yellow" style="font-size:10px;">deactivated</span>{% endif %}
+                  {% if log.detail.score is not None and log.detail.score != "" %}<span class="badge badge-pink" style="font-size:10px;">score {{ log.detail.score }}</span>{% endif %}
+                  {% if log.detail.checked is not None and log.detail.checked != "" %}<span class="badge badge-green" style="font-size:10px;">✓ {{ log.detail.checked }}</span>{% endif %}
+                  {% if log.detail.scored is not None and log.detail.scored != "" %}<span class="badge badge-green" style="font-size:10px;">✓ {{ log.detail.scored }} scored</span>{% endif %}
+                  {% if log.detail.skipped is not None and log.detail.skipped != "" %}<span class="badge badge-muted" style="font-size:10px;">skip {{ log.detail.skipped }}</span>{% endif %}
+                  {% if log.detail.failed is not None and log.detail.failed != "" %}<span class="badge {% if log.detail.failed %}badge-red{% else %}badge-muted{% endif %}" style="font-size:10px;">fail {{ log.detail.failed }}</span>{% endif %}
+                  {% if log.detail.deactivated is not None and log.detail.deactivated != "" and log.detail.scored is not None %}<span class="badge badge-yellow" style="font-size:10px;">deact {{ log.detail.deactivated }}</span>{% endif %}
+                  {% if log.detail.elapsed_seconds %}<span class="badge badge-muted" style="font-size:10px;">{{ log.detail.elapsed_seconds }}s</span>{% endif %}
+                  {% if log.detail.trigger %}<span class="badge badge-blue" style="font-size:10px;">{{ log.detail.trigger }}</span>{% endif %}
+                  {% if log.detail.error %}<span class="badge badge-red" style="font-size:10px;" title="{{ log.detail.error }}">error</span>{% endif %}
+                </span>
+                {% if log.detail.hashes %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    {% for h in log.detail.hashes %}<span class="badge badge-muted" style="font-family:monospace;font-size:10px;">{{ h }}</span>{% endfor %}
+                  </div>
+                {% endif %}
+              </div>
+
+            {# ── Whitelist: single CIDR operations ─────────────────── #}
+            {% elif log.action == "whitelist.add" or log.action == "whitelist.delete" or log.action == "whitelist.activate" or log.action == "whitelist.deactivate" %}
+              <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                {% if log.detail.cidr %}
+                  <span class="badge {% if log.action == 'whitelist.add' %}badge-green{% elif log.action == 'whitelist.delete' %}badge-red{% elif log.action == 'whitelist.activate' %}badge-green{% else %}badge-yellow{% endif %}"
+                        style="font-family:monospace;font-size:10px;">{{ log.detail.cidr }}</span>
+                {% endif %}
+              </span>
+
+            {# ── Whitelist: edit (CIDR / reason change) ─────────── #}
+            {% elif log.action == "whitelist.edit" %}
+              <div style="display:flex;flex-direction:column;gap:5px;">
+                {% if log.detail.old_cidr and log.detail.new_cidr and log.detail.old_cidr != log.detail.new_cidr %}
+                  <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                    <span class="badge badge-muted" style="font-family:monospace;font-size:10px;">{{ log.detail.old_cidr }}</span>
+                    <span style="font-size:10px;color:var(--text-muted);">→</span>
+                    <span class="badge badge-blue" style="font-family:monospace;font-size:10px;">{{ log.detail.new_cidr }}</span>
+                  </span>
+                {% elif log.detail.new_cidr %}
+                  <span class="badge badge-blue" style="font-family:monospace;font-size:10px;">{{ log.detail.new_cidr }}</span>
+                {% endif %}
+                {% if log.detail.old_reason is not None and log.detail.new_reason is not None and log.detail.old_reason != log.detail.new_reason %}
+                  <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                    <span style="font-size:10px;color:var(--text-muted);">reason:</span>
+                    <span class="badge badge-muted" style="font-size:10px;" title="{{ log.detail.old_reason }}">{{ log.detail.old_reason|default:'∅'|truncatechars:40 }}</span>
+                    <span style="font-size:10px;color:var(--text-muted);">→</span>
+                    <span class="badge badge-blue" style="font-size:10px;" title="{{ log.detail.new_reason }}">{{ log.detail.new_reason|default:'∅'|truncatechars:40 }}</span>
+                  </span>
+                {% endif %}
+              </div>
+
+            {# ── Whitelist: bulk activate / deactivate ────────────── #}
+            {% elif log.action == "whitelist.bulk_activate" or log.action == "whitelist.bulk_deactivate" %}
+              <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                {% if log.detail.count is not None %}
+                  <span class="badge {% if log.action == 'whitelist.bulk_activate' %}badge-green{% else %}badge-yellow{% endif %}" style="font-size:10px;">
+                    {{ log.detail.count }} entr{{ log.detail.count|pluralize:"y,ies" }}
+                  </span>
+                {% endif %}
+              </span>
+
+            {# ── Whitelist: import CSV / bulk add ─────────────────── #}
+            {% elif log.action == "whitelist.import_csv" or log.action == "whitelist.bulk_add" %}
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                {# Summary counts #}
+                <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                  {% if log.detail.added is not None %}<span class="badge badge-green" style="font-size:10px;">+ {{ log.detail.added }} added</span>{% endif %}
+                  {% if log.detail.skipped is not None and log.detail.skipped %}<span class="badge badge-muted" style="font-size:10px;">skip {{ log.detail.skipped }}</span>{% endif %}
+                  {% if log.detail.errors is not None and log.detail.errors %}<span class="badge badge-red" style="font-size:10px;">err {{ log.detail.errors }}</span>{% endif %}
+                  {% if log.detail.blacklist_deactivated %}<span class="badge badge-yellow" style="font-size:10px;">bl-deact {{ log.detail.blacklist_deactivated }}</span>{% endif %}
+                </span>
+                {# Eklenen CIDR'lar #}
+                {% if log.detail.added_cidrs %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    <span style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-right:2px;">added:</span>
+                    {% for cidr in log.detail.added_cidrs %}
+                      <span class="badge badge-green" style="font-family:monospace;font-size:10px;">{{ cidr }}</span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+                {# Atlanan CIDR'lar (duplicate) #}
+                {% if log.detail.skipped_cidrs %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    <span style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-right:2px;">dup:</span>
+                    {% for cidr in log.detail.skipped_cidrs %}
+                      <span class="badge badge-muted" style="font-family:monospace;font-size:10px;">{{ cidr }}</span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+                {# Malformed rows #}
+                {% if log.detail.error_lines %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    <span style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-right:2px;">err:</span>
+                    {% for line in log.detail.error_lines %}
+                      <span class="badge badge-red" style="font-size:10px;">{{ line }}</span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+                {# Automatically deactivated blacklist CIDR'lar #}
+                {% if log.detail.blacklist_deactivated_cidrs %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    <span style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-right:2px;">bl-off:</span>
+                    {% for cidr in log.detail.blacklist_deactivated_cidrs %}
+                      <span class="badge badge-yellow" style="font-family:monospace;font-size:10px;">{{ cidr }}</span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </div>
+
+            {# ── Blacklist: single CIDR operations ─────────────────── #}
+            {% elif log.action == "blacklist.add" %}
+              <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                {% if log.detail.input %}<span class="badge badge-green" style="font-family:monospace;font-size:10px;">{{ log.detail.input }}</span>{% endif %}
+                {% if log.detail.group %}<span class="badge badge-muted" style="font-size:10px;">{{ log.detail.group }}</span>{% endif %}
+              </span>
+
+            {% elif log.action == "blacklist.delete" or log.action == "blacklist.deactivate" %}
+              <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                {% if log.detail.cidr %}
+                  <span class="badge {% if log.action == 'blacklist.delete' %}badge-red{% else %}badge-yellow{% endif %}"
+                        style="font-family:monospace;font-size:10px;">{{ log.detail.cidr }}</span>
+                {% endif %}
+              </span>
+
+            {# ── Blacklist: per-entry expiry (one log row per cleared CIDR) ─ #}
+            {% elif log.action == "blacklist.entry_expired" %}
+              <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                {% if log.detail.cidr %}<span class="badge badge-yellow" style="font-family:monospace;font-size:10px;">{{ log.detail.cidr }}</span>{% endif %}
+                {% if log.detail.group %}<span class="badge badge-muted" style="font-size:10px;">{{ log.detail.group_label|default:log.detail.group }}</span>{% endif %}
+                {% if log.detail.trigger %}<span class="badge badge-blue" style="font-size:10px;">{{ log.detail.trigger }}</span>{% endif %}
+                {% if log.detail.hit_count %}<span class="badge badge-muted" style="font-size:10px;">hits {{ log.detail.hit_count }}</span>{% endif %}
+                {% if log.detail.reason %}<span class="badge badge-muted" style="font-size:10px;" title="{{ log.detail.reason }}">{{ log.detail.reason|truncatechars:40 }}</span>{% endif %}
+              </span>
+
+            {# ── Blacklist: legacy bulk-expiry row (kept for old log entries) ─ #}
+            {% elif log.action == "blacklist.entries_expired" %}
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                  {% if log.detail.count is not None %}
+                    <span class="badge badge-yellow" style="font-size:10px;">{{ log.detail.count }} entr{{ log.detail.count|pluralize:"y,ies" }}</span>
+                  {% endif %}
+                  {% if log.detail.trigger %}<span class="badge badge-blue" style="font-size:10px;">{{ log.detail.trigger }}</span>{% endif %}
+                </span>
+                {% if log.detail.entries %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    {% for ent in log.detail.entries %}
+                      <span class="badge badge-yellow" style="font-family:monospace;font-size:10px;">{{ ent.cidr }}</span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </div>
+
+            {% elif log.action == "blacklist.reactivate" %}
+              <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                {% if log.detail.cidr %}<span class="badge badge-green" style="font-family:monospace;font-size:10px;">{{ log.detail.cidr }}</span>{% endif %}
+                {% if log.detail.group %}<span class="badge badge-muted" style="font-size:10px;">{{ log.detail.group }}</span>{% endif %}
+              </span>
+
+            {% elif log.action == "blacklist.edit" %}
+              <div style="display:flex;flex-direction:column;gap:5px;">
+                <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                  {% if log.detail.old_cidr and log.detail.new_cidr and log.detail.old_cidr != log.detail.new_cidr %}
+                    <span class="badge badge-muted" style="font-family:monospace;font-size:10px;">{{ log.detail.old_cidr }}</span>
+                    <span style="font-size:10px;color:var(--text-muted);">→</span>
+                    <span class="badge badge-blue" style="font-family:monospace;font-size:10px;">{{ log.detail.new_cidr }}</span>
+                  {% elif log.detail.cidr %}
+                    <span class="badge badge-blue" style="font-family:monospace;font-size:10px;">{{ log.detail.cidr }}</span>
+                  {% endif %}
+                  {% if log.detail.old_group and log.detail.new_group and log.detail.old_group != log.detail.new_group %}
+                    <span style="font-size:10px;color:var(--text-muted);">group:</span>
+                    <span class="badge badge-muted" style="font-size:10px;">{{ log.detail.old_group }}</span>
+                    <span style="font-size:10px;color:var(--text-muted);">→</span>
+                    <span class="badge badge-blue" style="font-size:10px;">{{ log.detail.new_group }}</span>
+                  {% endif %}
+                </span>
+                {% if log.detail.old_reason is not None and log.detail.new_reason is not None and log.detail.old_reason != log.detail.new_reason %}
+                  <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                    <span style="font-size:10px;color:var(--text-muted);">reason:</span>
+                    <span class="badge badge-muted" style="font-size:10px;" title="{{ log.detail.old_reason }}">{{ log.detail.old_reason|default:'∅'|truncatechars:40 }}</span>
+                    <span style="font-size:10px;color:var(--text-muted);">→</span>
+                    <span class="badge badge-blue" style="font-size:10px;" title="{{ log.detail.new_reason }}">{{ log.detail.new_reason|default:'∅'|truncatechars:40 }}</span>
+                  </span>
+                {% endif %}
+              </div>
+
+            {% elif log.action == "blacklist.pin_toggle" %}
+              <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                {% if log.detail.cidr %}<span class="badge badge-purple" style="font-family:monospace;font-size:10px;">{{ log.detail.cidr }}</span>{% endif %}
+                {% if log.detail.is_pinned %}<span class="badge badge-purple" style="font-size:10px;">pinned</span>{% else %}<span class="badge badge-muted" style="font-size:10px;">unpinned</span>{% endif %}
+              </span>
+
+            {# ── Blacklist: bulk CIDR operations ───────────────────── #}
+            {% elif log.action == "blacklist.bulk_activate" or log.action == "blacklist.bulk_deactivate" or log.action == "blacklist.deactivate_all" or log.action == "blacklist.bulk_delete" %}
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                  {% if log.detail.count is not None %}
+                    <span class="badge {% if log.action == 'blacklist.bulk_activate' %}badge-green{% elif log.action == 'blacklist.bulk_delete' %}badge-red{% else %}badge-yellow{% endif %}" style="font-size:10px;">
+                      {{ log.detail.count }} entr{{ log.detail.count|pluralize:"y,ies" }}
+                    </span>
+                  {% endif %}
+                </span>
+                {% if log.detail.cidrs %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    {% for cidr in log.detail.cidrs %}
+                      <span class="badge {% if log.action == 'blacklist.bulk_activate' %}badge-green{% elif log.action == 'blacklist.bulk_delete' %}badge-red{% else %}badge-yellow{% endif %}"
+                            style="font-family:monospace;font-size:10px;">{{ cidr }}</span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </div>
+
+            {% elif log.action == "blacklist.bulk_edit_group" %}
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                  {% if log.detail.count is not None %}<span class="badge badge-muted" style="font-size:10px;">{{ log.detail.count }} entr{{ log.detail.count|pluralize:"y,ies" }}</span>{% endif %}
+                  {% if log.detail.group %}<span class="badge badge-blue" style="font-size:10px;">→ {{ log.detail.group }}</span>{% endif %}
+                </span>
+                {% if log.detail.cidrs %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    {% for cidr in log.detail.cidrs %}
+                      <span class="badge badge-blue" style="font-family:monospace;font-size:10px;">{{ cidr }}</span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </div>
+
+            {# ── Blacklist: import CSV ─────────────────────────────── #}
+            {% elif log.action == "blacklist.import_csv" %}
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                  {% if log.detail.added is not None %}<span class="badge badge-green" style="font-size:10px;">+ {{ log.detail.added }} added</span>{% endif %}
+                  {% if log.detail.skipped is not None and log.detail.skipped %}<span class="badge badge-muted" style="font-size:10px;">dup {{ log.detail.skipped }}</span>{% endif %}
+                  {% if log.detail.errors is not None and log.detail.errors %}<span class="badge badge-red" style="font-size:10px;">err {{ log.detail.errors }}</span>{% endif %}
+                  {% if log.detail.whitelisted %}<span class="badge badge-yellow" style="font-size:10px;">wl {{ log.detail.whitelisted }}</span>{% endif %}
+                  {% if log.detail.bl_overlaps %}<span class="badge badge-yellow" style="font-size:10px;">bl-dup {{ log.detail.bl_overlaps }}</span>{% endif %}
+                  {% if log.detail.cidr_blocks %}<span class="badge badge-yellow" style="font-size:10px;">cidr {{ log.detail.cidr_blocks }}</span>{% endif %}
+                </span>
+                {% if log.detail.added_cidrs %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    <span style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-right:2px;">added:</span>
+                    {% for cidr in log.detail.added_cidrs %}<span class="badge badge-green" style="font-family:monospace;font-size:10px;">{{ cidr }}</span>{% endfor %}
+                  </div>
+                {% endif %}
+                {% if log.detail.skipped_cidrs %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    <span style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-right:2px;">dup:</span>
+                    {% for cidr in log.detail.skipped_cidrs %}<span class="badge badge-muted" style="font-family:monospace;font-size:10px;">{{ cidr }}</span>{% endfor %}
+                  </div>
+                {% endif %}
+                {% if log.detail.whitelisted_cidrs %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    <span style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-right:2px;">wl:</span>
+                    {% for cidr in log.detail.whitelisted_cidrs %}<span class="badge badge-yellow" style="font-family:monospace;font-size:10px;">{{ cidr }}</span>{% endfor %}
+                  </div>
+                {% endif %}
+                {% if log.detail.bl_overlap_cidrs %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    <span style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-right:2px;">bl-dup:</span>
+                    {% for cidr in log.detail.bl_overlap_cidrs %}<span class="badge badge-yellow" style="font-family:monospace;font-size:10px;">{{ cidr }}</span>{% endfor %}
+                  </div>
+                {% endif %}
+                {% if log.detail.cidr_block_lines %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    <span style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-right:2px;">cidr:</span>
+                    {% for line in log.detail.cidr_block_lines %}<span class="badge badge-yellow" style="font-family:monospace;font-size:10px;">{{ line }}</span>{% endfor %}
+                  </div>
+                {% endif %}
+                {% if log.detail.error_lines %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    <span style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-right:2px;">err:</span>
+                    {% for line in log.detail.error_lines %}<span class="badge badge-red" style="font-size:10px;">{{ line }}</span>{% endfor %}
+                  </div>
+                {% endif %}
+              </div>
+
+            {# ── Hash Blacklist: single operations ───────────────────── #}
+            {% elif log.action == "hashlist.add" or log.action == "hashlist.delete" or log.action == "hashlist.deactivate" or log.action == "hashlist.activate" %}
+              <div style="display:flex;flex-direction:column;gap:5px;">
+                <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                  {% if log.detail.hash %}
+                    <span class="badge {% if log.action == 'hashlist.add' or log.action == 'hashlist.activate' %}badge-green{% elif log.action == 'hashlist.delete' %}badge-red{% else %}badge-yellow{% endif %}"
+                          style="font-family:monospace;font-size:10px;">{{ log.detail.hash }}</span>
+                  {% endif %}
+                  {% if log.detail.hash_type %}<span class="badge badge-blue" style="font-size:10px;">{{ log.detail.hash_type }}</span>{% endif %}
+                  {% if log.detail.reason %}<span class="badge badge-muted" style="font-size:10px;" title="{{ log.detail.reason }}">{{ log.detail.reason|truncatechars:40 }}</span>{% endif %}
+                </span>
+              </div>
+
+            {# ── Hash Blacklist: pin toggle ───────────────────────── #}
+            {% elif log.action == "hashlist.pin_toggle" %}
+              <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                {% if log.detail.hash %}<span class="badge badge-muted" style="font-family:monospace;font-size:10px;">{{ log.detail.hash }}</span>{% endif %}
+                {% if log.detail.hash_type %}<span class="badge badge-blue" style="font-size:10px;">{{ log.detail.hash_type }}</span>{% endif %}
+                {% if log.detail.is_pinned %}<span class="badge badge-purple" style="font-size:10px;">pinned</span>{% else %}<span class="badge badge-muted" style="font-size:10px;">unpinned</span>{% endif %}
+              </span>
+
+            {# ── Hash Blacklist: edit ──────────────────────────────── #}
+            {% elif log.action == "hashlist.edit" %}
+              <div style="display:flex;flex-direction:column;gap:5px;">
+                <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                  {% if log.detail.old and log.detail.new and log.detail.old != log.detail.new %}
+                    <span class="badge badge-muted" style="font-family:monospace;font-size:10px;">{{ log.detail.old }}</span>
+                    <span style="font-size:10px;color:var(--text-muted);">→</span>
+                    <span class="badge badge-blue" style="font-family:monospace;font-size:10px;">{{ log.detail.new }}</span>
+                  {% elif log.detail.new %}
+                    <span class="badge badge-blue" style="font-family:monospace;font-size:10px;">{{ log.detail.new }}</span>
+                  {% endif %}
+                  {% if log.detail.hash_type %}<span class="badge badge-blue" style="font-size:10px;">{{ log.detail.hash_type }}</span>{% endif %}
+                </span>
+                {% if log.detail.old_reason is not None and log.detail.new_reason is not None and log.detail.old_reason != log.detail.new_reason %}
+                  <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                    <span style="font-size:10px;color:var(--text-muted);">reason:</span>
+                    <span class="badge badge-muted" style="font-size:10px;" title="{{ log.detail.old_reason }}">{{ log.detail.old_reason|default:'∅'|truncatechars:40 }}</span>
+                    <span style="font-size:10px;color:var(--text-muted);">→</span>
+                    <span class="badge badge-blue" style="font-size:10px;" title="{{ log.detail.new_reason }}">{{ log.detail.new_reason|default:'∅'|truncatechars:40 }}</span>
+                  </span>
+                {% elif log.detail.reason and not log.detail.old_reason and not log.detail.new_reason %}
+                  {# backwards-compat fallback for legacy rows that only have `reason` #}
+                  <span class="badge badge-muted" style="font-size:10px;" title="{{ log.detail.reason }}">reason: {{ log.detail.reason|truncatechars:40 }}</span>
+                {% endif %}
+              </div>
+
+            {# ── Hash Blacklist: bulk operations ─────────────────────── #}
+            {% elif log.action == "hashlist.bulk_add" or log.action == "hashlist.import_csv" or log.action == "hashlist.bulk_delete" or log.action == "hashlist.bulk_deactivate" or log.action == "hashlist.bulk_activate" %}
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                  {% if log.detail.added is not None %}<span class="badge badge-green" style="font-size:10px;">+ {{ log.detail.added }} added</span>{% endif %}
+                  {% if log.detail.count is not None %}
+                    <span class="badge {% if log.action == 'hashlist.bulk_activate' %}badge-green{% elif log.action == 'hashlist.bulk_delete' %}badge-red{% else %}badge-yellow{% endif %}" style="font-size:10px;">
+                      {{ log.detail.count }} entr{{ log.detail.count|pluralize:"y,ies" }}
+                    </span>
+                  {% endif %}
+                  {% if log.detail.skipped is not None and log.detail.skipped %}<span class="badge badge-muted" style="font-size:10px;">dup {{ log.detail.skipped }}</span>{% endif %}
+                  {% if log.detail.errors is not None and log.detail.errors %}<span class="badge badge-red" style="font-size:10px;">err {{ log.detail.errors }}</span>{% endif %}
+                  {% if log.detail.filename %}<span class="badge badge-muted" style="font-size:10px;">{{ log.detail.filename }}</span>{% endif %}
+                  {% if log.detail.reason %}<span class="badge badge-muted" style="font-size:10px;" title="{{ log.detail.reason }}">{{ log.detail.reason|truncatechars:40 }}</span>{% endif %}
+                </span>
+                {% if log.detail.hashes %}
+                  <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    <span style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-right:2px;">hashes:</span>
+                    {% for h in log.detail.hashes %}
+                      <span class="badge {% if log.action == 'hashlist.bulk_delete' %}badge-red{% elif log.action == 'hashlist.bulk_activate' %}badge-green{% elif log.action == 'hashlist.bulk_deactivate' %}badge-yellow{% else %}badge-muted{% endif %}"
+                            style="font-family:monospace;font-size:10px;">{{ h }}</span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </div>
+
+            {# ── API Rate Limit ───────────────────────────────────── #}
+            {% elif log.action == "api.rate_limit" %}
+              <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                {% if log.detail.endpoint %}<span class="badge badge-muted" style="font-family:monospace;font-size:10px;">{{ log.detail.endpoint }}</span>{% endif %}
+                {% if log.detail.limit_rpm %}<span class="badge badge-yellow" style="font-size:10px;">limit {{ log.detail.limit_rpm }} rpm</span>{% endif %}
+                {% if log.detail.client_ip %}<span class="badge badge-red" style="font-family:monospace;font-size:10px;">{{ log.detail.client_ip }}</span>{% endif %}
+              </span>
+
+            {# ── Generic fallback ─────────────────────────────────── #}
+            {% else %}
+              <span style="display:block;color:var(--text-muted);">
+                {% for k, v in log.detail.items %}
+                <span class="text-muted">{{ k }}=</span><span>{{ v }}</span>{% if not forloop.last %} &nbsp;{% endif %}
+                {% endfor %}
+              </span>
+            {% endif %}
+
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endwith %}
+      {% empty %}
+      <tr><td colspan="7" class="table-empty">
+        <div class="empty-state">
+          <div class="empty-state-icon">📋</div>
+          <div class="empty-state-title">No audit log entries</div>
+          <div class="empty-state-text">Actions and page visits will appear here.</div>
+        </div>
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% with page_obj=logs %}{% include "partials/pagination.html" %}{% endwith %}
+
+<style>
+.table-wrapper table td {
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+.table-wrapper table td .badge {
+  white-space: normal;
+  word-break: break-all;
+  overflow-wrap: break-word;
+}
+</style>
+{% endblock %}

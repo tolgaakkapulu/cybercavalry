@@ -1,0 +1,212 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign In | {{ platform_name }}</title>
+  <link rel="icon" href="{{ brand_favicon_url }}">
+  <link rel="stylesheet" href="{% static 'css/main.css' %}">
+  {% include "partials/brand_color_override.html" %}
+  <script nonce="{{ csp_nonce }}">(function(){var f='{{ default_theme|default:"light" }}';var u=localStorage.getItem('ag-theme-user-set')==='1';var t=u?(localStorage.getItem('ag-theme')||f):f;document.documentElement.setAttribute('data-theme',t);})();</script>
+  <style>
+    /* ── Login page background ───────────────────────────────── */
+    .login-page {
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(150deg, #ddeaf8 0%, #eef3fb 45%, #e2ecf7 100%);
+    }
+    [data-theme="dark"] .login-page {
+      background: linear-gradient(150deg, #060d18 0%, #0b1524 50%, #080f1c 100%);
+    }
+
+    /* Coloured ambient glow spots */
+    .login-glow {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .login-glow-blue {
+      position: absolute;
+      width: 700px; height: 700px;
+      border-radius: 50%;
+      top: -200px; left: -200px;
+      background: radial-gradient(circle, rgba(31,126,196,.18) 0%, transparent 65%);
+    }
+    .login-glow-green {
+      position: absolute;
+      width: 500px; height: 500px;
+      border-radius: 50%;
+      bottom: -150px; right: -150px;
+      background: radial-gradient(circle, rgba(127,191,63,.12) 0%, transparent 65%);
+    }
+    .login-glow-accent {
+      position: absolute;
+      width: 350px; height: 350px;
+      border-radius: 50%;
+      top: 40%; right: 10%;
+      background: radial-gradient(circle, rgba(31,126,196,.08) 0%, transparent 70%);
+    }
+    [data-theme="dark"] .login-glow-blue {
+      background: radial-gradient(circle, rgba(31,126,196,.30) 0%, transparent 65%);
+    }
+    [data-theme="dark"] .login-glow-green {
+      background: radial-gradient(circle, rgba(127,191,63,.18) 0%, transparent 65%);
+    }
+    [data-theme="dark"] .login-glow-accent {
+      background: radial-gradient(circle, rgba(31,126,196,.12) 0%, transparent 70%);
+    }
+
+    /* Logo watermarks */
+    .login-logos {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .login-logos img {
+      position: absolute;
+      user-select: none;
+    }
+    /* Light mode: desaturate + very low opacity */
+    .ll-1  { width:340px; top:-70px;  left:-70px;  transform:rotate(-22deg); filter:grayscale(55%) opacity(.07); }
+    .ll-2  { width:180px; top:8%;     right:6%;    transform:rotate(18deg);  filter:grayscale(50%) opacity(.06); }
+    .ll-3  { width:260px; top:42%;    left:-50px;  transform:rotate(12deg);  filter:grayscale(55%) opacity(.05); }
+    .ll-4  { width:130px; bottom:18%; right:12%;   transform:rotate(-10deg); filter:grayscale(50%) opacity(.07); }
+    .ll-5  { width:420px; top:28%;    left:50%;    transform:translateX(-50%) rotate(6deg); filter:grayscale(45%) opacity(.045); }
+    .ll-6  { width:100px; top:12%;    left:32%;    transform:rotate(28deg);  filter:grayscale(60%) opacity(.06); }
+    .ll-7  { width:170px; bottom:4%;  left:18%;    transform:rotate(-14deg); filter:grayscale(55%) opacity(.06); }
+    .ll-8  { width:110px; bottom:12%; right:30%;   transform:rotate(20deg);  filter:grayscale(50%) opacity(.05); }
+
+    /* Dark mode: keep some colour, bump brightness */
+    [data-theme="dark"] .ll-1  { filter:grayscale(20%) opacity(.09) brightness(1.6); }
+    [data-theme="dark"] .ll-2  { filter:grayscale(15%) opacity(.08) brightness(1.7); }
+    [data-theme="dark"] .ll-3  { filter:grayscale(20%) opacity(.07) brightness(1.5); }
+    [data-theme="dark"] .ll-4  { filter:grayscale(15%) opacity(.09) brightness(1.6); }
+    [data-theme="dark"] .ll-5  { filter:grayscale(10%) opacity(.07) brightness(1.8); }
+    [data-theme="dark"] .ll-6  { filter:grayscale(20%) opacity(.08) brightness(1.7); }
+    [data-theme="dark"] .ll-7  { filter:grayscale(15%) opacity(.08) brightness(1.6); }
+    [data-theme="dark"] .ll-8  { filter:grayscale(20%) opacity(.07) brightness(1.5); }
+
+    /* Background image — bundled default at static/img/background.svg, or
+       admin upload from Settings → General. Faded on light theme to keep the
+       login card readable; full opacity on dark. */
+    .login-bg-image {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      /* Oversize the image so background-position has slack to slide; shift
+         it left so the SVG's centred logo sits at ~25% of the viewport,
+         clear of the centred login card. Bump the size value to push further
+         left, lower it to bring closer to centre. */
+      background-size: 175% auto;
+      background-position: 100% center;
+      background-repeat: no-repeat;
+      pointer-events: none;
+      opacity: 0.25;
+    }
+    [data-theme="light"] .login-bg-image { opacity: 0.10; }
+
+    /* Card sits above all background layers */
+    .login-card {
+      position: relative;
+      z-index: 1;
+    }
+    /* Subtle card glow in dark mode */
+    [data-theme="dark"] .login-card {
+      border-color: rgba(31,126,196,.22);
+      box-shadow: 0 0 48px rgba(31,126,196,.10), 0 24px 64px rgba(0,0,0,.55);
+    }
+  </style>
+</head>
+<body>
+<div class="login-page">
+
+  {% if brand_background_url %}
+  <!-- Custom background image (Settings → General) -->
+  <div class="login-bg-image" style="background-image:url('{{ brand_background_url }}');" aria-hidden="true"></div>
+  {% endif %}
+
+  <!-- Ambient glow layer -->
+  <div class="login-glow">
+    <div class="login-glow-blue"></div>
+    <div class="login-glow-green"></div>
+    <div class="login-glow-accent"></div>
+  </div>
+
+  {% if not brand_background_url %}
+  <!-- Watermark logo layer (hidden when a custom background image is set) -->
+  <div class="login-logos" aria-hidden="true">
+    <img src="{{ brand_logo_url }}" class="ll-1" alt="">
+    <img src="{{ brand_logo_url }}" class="ll-2" alt="">
+    <img src="{{ brand_logo_url }}" class="ll-3" alt="">
+    <img src="{{ brand_logo_url }}" class="ll-4" alt="">
+    <img src="{{ brand_logo_url }}" class="ll-5" alt="">
+    <img src="{{ brand_logo_url }}" class="ll-6" alt="">
+    <img src="{{ brand_logo_url }}" class="ll-7" alt="">
+    <img src="{{ brand_logo_url }}" class="ll-8" alt="">
+  </div>
+  {% endif %}
+
+  <!-- Login card -->
+  <div class="login-card">
+    <div class="login-header">
+      <img src="{{ brand_logo_url }}" alt="{{ platform_name }}" class="login-logo" style="width:64px;height:64px;">
+      <h1 class="login-title">{{ platform_name_primary }}<span>{{ platform_name_suffix }}</span></h1>
+      <p class="login-subtitle"><b>Blacklist Management Platform</b></p>
+    </div>
+    <div class="login-body">
+      {% if lockout_message %}
+      <div class="alert alert-warning" style="display:flex;align-items:flex-start;gap:10px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;width:18px;height:18px;margin-top:1px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span>{{ lockout_message }}</span>
+      </div>
+      {% elif form.non_field_errors %}
+      <div class="alert alert-error" style="display:flex;align-items:flex-start;gap:10px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;width:18px;height:18px;margin-top:1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span>{{ form.non_field_errors.0 }}</span>
+      </div>
+      {% endif %}
+
+      <form method="post" action="{% url 'accounts:login' %}">
+        {% csrf_token %}
+        <div class="form-group">
+          <label class="form-label" for="id_username">Username</label>
+          <input type="text" name="username" id="id_username" class="form-input"
+                 value="{{ form.username.value|default:'' }}"
+                 placeholder="Enter your username" autofocus autocomplete="username"
+                 {% if lockout_message %}disabled{% endif %}>
+          {% if form.username.errors %}
+          <p class="form-error">{{ form.username.errors.0 }}</p>
+          {% endif %}
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="id_password">Password</label>
+          <input type="password" name="password" id="id_password" class="form-input"
+                 placeholder="Enter your password" autocomplete="current-password"
+                 {% if lockout_message %}disabled{% endif %}>
+          {% if form.password.errors %}
+          <p class="form-error">{{ form.password.errors.0 }}</p>
+          {% endif %}
+        </div>
+        <button type="submit" class="btn btn-primary w-full" style="justify-content:center;margin-top:8px;"
+                {% if lockout_message %}disabled{% endif %}>
+          Sign In
+        </button>
+      </form>
+    </div>
+    <div style="border-top:1px solid var(--border);padding:12px 20px;text-align:center;">
+      {% if brand_login_url %}
+      <img src="{{ brand_login_url }}" alt="{{ platform_name }}"
+           style="width:150px;height:50px;object-fit:contain;display:block;margin:0 auto 8px;opacity:0.60;">
+      {% endif %}
+      {% if platform_email %}
+      <small class="text-muted text-xs">{{ platform_email }}</small><br>
+      {% endif %}
+      <small class="text-muted" style="font-size:11px;">© {% now "Y" %} {{ platform_name }}<br>All rights reserved</small>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
