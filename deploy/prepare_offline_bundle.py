@@ -44,8 +44,17 @@ BASE_DIR    = Path(__file__).resolve().parent.parent
 DEPLOY_DIR  = BASE_DIR / 'deploy'
 REQS        = BASE_DIR / 'requirements.txt'
 
-# RHEL 9 = glibc 2.34. manylinux2014 (glibc 2.17) wheels are forward-compatible.
-TARGET_PLATFORMS  = ['manylinux2014_x86_64', 'manylinux_2_28_x86_64']
+# Per-target platform tags for `pip download --platform`. Linux (glibc 2.17+)
+# uses manylinux tags; Windows uses win_amd64. Users pick which set via the
+# --os flag (see main()). Mixing both in one bundle is fine -- pip picks
+# the right wheel per host at install time.
+PLATFORMS_LINUX   = ['manylinux2014_x86_64', 'manylinux_2_28_x86_64']
+PLATFORMS_WINDOWS = ['win_amd64']
+PLATFORMS_MAP     = {
+    'linux':   PLATFORMS_LINUX,
+    'windows': PLATFORMS_WINDOWS,
+    'both':    PLATFORMS_LINUX + PLATFORMS_WINDOWS,
+}
 
 # The two versions we ship a ready-made bundle for out of the box. The `--py`
 # argument accepts any 2- or 3-digit CPython major+minor (e.g. `39`, `310`,
@@ -112,8 +121,8 @@ def log(msg):
     print(msg, flush=True)
 
 
-def download_for(py_ver: str):
-    """Download every wheel for the specified Python version.
+def download_for(py_ver: str, os_target: str = 'linux'):
+    """Download every wheel for the specified Python version + OS target.
 
     On any pip download / wheel-build failure the (partial) wheels_dir is
     scrubbed so a subsequent setup run doesn't try to install from an
@@ -123,16 +132,17 @@ def download_for(py_ver: str):
     abi          = f'cp{py_ver}'
     wheels_dir   = DEPLOY_DIR / 'wheels' / f'py{py_ver}'
     lock_file    = DEPLOY_DIR / f'wheels.py{py_ver}.lock.txt'
+    platforms    = PLATFORMS_MAP[os_target]
 
     log('')
-    log(f'================ Python {py_ver} ================')
+    log(f'================ Python {py_ver} ({os_target}) ================')
 
     if wheels_dir.exists():
         shutil.rmtree(wheels_dir)
     wheels_dir.mkdir(parents=True)
 
     platform_args = []
-    for p in TARGET_PLATFORMS:
+    for p in platforms:
         platform_args.extend(['--platform', p])
 
     def _cleanup_on_failure(exc: BaseException):
@@ -214,6 +224,14 @@ def main():
              'cryptography or lxml on PyPI, in which case the download '
              'step will fail with `No matching distribution found`.',
     )
+    parser.add_argument(
+        '--os', choices=list(PLATFORMS_MAP.keys()), default='linux',
+        help='Which OS(s) the target machine runs. `linux` fetches '
+             'manylinux wheels (default, matches the RHEL/Debian install '
+             'paths). `windows` fetches win_amd64 wheels for an '
+             'air-gapped Windows install. `both` produces a mixed bundle '
+             'the Windows or Linux setup script can consume alike.',
+    )
     args = parser.parse_args()
     targets = args.py or list(DEFAULT_PYTHONS)
 
@@ -226,22 +244,22 @@ def main():
         sys.exit(f'[!] requirements.txt not found: {REQS}')
 
     log(f'CYBER Cavalry -- Offline wheel bundler')
-    log(f'Targets: Python {", ".join(targets)} / RHEL 9.x / x86_64')
+    log(f'Targets: Python {", ".join(targets)} / OS: {args.os} / x86_64')
 
     total_w = 0
     total_b = 0
     for v in targets:
-        n, b = download_for(v)
+        n, b = download_for(v, os_target=args.os)
         total_w += n
         total_b += b
 
     print()
     log('=' * 60)
     log(f'  All targets completed.')
-    log(f'  Toplam: {total_w} wheel  |  {total_b / 1024 / 1024:.1f} MB')
+    log(f'  Total: {total_w} wheel  |  {total_b / 1024 / 1024:.1f} MB')
     log('=' * 60)
     print()
-    log('Install on the target RHEL host:')
+    log('Install on the target host:')
     log('  PY=py$(python3 -c "import sys; print(f\'{sys.version_info.major}{sys.version_info.minor}\')")')
     log('  ./venv/bin/pip install --no-index --find-links deploy/wheels/$PY/ \\')
     log('      -r requirements.txt gunicorn')

@@ -81,10 +81,26 @@ prebuilt wheels for cryptography/lxml):
     python deploy\prepare_offline_bundle.py --py $($tag.Substring(2))
 "@
     }
-    & $pip install --no-index --find-links "$wheels\" --upgrade pip | Out-Null
-    & $pip install --no-index --find-links "$wheels\" -r "$InstallDir\requirements.txt" waitress
-    if ($LASTEXITCODE -ne 0) { Die 'pip install failed.' }
-    Ok "dependencies from $tag"
+    # First try strictly offline (air-gapped scenario). The bundle in this
+    # repo is generated for Linux by default; C-extension packages like
+    # cryptography / lxml won't have Windows wheels in a Linux-only bundle,
+    # so on failure we retry with PyPI as a fallback -- fine on dev/eval
+    # boxes with internet. For truly air-gapped Windows installs, generate
+    # a Windows bundle first:
+    #   python deploy\prepare_offline_bundle.py --os windows --py 311
+    & $pip install --no-index --find-links "$wheels\" --upgrade pip 2>&1 | Out-Null
+    $offlineTry = & $pip install --no-index --find-links "$wheels\" `
+        -r "$InstallDir\requirements.txt" waitress 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Warn 'offline install incomplete (Linux-only wheel bundle?) -- retrying with PyPI as fallback'
+        & $pip install --find-links "$wheels\" -r "$InstallDir\requirements.txt" waitress
+        if ($LASTEXITCODE -ne 0) { Die 'pip install failed even with PyPI fallback. Check network + package availability.' }
+        Ok "dependencies: $tag bundle + PyPI fallback"
+    } else {
+        # Show pip's own progress lines so the user sees what got installed
+        $offlineTry | ForEach-Object { Write-Host $_ }
+        Ok "dependencies from $tag (fully offline)"
+    }
 }
 
 function Get-BundleVersions {
