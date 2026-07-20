@@ -151,51 +151,6 @@ Allowlist for benign infrastructure (corporate egress, monitoring probes, upstre
 
 ## 🏗️ Architecture
 
-```mermaid
-graph LR
-    subgraph "External Feeds"
-        SIEM[SIEM / Honeypot]
-        MANUAL[Manual Import]
-    end
-
-    subgraph "CYBERCavalry"
-        API[HTTP API]
-        UI[Web UI]
-        SCHED[APScheduler]
-        DB[(SQLite / PostgreSQL)]
-        LOG[Activity Log]
-    end
-
-    subgraph "Threat Intel"
-        ABUSE[AbuseIPDB]
-        VT[VirusTotal]
-    end
-
-    subgraph "Consumers"
-        FW[Firewall]
-        WAF[WAF / Proxy]
-        EDR[EDR]
-    end
-
-    subgraph "Observability"
-        SYSLOG[Syslog Collector]
-        MAIL[SMTP]
-    end
-
-    SIEM -->|POST /api/report/ip| API
-    MANUAL --> UI
-    API --> DB
-    UI --> DB
-    SCHED --> DB
-    SCHED -->|score refresh| ABUSE
-    SCHED -->|hash lookup| VT
-    API -->|GET /api/blacklist| FW
-    API -->|GET /api/blacklist/24h| WAF
-    API -->|GET /api/hashlist| EDR
-    LOG --> SYSLOG
-    SCHED -->|quota / rate alerts| MAIL
-```
-
 **Component layout**
 
 ```
@@ -215,7 +170,7 @@ CYBERCavalry/
 │   └── settings_app/     # Setting model, cache, alert & quota services
 ├── templates/            # Django templates (dark/light theme aware)
 ├── static/               # CSS, JS, brand assets
-├── deploy/               # RHEL install script, systemd unit, wheels bundle
+├── deploy/               # Linux/Windows install script, systemd unit, wheels bundle
 └── manage_server.py      # Dev helper: setup / run / migrate / seed
 ```
 
@@ -250,63 +205,49 @@ CYBERCavalry/
 
 ## ⚙️ Installation
 
-### 1. Clone & bootstrap
+Installation artefacts are grouped by target operating system under
+[`deploy/`](deploy/). Pick the guide that matches your host — each is a
+complete, opinionated walkthrough covering venv setup, dependencies,
+SSL, database seeding, service registration and firewall rules.
+
+- **🐧 Linux** (RHEL 9.x / AlmaLinux / Rocky Linux 9.x) — see
+  [`deploy/linux/INSTALL_RHEL.md`](deploy/linux/INSTALL_RHEL.md). Ships a
+  one-shot [`install_rhel.sh`](deploy/linux/install_rhel.sh) plus an
+  in-place [`update_rhel.sh`](deploy/linux/update_rhel.sh) and a
+  hardened systemd unit.
+- **🪟 Windows** (Server 2019 / 2022, Windows 10 / 11) — see
+  [`deploy/windows/INSTALL_WINDOWS.md`](deploy/windows/INSTALL_WINDOWS.md).
+  Ships a one-shot [`install_windows.ps1`](deploy/windows/install_windows.ps1),
+  an [`update_windows.ps1`](deploy/windows/update_windows.ps1) with
+  rollback snapshots, and a WinSW service definition.
+
+The overview and OS-selection matrix live at
+[`deploy/README.md`](deploy/README.md). Both paths share the same
+cross-platform offline wheel bundle produced by
+[`deploy/prepare_offline_bundle.py`](deploy/prepare_offline_bundle.py) —
+handy for air-gapped installs.
+
+### Quick Start — Developer / Evaluation
+
+For local development on any OS, `manage_server.py` skips the full
+production dance:
 
 ```bash
 git clone https://github.com/<your-user>/CYBERCavalry.git
 cd CYBERCavalry
-
 python -m venv venv
 # Linux / macOS
 source venv/bin/activate
 # Windows PowerShell
 .\venv\Scripts\Activate.ps1
 
-pip install --upgrade pip
 pip install -r requirements.txt
+cp .env.example .env          # then fill in the secrets
+python manage_server.py setup # migrate + seed + createsuperuser + collectstatic
+python manage_server.py start # → https://127.0.0.1:8443
 ```
 
-### 2. Configure the environment
-
-```bash
-cp .env.example .env
-# then edit .env — see the Configuration Reference below
-```
-
-### 3. First-run setup
-
-The included `manage_server.py` helper wires the whole first-run flow together:
-
-```bash
-python manage_server.py setup
-```
-
-Which under the hood does:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant You
-    participant Setup as manage_server.py
-    participant DB
-    participant Static
-
-    You->>Setup: setup
-    Setup->>DB: migrate (apply all migrations)
-    Setup->>DB: seed_initial_data (groups, roles, default settings)
-    Setup->>DB: createsuperuser (interactive)
-    Setup->>Static: collectstatic --noinput
-    Setup-->>You: ✅ Ready — run `python manage_server.py run`
-```
-
-### 4. Start the dev server
-
-```bash
-python manage_server.py run
-# → http://127.0.0.1:8000
-```
-
-First login uses the superuser you created in step 3. From there:
+First login uses the superuser you created during `setup`. From there:
 
 1. **Settings → Threat Intelligence** — paste your AbuseIPDB / VirusTotal keys, click *Check Key*
 2. **Settings → LDAP** *(optional)* — wire your directory, click *Test LDAP*
@@ -412,7 +353,7 @@ curl -X POST https://blacklist.example.com/api/report/ip/ \
   -H "Authorization: Token 9c1e0f...redacted" \
   -H "X-Username: honeypot-01" \
   -H "Content-Type: application/json" \
-  -d '{"ip": "203.0.113.42", "reason": "SSH brute force"}'
+  -d '{"ip": "X.X.X.X", "reason": "SSH brute force"}'
 ```
 
 Response:
@@ -420,7 +361,7 @@ Response:
 ```json
 {
   "status": "blacklisted",
-  "cidr": "203.0.113.42/32",
+  "cidr": "X.X.X.X/32",
   "group": "24h",
   "score": 87,
   "message": "New blacklist entry created."
@@ -445,37 +386,6 @@ curl https://blacklist.example.com/api/blacklist/24h/ \
 ```
 
 Full endpoint schemas — including request bodies, response shapes and error codes — render live under **Accounts → API Documentation** once you're logged in, and can be exported to PDF from the same page.
-
----
-
-## 🔄 Operational Workflows
-
-### Automatic promotion (24 h → 30 d)
-
-```mermaid
-flowchart LR
-    A[POST /api/report/ip/ arrives] --> B{Existing entry?}
-    B -->|No| C[Create — group by AbuseIPDB score]
-    B -->|Yes| D[hit_count++<br/>append timestamp]
-    D --> E{Recent count ≥ threshold<br/>within window_days?}
-    E -->|Yes| F[Promote to 30 d group]
-    E -->|No| G[Keep current group]
-    C --> H[Persist]
-    F --> H
-    G --> H
-```
-
-### Quota alert cycle
-
-```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    Idle --> Checking: hourly APScheduler tick
-    Checking --> Idle: quota < threshold
-    Checking --> Cooldown: quota ≥ threshold<br/>send email
-    Cooldown --> Idle: cooldown_hours elapsed
-    Cooldown --> Cooldown: still ≥ threshold<br/>(email suppressed)
-```
 
 ---
 
