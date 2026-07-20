@@ -81,6 +81,51 @@ If you want Redis-backed cache instead of the DatabaseCache fallback:
 - Or **WSL2** with `sudo apt install redis-server`
 - Or just skip it — DatabaseCache is fine for single-node deployments
 
+### 1.4 PowerShell execution policy (required to run install_windows.ps1)
+
+By default Windows blocks unsigned `.ps1` files with
+`ExecutionPolicy = Restricted`, which surfaces as:
+
+```
+File install_windows.ps1 cannot be loaded because running scripts is
+disabled on this system.
+```
+
+Pick one of the three fixes below depending on how permanent you want
+the change to be. **You only need this if you're running the `.ps1`
+helper scripts — the manual step-by-step commands in this guide don't
+trigger the policy.**
+
+**Option A — One-shot bypass (recommended for a single run):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_windows.ps1
+```
+
+Doesn't touch the system policy — just opens a scoped exception for
+this invocation. Same works for `update_windows.ps1`.
+
+**Option B — Permanent per-user allow (recommended for admins who will
+run these scripts repeatedly):**
+
+```powershell
+# Run once in elevated PowerShell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+Scoped to the current Windows user — doesn't affect other accounts.
+`RemoteSigned` means local scripts run freely; scripts downloaded from
+the internet still need a signature. Balanced default.
+
+**Option C — Just this PowerShell session:**
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\install_windows.ps1
+```
+
+The relaxation dies with the window.
+
 ---
 
 ## 2. Deploy the Project
@@ -313,7 +358,7 @@ Start-Service CYBERCavalry
 | `OperationalError: no such table`                    | `.\venv\Scripts\python.exe manage.py migrate` |
 | Admin page returns 404                               | Update `ADMIN_ALLOWED_IPS` in `.env` |
 | CSRF 403 in the browser                              | Check `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS` in `.env` |
-| PowerShell script blocked                            | `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` |
+| `File ... cannot be loaded because running scripts is disabled` | See §1.4 — either run once with `powershell -ExecutionPolicy Bypass -File .\install_windows.ps1`, or `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` for a persistent per-user allow |
 | `No matching distribution found`                     | Make sure step 0 ran with the same Python major.minor as the target host |
 
 ---
