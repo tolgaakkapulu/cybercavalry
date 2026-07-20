@@ -31,7 +31,12 @@ param(
     [string]$PythonExe  = ''
 )
 
-$ErrorActionPreference = 'Stop'
+# We call a lot of native commands (python, pip, WinSW, icacls, robocopy).
+# PowerShell 5.1 turns every native stderr write into a NativeCommandError,
+# so `Stop` would kill the script even on benign pip warnings like "you
+# should upgrade pip". Standard PS pattern for shell scripts: use Continue
+# and check $LASTEXITCODE explicitly (Die on non-zero for critical steps).
+$ErrorActionPreference = 'Continue'
 
 # -- Helpers --------------------------------------------------------
 function Log  { param($m) Write-Host "[*]  $m" -ForegroundColor Cyan }
@@ -51,6 +56,16 @@ $py  = Join-Path $InstallDir 'venv\Scripts\python.exe'
 $pip = Join-Path $InstallDir 'venv\Scripts\pip.exe'
 
 # -- Shared helpers -------------------------------------------------
+function Invoke-Pip {
+    # Wrapper around `python -m pip <args>`. Always uses `$py -m pip` --
+    # never the pip.exe launcher -- because Windows locks pip.exe while it
+    # tries to self-upgrade ("To modify pip, please run ...").
+    # Returns pip's own exit code (0 = ok).
+    param([Parameter(ValueFromRemainingArguments=$true)] $PipArgs)
+    & $py -m pip @PipArgs
+    return $LASTEXITCODE
+}
+
 function Install-Deps {
     # NOTE: avoid Python f-strings -- PS 5.1 native-arg parser strips inner "
     $tag = 'py' + (& $py -c "import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))").Trim()
@@ -66,28 +81,35 @@ function Install-Deps {
     # For (2)/(3) the bundle needs Windows wheels; generate one with:
     #   python deploy\prepare_offline_bundle.py --os windows --py 311
 
+    # Self-upgrade pip using `python -m pip` (never `pip.exe`, which is
+    # locked while running and returns "To modify pip, please run ..."
+    # errors). --disable-pip-version-check silences the "you should
+    # upgrade pip" warnings that PS 5.1 would otherwise treat as errors.
+    Invoke-Pip install --disable-pip-version-check --upgrade pip | Out-Null
+
     if (-not (Test-Path $wheels)) {
         $available = (Get-ChildItem "$InstallDir\deploy\wheels" -Directory -EA SilentlyContinue |
                       ForEach-Object { $_.Name }) -join ', '
         if (-not $available) { $available = 'none' }
         Warn "No wheel bundle for $tag (available: $available). Installing directly from PyPI."
-        & $pip install --upgrade pip 2>&1 | Out-Null
-        & $pip install -r "$InstallDir\requirements.txt" waitress
-        if ($LASTEXITCODE -ne 0) { Die 'pip install from PyPI failed. Check internet connectivity and package availability.' }
+        $rc = Invoke-Pip install --disable-pip-version-check `
+            -r "$InstallDir\requirements.txt" waitress
+        if ($rc -ne 0) { Die "pip install from PyPI failed (exit $rc). Check internet connectivity and package availability." }
         Ok "dependencies from PyPI ($tag)"
         return
     }
 
-    & $pip install --no-index --find-links "$wheels\" --upgrade pip 2>&1 | Out-Null
-    $offlineTry = & $pip install --no-index --find-links "$wheels\" `
-        -r "$InstallDir\requirements.txt" waitress 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    $rc = Invoke-Pip install --disable-pip-version-check `
+        --no-index --find-links "$wheels\" `
+        -r "$InstallDir\requirements.txt" waitress
+    if ($rc -ne 0) {
         Warn 'offline install incomplete (Linux-only wheel bundle?) -- retrying with PyPI as fallback'
-        & $pip install --find-links "$wheels\" -r "$InstallDir\requirements.txt" waitress
-        if ($LASTEXITCODE -ne 0) { Die 'pip install failed even with PyPI fallback. Check network + package availability.' }
+        $rc = Invoke-Pip install --disable-pip-version-check `
+            --find-links "$wheels\" `
+            -r "$InstallDir\requirements.txt" waitress
+        if ($rc -ne 0) { Die "pip install failed even with PyPI fallback (exit $rc). Check network + package availability." }
         Ok "dependencies: $tag bundle + PyPI fallback"
     } else {
-        $offlineTry | ForEach-Object { Write-Host $_ }
         Ok "dependencies from $tag (fully offline)"
     }
 }
@@ -242,9 +264,13 @@ function Invoke-Install {
     }
 
     & $py manage.py migrate --noinput
+    if ($LASTEXITCODE -ne 0) { Die "manage.py migrate failed (exit $LASTEXITCODE)" }
     & $py manage.py createcachetable
-    try { & $py manage.py seed_initial_data } catch { Warn "seed_initial_data skipped: $_" }
+    if ($LASTEXITCODE -ne 0) { Warn "createcachetable returned $LASTEXITCODE (usually fine on re-runs)" }
+    & $py manage.py seed_initial_data
+    if ($LASTEXITCODE -ne 0) { Warn "seed_initial_data returned $LASTEXITCODE (skipping is fine on re-installs)" }
     & $py manage.py collectstatic --noinput | Out-Null
+    if ($LASTEXITCODE -ne 0) { Die "collectstatic failed (exit $LASTEXITCODE)" }
     Ok 'database + static ready'
 
     Open-Firewall
@@ -303,7 +329,9 @@ function Invoke-Update {
     }
 
     & $py manage.py migrate --noinput
+    if ($LASTEXITCODE -ne 0) { Die "manage.py migrate failed (exit $LASTEXITCODE)" }
     & $py manage.py collectstatic --noinput | Out-Null
+    if ($LASTEXITCODE -ne 0) { Die "collectstatic failed (exit $LASTEXITCODE)" }
     if (Test-Path "$InstallDir\certs\key.pem") {
         icacls "$InstallDir\certs\key.pem" /inheritance:r /grant:r 'Administrators:F' 'SYSTEM:F' | Out-Null
     }
