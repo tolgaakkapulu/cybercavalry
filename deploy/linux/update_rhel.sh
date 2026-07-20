@@ -17,7 +17,7 @@
 #    - The new-version zip has been placed under $ZIP_SOURCE
 #
 #  Usage:
-#    sudo bash deploy/update_rhel.sh
+#    sudo bash deploy/linux/update_rhel.sh
 #
 #  Note — CRLF error: sudo dnf install -y dos2unix; dos2unix update_rhel.sh
 # ──────────────────────────────────────────────────────────────────────────

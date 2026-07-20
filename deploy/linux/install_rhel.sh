@@ -10,7 +10,7 @@
 #    4. The cavalry user is preserved if it exists; otherwise it is created
 #
 #  Usage:
-#    sudo bash deploy/install_rhel.sh
+#    sudo bash deploy/linux/install_rhel.sh
 #
 #  Note — if you get a CRLF error: sudo dnf install -y dos2unix; dos2unix install_rhel.sh
 # ──────────────────────────────────────────────────────────────────────────
@@ -300,7 +300,7 @@ fi
 # ║  12. systemd cybercavalry.service                                    ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 step "12/13 systemd service"
-cp "$INSTALL_DIR/deploy/cybercavalry.service" /etc/systemd/system/${SERVICE_NAME}.service
+cp "$INSTALL_DIR/deploy/linux/cybercavalry.service" /etc/systemd/system/${SERVICE_NAME}.service
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME" >/dev/null
 

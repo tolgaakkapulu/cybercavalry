@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CYBERCavalry — WinSW service definition.
+
+  WinSW (Windows Service Wrapper) — https://github.com/winsw/winsw
+  Deployment pattern: place `WinSW-x64.exe` next to this file, rename to
+  `CYBERCavalry.exe`, then copy this file alongside as `CYBERCavalry.xml`
+  (WinSW binds config to a file that shares its own base name). Install
+  and start with:
+
+      .\CYBERCavalry.exe install
+      .\CYBERCavalry.exe start
+
+  Change $InstallDir below if you deployed to a non-default location.
+-->
+<service>
+  <id>CYBERCavalry</id>
+  <name>CYBERCavalry</name>
+  <description>CYBER Cavalry — self-hosted threat intelligence &amp; blacklist platform</description>
+
+  <!-- ──────────────────────────────────────────────────────────────
+       Executable — Python interpreter from the project venv
+       Arguments — waitress serving the Django WSGI app over HTTPS
+       ────────────────────────────────────────────────────────────── -->
+  <executable>C:\CYBERCavalry\venv\Scripts\python.exe</executable>
+  <arguments>-m waitress --port=8443 --threads=8 --url-scheme=https cybercavalry.wsgi:application</arguments>
+
+  <!--
+       If you need native HTTPS termination (no reverse proxy in front),
+       run gunicorn's equivalent behind IIS/nginx/Caddy — or replace
+       waitress with hypercorn/uvicorn (both have Windows support).
+       Waitress alone doesn't do TLS; typical Windows deployments
+       terminate TLS at IIS/nginx and speak plain HTTP to waitress on
+       127.0.0.1.
+
+       For the "self-hosted TLS, no proxy" path used by the Linux
+       gunicorn service, install hypercorn instead:
+           <arguments>-m hypercorn --bind 0.0.0.0:8443 --certfile certs\cert.pem --keyfile certs\key.pem cybercavalry.asgi:application</arguments>
+  -->
+
+  <workingdirectory>C:\CYBERCavalry</workingdirectory>
+
+  <!-- Environment — Django reads its settings module from here -->
+  <env name="DJANGO_SETTINGS_MODULE" value="cybercavalry.settings.base"/>
+  <env name="PYTHONUNBUFFERED"       value="1"/>
+  <env name="PYTHONIOENCODING"       value="utf-8"/>
+
+  <!-- Lifecycle -->
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <onfailure action="none"/>
+
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+
+  <!-- Run as LocalSystem by default. To run as a dedicated service
+       account, uncomment and configure:
+    <serviceaccount>
+      <domain>YOURDOMAIN</domain>
+      <user>svc-cybercavalry</user>
+      <password>...</password>
+      <allowservicelogon>true</allowservicelogon>
+    </serviceaccount>
+  -->
+
+  <!-- Log rotation — 10 MB × 5 files each for stdout & stderr -->
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+    <pattern>yyyyMMdd</pattern>
+  </log>
+  <logpath>C:\CYBERCavalry\logs</logpath>
+
+  <!-- Priority: Normal is fine for a single-tenant deployment; Above
+       Normal helps if the host also runs heavy competing workloads. -->
+  <priority>Normal</priority>
+
+  <!-- Stop timeout — allow gunicorn/waitress graceful shutdown before SIGKILL -->
+  <stoptimeout>30 sec</stoptimeout>
+</service>

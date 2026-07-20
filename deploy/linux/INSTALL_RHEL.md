@@ -254,7 +254,7 @@ sudo systemctl status redis
 ## 9. Install the systemd Service
 
 ```bash
-sudo cp /data/cybercavalry/deploy/cybercavalry.service /etc/systemd/system/cybercavalry.service
+sudo cp /data/cybercavalry/deploy/linux/cybercavalry.service /etc/systemd/system/cybercavalry.service
 sudo systemctl daemon-reload
 sudo systemctl enable cybercavalry
 sudo systemctl start cybercavalry

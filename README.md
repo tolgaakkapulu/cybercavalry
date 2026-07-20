@@ -12,6 +12,7 @@ Aggregate, score and distribute IP / hash blacklists from a single Django contro
 ![Django](https://img.shields.io/badge/django-4.2%20LTS-092E20.svg)
 ![License](https://img.shields.io/badge/license-GPL%20v3-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux%20|%20Windows-lightgrey.svg)
+![Built with Claude](https://img.shields.io/badge/built%20with-Claude-D97706?logo=anthropic&logoColor=white)
 
 [Features](#-features) · [Screenshots](#-screenshots) · [Architecture](#-architecture) · [Installation](#-installation) · [Configuration](#-configuration) · [API](#-http-api) · [Deployment](#-production-deployment)
 
@@ -480,14 +481,27 @@ stateDiagram-v2
 
 ## 🏭 Production Deployment
 
-For a hardened RHEL 8 / 9 install with systemd, Gunicorn (native TLS), pre-flight migrate + collectstatic, and an offline wheel bundle, see:
+Deploy artefacts are split by target OS under [`deploy/`](deploy/) — see [`deploy/README.md`](deploy/README.md) for the overview and OS-selection matrix.
 
-- **[`deploy/INSTALL_RHEL.md`](deploy/INSTALL_RHEL.md)** — step-by-step guide
-- **[`deploy/install_rhel.sh`](deploy/install_rhel.sh)** — one-shot installer
-- **[`deploy/update_rhel.sh`](deploy/update_rhel.sh)** — in-place upgrade
-- **[`deploy/cybercavalry.service`](deploy/cybercavalry.service)** — systemd unit
+### 🐧 Linux (RHEL 9.x / AlmaLinux / Rocky Linux)
 
-The service runs as an unprivileged `cavalry` user, restarts on failure, and applies OS-level hardening (`NoNewPrivileges`, `PrivateTmp`).
+Runs behind **gunicorn** with native TLS, managed by **systemd**. Includes an offline wheel bundle for air-gapped installs, pre-flight `migrate` + `collectstatic`, and SELinux labelling automation.
+
+- **[`deploy/linux/INSTALL_RHEL.md`](deploy/linux/INSTALL_RHEL.md)** — step-by-step guide
+- **[`deploy/linux/install_rhel.sh`](deploy/linux/install_rhel.sh)** — one-shot installer
+- **[`deploy/linux/update_rhel.sh`](deploy/linux/update_rhel.sh)** — in-place upgrade (with automatic venv-repair pre-flight)
+- **[`deploy/linux/cybercavalry.service`](deploy/linux/cybercavalry.service)** — systemd unit
+
+Runs as an unprivileged `cavalry` user, restarts on failure, and applies OS-level hardening (`NoNewPrivileges`, `PrivateTmp`).
+
+### 🪟 Windows (Server 2019 / 2022, also Windows 10 / 11)
+
+Runs behind **waitress** (pure-Python WSGI, Windows-friendly), managed by **WinSW** as a native Windows service. Uses the same offline wheel bundle as the Linux path.
+
+- **[`deploy/windows/INSTALL_WINDOWS.md`](deploy/windows/INSTALL_WINDOWS.md)** — step-by-step guide
+- **[`deploy/windows/install_windows.ps1`](deploy/windows/install_windows.ps1)** — one-shot PowerShell installer
+- **[`deploy/windows/update_windows.ps1`](deploy/windows/update_windows.ps1)** — in-place upgrade with rollback snapshot
+- **[`deploy/windows/cybercavalry-service.xml`](deploy/windows/cybercavalry-service.xml)** — WinSW service definition
 
 **Minimum production checklist:**
 
@@ -535,6 +549,40 @@ python manage.py test
 git push origin feat/short-description
 # open a PR
 ```
+
+---
+
+## 🤝 Acknowledgments
+
+CYBERCavalry was designed and built in close collaboration with
+**[Claude](https://claude.ai)** by Anthropic. This project is an
+intentional experiment in transparent, AI-assisted open source
+development — the reality of how a lot of software gets written in
+2026 — so it's called out here rather than hidden.
+
+**What Claude helped with:**
+- Iterating on the domain model (blacklist groups, promotion rules,
+  quota-aware key rotation, cache/session/rate-limit layering)
+- Generating and refactoring Django code across the apps, templates,
+  admin UI, and management commands
+- Diagnosing production issues (SELinux labelling, venv shebang
+  rot after directory rename, VirusTotal quota misclassification)
+- Drafting documentation — this README, the RHEL/Windows deployment
+  guides, and inline code commentary
+- Adversarial review of edge cases in the promotion / demotion,
+  quota alerting and API-token flows
+
+**What I own end-to-end:**
+- The product vision and roadmap
+- Every architectural and licensing decision
+- All testing on real systems (RHEL 9.5 production, Windows dev)
+- Every commit that goes into `main` — the code shipped here has been
+  read, understood and taken responsibility for by a human
+- Support, security response and long-term maintenance
+
+If you're using this project, you're using code that was **co-written
+with an AI** but **reviewed, tested and maintained by a person**. Bug
+reports and PRs go to that person, not to the model.
 
 ---
 

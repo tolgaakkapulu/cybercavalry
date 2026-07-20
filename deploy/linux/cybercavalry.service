@@ -1,6 +1,6 @@
 [Unit]
 Description=CYBER Cavalry Django Application
-Documentation=file:///data/cybercavalry/deploy/INSTALL_RHEL.md
+Documentation=file:///data/cybercavalry/deploy/linux/INSTALL_RHEL.md
 After=network-online.target redis.service
 Wants=network-online.target redis.service
 
