@@ -113,7 +113,13 @@ def log(msg):
 
 
 def download_for(py_ver: str):
-    """Download every wheel for the specified Python version."""
+    """Download every wheel for the specified Python version.
+
+    On any pip download / wheel-build failure the (partial) wheels_dir is
+    scrubbed so a subsequent setup run doesn't try to install from an
+    incomplete bundle. Common trigger: bleeding-edge Python versions where
+    cryptography / lxml don't have prebuilt wheels on PyPI yet.
+    """
     abi          = f'cp{py_ver}'
     wheels_dir   = DEPLOY_DIR / 'wheels' / f'py{py_ver}'
     lock_file    = DEPLOY_DIR / f'wheels.py{py_ver}.lock.txt'
@@ -128,6 +134,12 @@ def download_for(py_ver: str):
     platform_args = []
     for p in TARGET_PLATFORMS:
         platform_args.extend(['--platform', p])
+
+    def _cleanup_on_failure(exc: BaseException):
+        log(f'  [!] bundle build failed ({exc.__class__.__name__}) — removing partial {wheels_dir}')
+        shutil.rmtree(wheels_dir, ignore_errors=True)
+        # Also drop a stale lock file if we produced one from a previous run
+        lock_file.unlink(missing_ok=True)
 
     # ---- Stage 1: download every package as a wheel (except svglib) ----
     tmp_reqs_lines = []
@@ -156,6 +168,10 @@ def download_for(py_ver: str):
     log(f'  Stage 1: pip download (cp{py_ver}, manylinux2014)')
     try:
         subprocess.run(cmd1, check=True)
+    except (subprocess.CalledProcessError, KeyboardInterrupt) as exc:
+        tmp_reqs.unlink(missing_ok=True)
+        _cleanup_on_failure(exc)
+        raise
     finally:
         tmp_reqs.unlink(missing_ok=True)
 
@@ -168,7 +184,11 @@ def download_for(py_ver: str):
         'svglib>=1.5,<1.6',
     ]
     log(f'  Stage 2: pip wheel svglib (pure Python -> any)')
-    subprocess.run(cmd2, check=True)
+    try:
+        subprocess.run(cmd2, check=True)
+    except (subprocess.CalledProcessError, KeyboardInterrupt) as exc:
+        _cleanup_on_failure(exc)
+        raise
 
     # ---- Lock file ----
     wheels = sorted(p.name for p in wheels_dir.glob('*.whl'))

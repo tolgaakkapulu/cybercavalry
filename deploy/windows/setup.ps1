@@ -96,22 +96,51 @@ function Get-BundleVersions {
         }
 }
 
+function Test-PythonMatch {
+    # Return $true if the given exe reports "Python <expectedVersion>" (e.g. 3.11)
+    param([string]$Exe, [string]$Version)
+    if (-not (Test-Path $Exe)) { return $false }
+    try {
+        $out = & $Exe --version 2>&1
+        return ($LASTEXITCODE -eq 0 -and $out -match "Python\s+$([regex]::Escape($Version))(\.|$)")
+    } catch { return $false }
+}
+
 function Resolve-Python {
     # 1. Honour explicit -PythonExe if provided
     if ($PythonExe) { return $PythonExe }
-    # 2. Try to match `py -3.X` against every wheel bundle we have
+    # 2. Try to match every wheel bundle we have against, in order:
+    #    a) `py -3.X` (Windows launcher)
+    #    b) common install paths (python.org, winget, Store)
     $bundleVersions = Get-BundleVersions
+    $tag = { param($v) 'py' + ($v -replace '\.','') }
+    $searchPaths = @(
+        'C:\Python{0}\python.exe',
+        'C:\Program Files\Python{0}\python.exe',
+        "$env:LOCALAPPDATA\Programs\Python\Python{0}\python.exe",
+        "$env:LOCALAPPDATA\Programs\Python\Python{0}-arm64\python.exe"
+    )
     foreach ($v in $bundleVersions) {
+        # a) py launcher -- cheapest test, single command
         try {
             $out = & py "-$v" --version 2>&1
             if ($LASTEXITCODE -eq 0 -and $out -match "Python $v") {
-                Log "matched wheel bundle py$($v -replace '\.','') -> py -$v"
+                Log "matched wheel bundle $(& $tag $v) -> py -$v"
                 return "py -$v"
             }
         } catch { }
+        # b) common install paths (drop the dot: 3.11 -> 311)
+        $short = $v -replace '\.',''
+        foreach ($tpl in $searchPaths) {
+            $candidate = $tpl -f $short
+            if (Test-PythonMatch -Exe $candidate -Version $v) {
+                Log "matched wheel bundle $(& $tag $v) -> $candidate"
+                return $candidate
+            }
+        }
     }
     # 3. Fall back to whatever `python` is on PATH
-    Log 'no bundle-matching Python found via py launcher; using default `python` on PATH'
+    Log 'no bundle-matching Python found; using default `python` on PATH'
     return 'python'
 }
 
