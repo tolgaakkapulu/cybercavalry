@@ -44,7 +44,14 @@ install_deps() {
     local pip="$INSTALL_DIR/venv/bin/pip"
     local tag; tag=py$("$py" -c "import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))")
     local wheels="$INSTALL_DIR/deploy/wheels/$tag"
-    [[ -d "$wheels" ]] || die "Wheel bundle missing: $wheels"
+    if [[ ! -d "$wheels" ]]; then
+        local available; available=$(ls "$INSTALL_DIR/deploy/wheels/" 2>/dev/null | tr '\n' ' ')
+        die "Wheel bundle missing: $wheels
+Your Python is $tag but only these bundles ship: ${available:-(none)}.
+Fix: install a matching Python (e.g. 'dnf install python3.11' / 'apt install python3.11'),
+then remove venv and rerun this script. Or regenerate the bundle with:
+    python deploy/prepare_offline_bundle.py --py ${tag#py}"
+    fi
     sudo -u "$SERVICE_USER" "$pip" install --no-index --find-links "$wheels/" --upgrade pip >/dev/null
     sudo -u "$SERVICE_USER" "$pip" install --no-index --find-links "$wheels/" \
         -r "$INSTALL_DIR/requirements.txt" gunicorn

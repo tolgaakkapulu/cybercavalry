@@ -48,7 +48,27 @@ function Install-Deps {
     # NOTE: avoid Python f-strings -- PS 5.1 native-arg parser strips inner "
     $tag = 'py' + (& $py -c "import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))").Trim()
     $wheels = Join-Path $InstallDir "deploy\wheels\$tag"
-    if (-not (Test-Path $wheels)) { Die "Wheel bundle missing: $wheels" }
+    if (-not (Test-Path $wheels)) {
+        $available = (Get-ChildItem "$InstallDir\deploy\wheels" -Directory -EA SilentlyContinue |
+                      ForEach-Object { $_.Name }) -join ', '
+        if (-not $available) { $available = '(none)' }
+        Die @"
+Wheel bundle missing: $wheels
+Your Python is $tag but only these bundles ship in this release: $available.
+
+Fix — install a matching Python version and rerun. On Windows, use the py
+launcher to keep multiple versions side by side:
+    winget install Python.Python.3.11    # or python.org installer
+    py -3.11 --version                    # verify
+    Remove-Item -Recurse -Force '$InstallDir\venv'
+    `$env:PATH = 'C:\Python311;C:\Python311\Scripts;' + `$env:PATH
+    # then re-run this script.
+
+Alternatively, on a connected workstation regenerate the bundle with the
+target Python major.minor:
+    python deploy\prepare_offline_bundle.py --py $($tag.Substring(2))
+"@
+    }
     & $pip install --no-index --find-links "$wheels\" --upgrade pip | Out-Null
     & $pip install --no-index --find-links "$wheels\" -r "$InstallDir\requirements.txt" waitress
     if ($LASTEXITCODE -ne 0) { Die 'pip install failed.' }

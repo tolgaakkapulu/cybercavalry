@@ -23,17 +23,27 @@ Before running `setup.sh` / `setup.ps1`, the **target host** needs:
 
 | Requirement | Linux | Windows |
 |---|---|---|
-| Python 3.9+ | `dnf/apt install python3 python3-venv` | [python.org installer](https://www.python.org/downloads/windows/), "Add to PATH" |
+| Python **3.9 or 3.11** (must match a shipped wheel bundle — see note below) | `dnf install python3.11` / `apt install python3.11 python3.11-venv` | [python.org 3.11 installer](https://www.python.org/downloads/release/python-3119/), tick **"Add to PATH"** |
 | unzip | `dnf/apt install unzip` | built-in |
 | Release zip | placed under `/home/cavalry.svc/` | project extracted to `C:\CYBERCavalry\` |
 | Wheel bundle | inside `deploy/wheels/` (see below) | same |
 | (Windows only) WinSW | — | `WinSW-x64.exe` renamed to `CYBERCavalry.exe` under `deploy\windows\` — [download](https://github.com/winsw/winsw/releases) |
+
+> **Why 3.9 or 3.11 specifically?** The offline wheel bundle in this
+> repository is prepared for exactly these two versions (matching RHEL
+> 9's default `python3` and its AppStream `python3.11`). If your target
+> runs anything else — 3.10, 3.12, 3.13, 3.14 — you have two choices:
+> install a matching interpreter, or regenerate the bundle with
+> `python deploy/prepare_offline_bundle.py --py <XY>` on a connected
+> workstation. The setup script will refuse to continue with a message
+> listing the available bundles if there's a mismatch.
 
 **Prepare the offline wheel bundle** on a machine that HAS internet, then copy `deploy/` to the offline target:
 
 ```bash
 python deploy/prepare_offline_bundle.py           # Python 3.9 + 3.11
 python deploy/prepare_offline_bundle.py --py 311  # 3.11 only
+python deploy/prepare_offline_bundle.py --py 312  # add 3.12 to the bundle
 ```
 
 ---
