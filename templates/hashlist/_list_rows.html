@@ -63,6 +63,8 @@
       {% else %}
       <span class="badge badge-green" style="font-size:11px;" title="{{ entry.vt_malicious }}/{{ entry.vt_total }} engines detected as malicious">{{ entry.vt_malicious }}/{{ entry.vt_total }}</span>
       {% endif %}
+    {% elif entry.vt_unavailable %}
+    <span class="badge badge-yellow" style="font-size:11px;" title="VirusTotal was queried but did not respond (timeout, quota, or network error). Hidden from /api/v1/hashlist/ until a real score arrives.">N/A</span>
     {% else %}
     <span class="text-muted" style="font-size:11px;">—</span>
     {% endif %}
@@ -70,6 +72,8 @@
   <td style="text-align:center;white-space:nowrap;" id="vt-checked-cell-{{ entry.pk }}">
     {% if entry.vt_checked_at %}
       <span class="badge {% if entry.vt_malicious >= vt_threshold %}badge-red{% else %}badge-green{% endif %}" style="font-size:11px;">{{ entry.vt_checked_at|date:"Y-m-d H:i" }}</span>
+    {% elif entry.vt_unavailable %}
+      <span class="badge badge-yellow" style="font-size:11px;" title="VirusTotal was queried but did not respond.">N/A</span>
     {% else %}<span class="text-muted" style="font-size:11px;">—</span>{% endif %}
   </td>
   <td style="text-align:center;white-space:nowrap;" class="text-muted text-sm">

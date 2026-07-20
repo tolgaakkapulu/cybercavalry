@@ -420,17 +420,21 @@ def report_hash(request):
         entry.added_at = _tz.now()
         entry.save(update_fields=['is_active', 'reason', 'added_at'])
         action = 'updated'
-        response_message = 'Existing hash blacklist entry refreshed with the latest VirusTotal data.'
+        response_message = 'Existing hash blacklist entry refreshed.'
     else:
         action = 'added'
         response_message = 'New hash blacklist entry created.'
 
     # ── VirusTotal auto-check ────────────────────────────────────
+    # Only hit VT for genuinely NEW entries. Existing rows already carry a
+    # score from their first insertion (and are periodically refreshed by the
+    # scheduler) -- re-querying VT on every duplicate report just burns quota.
     # Pull the full attributes dict (not just the score) so threat label, file
     # type, size, name, first/last analysis, times_submitted etc. populate on
     # the entry without needing a manual rescore.
     vt_result = None
-    if SettingsCache.get('threat_intel.virustotal_enabled', False) and \
+    vt_unavailable = False
+    if created and SettingsCache.get('threat_intel.virustotal_enabled', False) and \
             SettingsCache.get('threat_intel.virustotal_auto_check', False):
         from apps.hashlist.virustotal_service import (
             fetch_hash_data_with_timeout, _stats_from_attrs, _apply_score_to_entry,
@@ -447,6 +451,19 @@ def report_hash(request):
                 "API hash report VT check: hash=%s malicious=%d/%d is_active=%s",
                 hash_value[:16], malicious, total, entry.is_active,
             )
+        else:
+            # VT was expected to answer (auto-check on) but didn't -- timeout,
+            # quota, network. Flag the entry so it stays visible in the admin
+            # console but is hidden from /api/v1/hashlist/ downstream feed.
+            # Cleared automatically by _apply_score_to_entry once a real score
+            # arrives (via scheduled refresh or a manual rescore).
+            entry.vt_unavailable = True
+            entry.save(update_fields=['vt_unavailable'])
+            vt_unavailable = True
+            logger.warning(
+                "API hash report: VT unavailable for hash=%s -- flagged (hidden from /api/v1/hashlist/)",
+                hash_value[:16],
+            )
 
     ActivityLog.log(
         profile.user, 'api.hash_report', 'HashEntry', hash_value,
@@ -459,6 +476,7 @@ def report_hash(request):
                 {'vt_malicious': vt_result[0], 'vt_total': vt_result[1]}
                 if vt_result is not None else {}
             ),
+            **({'vt_unavailable': True} if vt_unavailable else {}),
         },
         client_ip
     )
@@ -477,6 +495,8 @@ def report_hash(request):
             'total': vt_result[1],
             'threshold': max(0, int(SettingsCache.get('threat_intel.virustotal_detection_threshold', 5) or 5)),
         }
+    elif vt_unavailable:
+        response_data['virustotal'] = {'status': 'unavailable'}
     return JsonResponse(response_data, status=201 if action == 'added' else 200)
 
 
@@ -497,8 +517,11 @@ def get_hashlist(request):
         return json_error("Source IP not authorized.", status=403)
 
     from apps.hashlist.models import HashEntry
+    # vt_unavailable=False hides entries where VT couldn't be reached at
+    # insert time -- those stay visible in the admin console (still is_active)
+    # but never leak into the downstream feed without a real VT verdict.
     entries = list(
-        HashEntry.objects.filter(is_active=True, list_type='black')
+        HashEntry.objects.filter(is_active=True, list_type='black', vt_unavailable=False)
         .order_by('hash_type', 'hash_value')
     )
 

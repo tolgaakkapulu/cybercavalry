@@ -373,6 +373,12 @@ def _apply_score_to_entry(entry, malicious, total, now, meta=None):
     entry.vt_checked_at = now
     _store_vt_metadata(entry, meta, update_fields)
 
+    # Clear the "VT was unreachable" marker -- this call is proof VT answered
+    # for this hash, so it belongs in the /api/v1/hashlist/ feed again.
+    if entry.vt_unavailable:
+        entry.vt_unavailable = False
+        update_fields.append('vt_unavailable')
+
     score_changed = (entry.vt_malicious != malicious or entry.vt_total != total)
     if score_changed:
         entry.vt_malicious = malicious
