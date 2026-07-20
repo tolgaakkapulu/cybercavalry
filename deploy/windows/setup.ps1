@@ -60,9 +60,16 @@ function Invoke-Pip {
     # Wrapper around `python -m pip <args>`. Always uses `$py -m pip` --
     # never the pip.exe launcher -- because Windows locks pip.exe while it
     # tries to self-upgrade ("To modify pip, please run ...").
-    # Returns pip's own exit code (0 = ok).
+    #
+    # CRITICAL: pipe pip's output through Out-Host so it prints to the
+    # console but is NOT captured into the function's return value.
+    # PowerShell functions accumulate every write to the success stream as
+    # part of their return -- if we just did `& $py -m pip @PipArgs; return
+    # $LASTEXITCODE`, the caller would receive an array of [pip stdout
+    # lines..., 0] and `if ($rc -ne 0)` would compare an array to 0 and
+    # trigger a false "install failed" every single time.
     param([Parameter(ValueFromRemainingArguments=$true)] $PipArgs)
-    & $py -m pip @PipArgs
+    & $py -m pip @PipArgs 2>&1 | Out-Host
     return $LASTEXITCODE
 }
 
