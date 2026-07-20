@@ -80,6 +80,24 @@ sudo -u cavalry /data/cybercavalry/venv/bin/python /data/cybercavalry/manage.py 
 powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 -Action install
 ```
 
+If you keep multiple Python versions on the box, point at the one you want:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 `
+    -Action install `
+    -PythonExe 'C:\Users\<you>\AppData\Local\Programs\Python\Python311\python.exe'
+```
+
+The setup script tries three strategies automatically:
+1. **No wheel bundle for your Python** — installs directly from PyPI (typical dev/eval)
+2. **Bundle exists and complete** — fully offline install
+3. **Bundle exists but missing wheels** (usually a Linux bundle on Windows) — offline + PyPI fallback
+
+For a truly air-gapped Windows install, generate a Windows-native bundle on a
+connected machine first:
+```powershell
+python .\deploy\prepare_offline_bundle.py --os windows --py 311
+```
+
 **Update:**
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 -Action update

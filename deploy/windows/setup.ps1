@@ -55,39 +55,29 @@ function Install-Deps {
     # NOTE: avoid Python f-strings -- PS 5.1 native-arg parser strips inner "
     $tag = 'py' + (& $py -c "import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))").Trim()
     $wheels = Join-Path $InstallDir "deploy\wheels\$tag"
+
+    # Three install strategies, picked automatically:
+    #   1. No bundle at all for this Python -> install straight from PyPI
+    #      (typical dev/eval on a Windows box with internet access).
+    #   2. Bundle exists, all wheels install cleanly -> fully offline.
+    #      (typical air-gapped deployment.)
+    #   3. Bundle exists but is missing wheels (usually a Linux-only bundle
+    #      being installed on Windows) -> retry with PyPI as fallback.
+    # For (2)/(3) the bundle needs Windows wheels; generate one with:
+    #   python deploy\prepare_offline_bundle.py --os windows --py 311
+
     if (-not (Test-Path $wheels)) {
         $available = (Get-ChildItem "$InstallDir\deploy\wheels" -Directory -EA SilentlyContinue |
                       ForEach-Object { $_.Name }) -join ', '
-        if (-not $available) { $available = '(none)' }
-        Die @"
-Wheel bundle missing: $wheels
-Your Python is $tag but only these bundles ship in this release: $available.
-
-Fix (Windows) -- install a matching Python side by side, then either:
-
-  a) Let the script auto-detect it via the py launcher (no flags needed):
-       winget install Python.Python.3.11        # or python.org installer
-       py -3.11 --version                       # verify
-       Remove-Item -Recurse -Force '$InstallDir\venv'
-       powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 -Action install
-
-  b) Or point at it explicitly:
-       powershell -ExecutionPolicy Bypass -File .\deploy\windows\setup.ps1 ``
-           -Action install -PythonExe 'py -3.11'
-
-Alternatively, on a connected workstation regenerate the bundle with the
-target Python major.minor (requires 3.9-3.12; newer versions may lack
-prebuilt wheels for cryptography/lxml):
-    python deploy\prepare_offline_bundle.py --py $($tag.Substring(2))
-"@
+        if (-not $available) { $available = 'none' }
+        Warn "No wheel bundle for $tag (available: $available). Installing directly from PyPI."
+        & $pip install --upgrade pip 2>&1 | Out-Null
+        & $pip install -r "$InstallDir\requirements.txt" waitress
+        if ($LASTEXITCODE -ne 0) { Die 'pip install from PyPI failed. Check internet connectivity and package availability.' }
+        Ok "dependencies from PyPI ($tag)"
+        return
     }
-    # First try strictly offline (air-gapped scenario). The bundle in this
-    # repo is generated for Linux by default; C-extension packages like
-    # cryptography / lxml won't have Windows wheels in a Linux-only bundle,
-    # so on failure we retry with PyPI as a fallback -- fine on dev/eval
-    # boxes with internet. For truly air-gapped Windows installs, generate
-    # a Windows bundle first:
-    #   python deploy\prepare_offline_bundle.py --os windows --py 311
+
     & $pip install --no-index --find-links "$wheels\" --upgrade pip 2>&1 | Out-Null
     $offlineTry = & $pip install --no-index --find-links "$wheels\" `
         -r "$InstallDir\requirements.txt" waitress 2>&1
@@ -97,7 +87,6 @@ prebuilt wheels for cryptography/lxml):
         if ($LASTEXITCODE -ne 0) { Die 'pip install failed even with PyPI fallback. Check network + package availability.' }
         Ok "dependencies: $tag bundle + PyPI fallback"
     } else {
-        # Show pip's own progress lines so the user sees what got installed
         $offlineTry | ForEach-Object { Write-Host $_ }
         Ok "dependencies from $tag (fully offline)"
     }
@@ -174,6 +163,8 @@ function New-Venv {
     $chooser = Resolve-Python
     Invoke-Python $chooser -m venv "$InstallDir\venv"
     if (-not (Test-Path $py)) { Die "venv creation failed (chooser=$chooser)." }
+    $venvVer = (& $py --version 2>&1).ToString().Trim()
+    Log "venv Python: $venvVer  (chooser: $chooser)"
     Install-Deps
 }
 
@@ -227,7 +218,10 @@ function Install-Service {
 
 # -- install --------------------------------------------------------
 function Invoke-Install {
-    Log "install  (python $(python --version 2>&1 | ForEach-Object { $_.Split(' ')[1] }))"
+    # The venv Python (set by Resolve-Python inside New-Venv) is what actually
+    # matters -- report that AFTER creation, not the default `python` on PATH
+    # (which may be a different major.minor when -PythonExe was supplied).
+    Log 'install starting'
 
     if (Test-Path "$InstallDir\venv") { Remove-Item -Recurse -Force "$InstallDir\venv" }
     New-Venv
