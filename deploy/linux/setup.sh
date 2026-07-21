@@ -348,6 +348,7 @@ do_update() {
     rsync -a --delete \
         --exclude '.env' --exclude 'venv/' --exclude 'certs/' \
         --exclude 'logs/' --exclude 'backups/' --exclude 'cybercavalry.db*' \
+        --exclude 'media/' \
         "$tmp/CYBERCavalry/" "$INSTALL_DIR/"
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
     rm -rf "$tmp"

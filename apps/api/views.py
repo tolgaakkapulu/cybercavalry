@@ -408,22 +408,40 @@ def report_hash(request):
     )
 
     if not created:
-        # Existing record — reactivate it (covers the inactive→active path) so
-        # the same hash never spawns a second row. Bumping added_at on update
-        # surfaces the most recent report time in the UI; auto_now_add only
-        # fires on INSERT, so a manual assignment on this UPDATE persists.
-        # Reason is replaced with the latest report's value to mirror the IP
-        # flow and keep the entry's context fresh.
-        from django.utils import timezone as _tz
-        entry.is_active = True
-        entry.reason = reason
-        entry.added_at = _tz.now()
-        entry.save(update_fields=['is_active', 'reason', 'added_at'])
-        action = 'updated'
-        response_message = 'Existing hash blacklist entry refreshed.'
+        # Existing record -- respect whatever state it's already in. We do NOT:
+        #   * reactivate  -- a deactivation was either an explicit admin call
+        #                    or a VT-threshold decision; re-reporting the same
+        #                    hash must not override that verdict.
+        #   * update reason / added_at -- keeping the row byte-identical avoids
+        #                    the "did VT get re-queried at 17:52?" confusion
+        #                    caused by timestamps that only reflect the last
+        #                    report, not the last real state change.
+        # The report is still recorded in ActivityLog below for audit.
+        action = 'existing'
+        _prior_state = 'active' if entry.is_active else 'inactive'
+        _prior_vt = (
+            f"{entry.vt_malicious}/{entry.vt_total}" if entry.vt_checked_at
+            else ('N/A' if entry.vt_unavailable else 'never-scored')
+        )
+        response_message = (
+            f'Hash already tracked (currently {_prior_state}, VT={_prior_vt}) -- no changes made.'
+        )
+        # This log line is the ground-truth signal that the no-op path was
+        # taken. If a supposedly-inactive record gets reactivated after this,
+        # something OTHER than this endpoint did it (scheduler bulk_refresh,
+        # admin panel, manual scoring, etc.) -- grep the logs for the hash to
+        # find out which.
+        logger.info(
+            "API hash report NO-OP: hash=%s state=%s vt=%s (no reactivation, no VT query)",
+            hash_value[:16], _prior_state, _prior_vt,
+        )
     else:
         action = 'added'
         response_message = 'New hash blacklist entry created.'
+        logger.info(
+            "API hash report NEW: hash=%s -- created as is_active=True (will be scored by VT if enabled)",
+            hash_value[:16],
+        )
 
     # ── VirusTotal auto-check ────────────────────────────────────
     # Only hit VT for genuinely NEW entries. Existing rows already carry a
@@ -470,7 +488,8 @@ def report_hash(request):
         {
             'hash': hash_value,
             'hash_type': hash_type,
-            'action': action,
+            'action': action,                     # 'added' | 'existing'
+            'is_active_after': entry.is_active,   # ground-truth final state
             'reporter_ip': client_ip,
             **(
                 {'vt_malicious': vt_result[0], 'vt_total': vt_result[1]}
@@ -482,7 +501,10 @@ def report_hash(request):
     )
 
     response_data = {
-        'status': 'blacklisted',
+        # 'blacklisted' when the hash IS currently active in the blacklist;
+        # 'inactive' when the record exists but is deactivated (below VT
+        # threshold, manually disabled, or was never reactivated on report).
+        'status': 'blacklisted' if entry.is_active else 'inactive',
         'hash': hash_value,
         'hash_type': hash_type,
         'action': action,
