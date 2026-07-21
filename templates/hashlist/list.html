@@ -684,8 +684,21 @@ function showHlVtResults(data, isBulk) {
         : 'All hashes scored successfully.';
     } else {
       var maliciousColor = (data.malicious >= _hlVtThreshold) ? 'var(--danger)' : 'var(--success)';
-      var statusLabel = data.deactivated ? 'Deactivated' : 'Active';
-      var statusColor = data.deactivated ? 'var(--warning)' : 'var(--success)';
+      // Three states: 'Deactivated' = active->inactive transition just now,
+      // 'Active' / 'Inactive' = current state. Server sends `is_active` as
+      // the ground truth; `deactivated` is only true when this rescore is
+      // what flipped the entry from active to inactive.
+      var statusLabel, statusColor;
+      if (data.deactivated) {
+        statusLabel = 'Deactivated';
+        statusColor = 'var(--warning)';
+      } else if (data.is_active) {
+        statusLabel = 'Active';
+        statusColor = 'var(--success)';
+      } else {
+        statusLabel = 'Inactive';
+        statusColor = 'var(--text-muted)';
+      }
       document.getElementById('hl-vt-result-grid').innerHTML =
         hlVtStatCard(data.malicious + '/' + data.total, 'Malicious / Total', maliciousColor) +
         hlVtStatCard(statusLabel, 'Status', statusColor);
