@@ -50,17 +50,22 @@
 <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
   <!-- Left: status tabs + search -->
   <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-    <a href="?status=active{% if search %}&search={{ search }}{% endif %}"
+    <a href="?status=active{% if search %}&search={{ search }}{% endif %}{% if pinned %}&pinned={{ pinned }}{% endif %}"
        class="btn btn-sm {% if status == 'active' %}btn-brand{% else %}btn-ghost{% endif %}">Active <span data-hl-count="active" style="opacity:.7;font-size:11px;">{{ count_active }}</span></a>
-    <a href="?status=inactive{% if search %}&search={{ search }}{% endif %}"
+    <a href="?status=inactive{% if search %}&search={{ search }}{% endif %}{% if pinned %}&pinned={{ pinned }}{% endif %}"
        class="btn btn-sm {% if status == 'inactive' %}btn-brand{% else %}btn-ghost{% endif %}">Inactive <span data-hl-count="inactive" style="opacity:.7;font-size:11px;">{{ count_inactive }}</span></a>
-    <a href="?status=all{% if search %}&search={{ search }}{% endif %}"
+    <a href="?status=all{% if search %}&search={{ search }}{% endif %}{% if pinned %}&pinned={{ pinned }}{% endif %}"
        class="btn btn-sm {% if status == 'all' %}btn-brand{% else %}btn-ghost{% endif %}">All <span data-hl-count="all" style="opacity:.7;font-size:11px;">{{ count_all }}</span></a>
     <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
     <form method="get" style="display:flex;gap:6px;align-items:center;">
       <input type="hidden" name="status" value="{{ status }}">
       <input type="search" name="search" class="form-input" style="height:30px;font-size:12px;padding:4px 16px;"
              placeholder="Search hash or reason…" value="{{ search }}">
+      <select name="pinned" class="form-select" style="height:30px;font-size:12px;padding:4px 8px;">
+        <option value="">All Entries</option>
+        <option value="yes" {% if pinned == 'yes' %}selected{% endif %}>Pinned Only</option>
+        <option value="no"  {% if pinned == 'no'  %}selected{% endif %}>Unpinned Only</option>
+      </select>
       <button type="submit" class="btn btn-info btn-sm">Search</button>
       {% if request.user.profile.role.name == 'admin' or request.user.is_superuser %}
       <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
@@ -69,7 +74,7 @@
       History
     </a>
     {% endif %}
-      {% if search %}<a href="?status={{ status }}" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
+      {% if search or pinned %}<a href="?status={{ status }}" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
     </form>
   </div>
   <!-- Right: History + action buttons -->

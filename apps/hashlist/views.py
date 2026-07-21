@@ -68,6 +68,7 @@ def hashlist_list(request):
     base_qs = HashEntry.objects.select_related('added_by').filter(list_type='black')
     search = request.GET.get('search', '').strip()
     status = request.GET.get('status', 'active')
+    pinned = request.GET.get('pinned', '')            # '' | 'yes' | 'no'
 
     if search:
         # Pure-digit query also matches the row's primary key.
@@ -75,6 +76,10 @@ def hashlist_list(request):
         if search.isdigit():
             q |= Q(pk=int(search))
         base_qs = base_qs.filter(q)
+    if pinned == 'yes':
+        base_qs = base_qs.filter(is_pinned=True)
+    elif pinned == 'no':
+        base_qs = base_qs.filter(is_pinned=False)
 
     count_active   = base_qs.filter(is_active=True).count()
     count_inactive = base_qs.filter(is_active=False).count()
@@ -120,6 +125,7 @@ def hashlist_list(request):
         'entries':           entries_page,
         'search':            search,
         'status':            status,
+        'pinned':            pinned,
         'count_active':      count_active,
         'count_inactive':    count_inactive,
         'count_all':         count_all,

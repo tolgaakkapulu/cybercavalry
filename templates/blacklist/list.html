@@ -59,11 +59,14 @@
   <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
     <!-- Left: status tabs + filters toggle + active badges -->
     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-      <a href="?{% if filters.search %}search={{ filters.search }}&{% endif %}{% if filters.group %}group={{ filters.group }}&{% endif %}{% if filters.source %}source={{ filters.source }}&{% endif %}status=active"
+      {# Preserve every filter across status-tab clicks. Each param is
+         emitted only when truthy so a fresh visit stays free of dangling
+         `&pinned=&hit_min=...` in the URL. #}
+      <a href="?{% if filters.search %}search={{ filters.search }}&{% endif %}{% if filters.group %}group={{ filters.group }}&{% endif %}{% if filters.source %}source={{ filters.source }}&{% endif %}{% if filters.pinned %}pinned={{ filters.pinned }}&{% endif %}{% if filters.hit_min %}hit_min={{ filters.hit_min }}&{% endif %}{% if filters.hit_max %}hit_max={{ filters.hit_max }}&{% endif %}{% if filters.score_min %}score_min={{ filters.score_min }}&{% endif %}{% if filters.score_max %}score_max={{ filters.score_max }}&{% endif %}status=active"
          class="btn btn-sm {% if filters.status == 'active' %}btn-brand{% else %}btn-ghost{% endif %}">Active <span data-bl-count="active" style="opacity:.7;font-size:11px;">{{ count_active }}</span></a>
-      <a href="?{% if filters.search %}search={{ filters.search }}&{% endif %}{% if filters.group %}group={{ filters.group }}&{% endif %}{% if filters.source %}source={{ filters.source }}&{% endif %}status=inactive"
+      <a href="?{% if filters.search %}search={{ filters.search }}&{% endif %}{% if filters.group %}group={{ filters.group }}&{% endif %}{% if filters.source %}source={{ filters.source }}&{% endif %}{% if filters.pinned %}pinned={{ filters.pinned }}&{% endif %}{% if filters.hit_min %}hit_min={{ filters.hit_min }}&{% endif %}{% if filters.hit_max %}hit_max={{ filters.hit_max }}&{% endif %}{% if filters.score_min %}score_min={{ filters.score_min }}&{% endif %}{% if filters.score_max %}score_max={{ filters.score_max }}&{% endif %}status=inactive"
          class="btn btn-sm {% if filters.status == 'inactive' %}btn-brand{% else %}btn-ghost{% endif %}">Inactive <span data-bl-count="inactive" style="opacity:.7;font-size:11px;">{{ count_inactive }}</span></a>
-      <a href="?{% if filters.search %}search={{ filters.search }}&{% endif %}{% if filters.group %}group={{ filters.group }}&{% endif %}{% if filters.source %}source={{ filters.source }}&{% endif %}status=all"
+      <a href="?{% if filters.search %}search={{ filters.search }}&{% endif %}{% if filters.group %}group={{ filters.group }}&{% endif %}{% if filters.source %}source={{ filters.source }}&{% endif %}{% if filters.pinned %}pinned={{ filters.pinned }}&{% endif %}{% if filters.hit_min %}hit_min={{ filters.hit_min }}&{% endif %}{% if filters.hit_max %}hit_max={{ filters.hit_max }}&{% endif %}{% if filters.score_min %}score_min={{ filters.score_min }}&{% endif %}{% if filters.score_max %}score_max={{ filters.score_max }}&{% endif %}status=all"
          class="btn btn-sm {% if filters.status == 'all' %}btn-brand{% else %}btn-ghost{% endif %}">All <span data-bl-count="all" style="opacity:.7;font-size:11px;">{{ count_all }}</span></a>
       <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
       <a @click="open = !open" class="btn btn-info btn-sm">
@@ -145,6 +148,27 @@
         <option value="api" {% if filters.source == 'api' %}selected{% endif %}>API</option>
         <option value="import" {% if filters.source == 'import' %}selected{% endif %}>Import</option>
       </select>
+      <select name="pinned" class="form-select form-select-sm">
+        <option value="">All Entries</option>
+        <option value="yes" {% if filters.pinned == 'yes' %}selected{% endif %}>Pinned Only</option>
+        <option value="no"  {% if filters.pinned == 'no'  %}selected{% endif %}>Unpinned Only</option>
+      </select>
+    </div>
+    <div class="filter-bar" style="margin-top:8px;">
+      <span class="text-muted text-sm" style="white-space:nowrap;">Count:</span>
+      <input type="number" name="hit_min" class="form-input form-input-sm" style="max-width:100px;"
+             placeholder="min" min="0" value="{{ filters.hit_min }}">
+      <span class="text-muted text-sm">to</span>
+      <input type="number" name="hit_max" class="form-input form-input-sm" style="max-width:100px;"
+             placeholder="max" min="0" value="{{ filters.hit_max }}">
+      <span style="width:12px;"></span>
+      <span class="text-muted text-sm" style="white-space:nowrap;">AbuseIPDB score:</span>
+      <input type="number" name="score_min" class="form-input form-input-sm" style="max-width:100px;"
+             placeholder="min" min="0" max="100" value="{{ filters.score_min }}">
+      <span class="text-muted text-sm">to</span>
+      <input type="number" name="score_max" class="form-input form-input-sm" style="max-width:100px;"
+             placeholder="max" min="0" max="100" value="{{ filters.score_max }}">
+      <span style="flex:1;"></span>
       <button type="submit" class="btn btn-brand btn-sm">Apply</button>
       <a href="{% url 'blacklist:list' %}" class="btn btn-ghost btn-sm">Clear</a>
     </div>

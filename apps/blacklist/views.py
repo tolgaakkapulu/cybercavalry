@@ -51,6 +51,22 @@ def blacklist_list(request):
     group_id = request.GET.get('group', '')
     source = request.GET.get('source', '')
     status = request.GET.get('status', 'active')
+    pinned = request.GET.get('pinned', '')            # '' | 'yes' | 'no'
+    hit_min_raw   = request.GET.get('hit_min',   '').strip()
+    hit_max_raw   = request.GET.get('hit_max',   '').strip()
+    score_min_raw = request.GET.get('score_min', '').strip()
+    score_max_raw = request.GET.get('score_max', '').strip()
+
+    def _parse_int(raw):
+        try:
+            return int(raw)
+        except (ValueError, TypeError):
+            return None
+
+    hit_min   = _parse_int(hit_min_raw)
+    hit_max   = _parse_int(hit_max_raw)
+    score_min = _parse_int(score_min_raw)
+    score_max = _parse_int(score_max_raw)
 
     if search:
         # Search box matches CIDR + reason substrings; a pure-digit query
@@ -64,6 +80,14 @@ def blacklist_list(request):
         entries = entries.filter(group_id=group_id)
     if source:
         entries = entries.filter(source=source)
+    if pinned == 'yes':
+        entries = entries.filter(is_pinned=True)
+    elif pinned == 'no':
+        entries = entries.filter(is_pinned=False)
+    if score_min is not None:
+        entries = entries.filter(abuse_confidence_score__gte=score_min)
+    if score_max is not None:
+        entries = entries.filter(abuse_confidence_score__lte=score_max)
     now = timezone.now()
 
     # Counts per status (after search/group/source filters, before status filter)
@@ -96,6 +120,13 @@ def blacklist_list(request):
     entries = entries.annotate(
         _recent_len=RawSQL(f'{_json_len_fn}(recent_hit_timestamps)', [])
     )
+    # Hit-count range filter uses the same JSON length as the sort key and the
+    # `Count` column badge -- so a "Count >= N" filter returns exactly the
+    # entries whose visible count matches. Applied AFTER the annotation.
+    if hit_min is not None:
+        entries = entries.filter(_recent_len__gte=hit_min)
+    if hit_max is not None:
+        entries = entries.filter(_recent_len__lte=hit_max)
     _BL_SORT = {
         'ip': 'ip_address', 'group': 'group__name', 'source': 'source',
         'score': 'abuse_confidence_score', 'checked': 'abuse_checked_at',
@@ -159,7 +190,17 @@ def blacklist_list(request):
         'entries': entries_page,
         'groups': groups,
         'total_count': total_count,
-        'filters': {'search': search, 'group': group_id, 'source': source, 'status': status},
+        'filters': {
+            'search':    search,
+            'group':     group_id,
+            'source':    source,
+            'status':    status,
+            'pinned':    pinned,
+            'hit_min':   hit_min_raw,
+            'hit_max':   hit_max_raw,
+            'score_min': score_min_raw,
+            'score_max': score_max_raw,
+        },
         'score_30d': score_30d,
         'score_24h': score_24h,
         'count_active': count_active,
