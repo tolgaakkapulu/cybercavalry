@@ -5,10 +5,13 @@ Management command: python manage.py make_release [--full]
    --full  also removes collected static files (staticfiles/) and log files.
 
 2. Creates a zip archive of the project, excluding runtime/sensitive paths.
+   `.env` (runtime secrets) is always excluded; `.env.example` (the template
+   fresh installs need) is always included.
 
 3. Saves the archive to  <BASE_DIR>/VERSIONS/  with the name:
-   {platform_name}_v{platform_version}_{YYYY.mm.dd}_{n}.zip
-   where {n} increments automatically if a file with the same date already exists.
+   {platform_name}_v{platform_version}_{YYYY.mm.dd}.zip
+   Existing files with the same name are overwritten -- differentiate builds
+   via `--bump` (default) rather than same-day sequence suffixes.
 """
 
 import os
@@ -43,6 +46,13 @@ _EXCLUDE_SUFFIXES = {
 _EXCLUDE_FILES = {
     '.env',
     'Thumbs.db',
+}
+
+# Dotfiles that ARE shipped in the release despite the default dotfile filter.
+# `.env.example` is the parameter template fresh installs consult (setup.sh /
+# setup.ps1 warn if it's missing when generating a first-run .env).
+_INCLUDE_DOTFILES = {
+    '.env.example',
 }
 
 
@@ -96,9 +106,16 @@ class Command(BaseCommand):
         versions_dir = base_dir / 'VERSIONS'
         versions_dir.mkdir(exist_ok=True)
 
-        n        = self._next_sequence(versions_dir, platform_name, platform_version, today)
-        filename = f'{platform_name}_v{platform_version}_{today}_{n}.zip'
+        # Same-day rebuilds overwrite the prior zip -- differentiate via
+        # `--bump` (default) which increments VERSION on every run. A user
+        # running with `--no-bump` twice on the same day is opting in to
+        # overwrite.
+        filename = f'{platform_name}_v{platform_version}_{today}.zip'
         out_path = versions_dir / filename
+        if out_path.exists():
+            self.stdout.write(self.style.WARNING(
+                f'\nOverwriting existing archive: VERSIONS/{filename}'
+            ))
 
         # ── 3. Create zip ─────────────────────────────────────────────────────
         self.stdout.write(self.style.MIGRATE_HEADING('\n=== Archive ==='))
@@ -164,8 +181,12 @@ class Command(BaseCommand):
                 for filename in files:
                     file_path = root_path / filename
 
-                    # Skip excluded suffixes and filenames
-                    if (file_path.suffix.lower() in _EXCLUDE_SUFFIXES
+                    # Whitelist wins over the dotfile filter -- lets us ship
+                    # `.env.example` (a template fresh installs need) while
+                    # still excluding every other dotfile by default.
+                    if filename in _INCLUDE_DOTFILES:
+                        pass
+                    elif (file_path.suffix.lower() in _EXCLUDE_SUFFIXES
                             or filename in _EXCLUDE_FILES
                             or filename.startswith('.')):
                         continue
@@ -178,21 +199,6 @@ class Command(BaseCommand):
 
         size_mb = out_path.stat().st_size / 1024 / 1024
         self.stdout.write(f'  {added} files archived  ({size_mb:.1f} MB).')
-
-    def _next_sequence(self, versions_dir: Path, name: str, version: str, today: str) -> int:
-        """Return the next integer suffix so the filename is unique for today."""
-        prefix   = f'{name}_v{version}_{today}_'
-        existing = [
-            f.name for f in versions_dir.glob(f'{prefix}*.zip')
-        ]
-        if not existing:
-            return 1
-        numbers = []
-        for fname in existing:
-            m = re.search(r'_(\d+)\.zip$', fname)
-            if m:
-                numbers.append(int(m.group(1)))
-        return max(numbers, default=0) + 1
 
     def _get_platform_name(self) -> str:
         try:

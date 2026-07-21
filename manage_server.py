@@ -439,6 +439,13 @@ _ZIP_EXCLUDE_FILES = {
     'Thumbs.db',
 }
 
+# Dotfiles that ARE shipped in the release despite the default dotfile filter.
+# `.env.example` is the parameter template the setup scripts document -- it
+# ships so operators can see every knob without opening the repo.
+_ZIP_INCLUDE_DOTFILES = {
+    '.env.example',
+}
+
 
 def _release_clean(base_dir: Path) -> None:
     """Remove __pycache__, .pyc files, staticfiles/ and logs/ — non-destructive clean."""
@@ -527,53 +534,6 @@ def _get_platform_info(base_dir: Path):
         return 'CYBERCavalry', version
 
 
-def _next_sequence(versions_dir: Path, name: str, version: str, today: str) -> int:
-    prefix   = f'{name}_v{version}_{today}_'
-    existing = [f.name for f in versions_dir.glob(f'{prefix}*.zip')]
-    if not existing:
-        return 1
-    numbers = []
-    for fname in existing:
-        m = re.search(r'_(\d+)\.zip$', fname)
-        if m:
-            numbers.append(int(m.group(1)))
-    return max(numbers, default=0) + 1
-
-
-def _generate_secret_key() -> str:
-    chars = string.ascii_letters + string.digits + '!@#$%^&*(-_=+)'
-    return ''.join(secrets.choice(chars) for _ in range(64))
-
-
-def _build_env_content(base_dir: Path) -> str:
-    """
-    Build the .env shipped inside a release zip (for a FRESH install).
-
-    Generates fresh, independent SECRET_KEY and FIELD_ENCRYPTION_KEY values.
-    NOTE: updates to an existing install must NOT use this .env — update_rhel.sh
-    preserves the live .env (and its keys) so encrypted secrets stay decryptable.
-    """
-    env_file = base_dir / '.env'
-    if env_file.exists():
-        text = env_file.read_text(encoding='utf-8')
-    else:
-        text = (
-            "SECRET_KEY=\n"
-            "DEBUG=False\n"
-            "ALLOWED_HOSTS=*\n"
-        )
-
-    def _set_key(text, name):
-        new_val = _generate_secret_key()
-        if re.search(rf'^{name}=', text, re.MULTILINE):
-            return re.sub(rf'^{name}=.*$', f'{name}={new_val}', text, flags=re.MULTILINE)
-        return f'{name}={new_val}\n' + text
-
-    text = _set_key(text, 'SECRET_KEY')
-    text = _set_key(text, 'FIELD_ENCRYPTION_KEY')
-    return text
-
-
 def _create_zip(base_dir: Path, out_path: Path) -> int:
     project_root = base_dir.relative_to(base_dir.parent)  # e.g. "CYBERCavalry"
     added = 0
@@ -587,7 +547,11 @@ def _create_zip(base_dir: Path, out_path: Path) -> int:
             ]
             for filename in files:
                 file_path = root_path / filename
-                if (file_path.suffix.lower() in _ZIP_EXCLUDE_SUFFIXES
+                # Whitelist wins over the dotfile filter -- lets us ship
+                # `.env.example` while still excluding every other dotfile.
+                if filename in _ZIP_INCLUDE_DOTFILES:
+                    pass
+                elif (file_path.suffix.lower() in _ZIP_EXCLUDE_SUFFIXES
                         or filename in _ZIP_EXCLUDE_FILES
                         or filename.startswith('.')):
                     continue
@@ -604,10 +568,6 @@ def _create_zip(base_dir: Path, out_path: Path) -> int:
                 # Python < 3.11: write an empty directory entry manually
                 info = zipfile.ZipInfo(dir_arcname)
                 zf.writestr(info, '')
-
-        # Fresh .env with new SECRET_KEY
-        env_content = _build_env_content(base_dir)
-        zf.writestr(str(project_root / '.env'), env_content)
 
     return added
 
@@ -645,9 +605,13 @@ def cmd_release(_args):
         log(f"  {OK} Created VERSIONS/ directory at {versions_dir}.", GREEN)
     else:
         log(f"  {SKIP} VERSIONS/ already exists at {versions_dir}.", YELLOW)
-    n        = _next_sequence(versions_dir, platform_name, platform_version, today)
-    filename = f'{platform_name}_v{platform_version}_{today}_{n}.zip'
+    # Same-day rebuilds overwrite the prior zip -- differentiate via `--bump`
+    # (default) which increments VERSION on every run. `--no-bump` on the
+    # same day is an explicit opt-in to overwrite.
+    filename = f'{platform_name}_v{platform_version}_{today}.zip'
     out_path = versions_dir / filename
+    if out_path.exists():
+        log(f"  {SKIP} Overwriting existing archive VERSIONS/{filename}.", YELLOW)
     log(f"  {OK} Archive name: {filename}", GREEN)
 
     # Step 3 — Create zip
@@ -656,7 +620,7 @@ def cmd_release(_args):
     added    = _create_zip(BASE_DIR, out_path)
     size_mb  = out_path.stat().st_size / 1024 / 1024
     log(f"  {OK} {added} files  |  {size_mb:.1f} MB", GREEN)
-    log(f"  {OK} Included: certs/ (empty),  logs/ (empty),  .env (fresh SECRET_KEY)", GREEN)
+    log(f"  {OK} Included: certs/ (empty),  logs/ (empty),  .env.example (template)", GREEN)
 
     print()
     log("=" * 55, BOLD)
