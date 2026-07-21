@@ -368,12 +368,23 @@ do_update() {
     sudo -u "$SERVICE_USER" ./venv/bin/python manage.py collectstatic --noinput >/dev/null
     apply_selinux
 
-    systemctl start "$SERVICE_NAME"
+    # Clear compiled Python bytecode so the freshly-started service picks up the
+    # new .py files rather than an interpreter-cached .pyc from the prior release.
+    # Skip venv/ so we don't invalidate the site-packages caches we just installed.
+    find "$INSTALL_DIR" -name __pycache__ -type d -not -path "*/venv/*" -exec rm -rf {} + 2>/dev/null || true
+    ok "bytecode cache cleared"
+
+    # `restart` (not `start`) is idempotent -- works whether the earlier `stop`
+    # succeeded, whether the service was already running, or whether systemd
+    # auto-started it between stop and now. Guarantees the service ends this
+    # script running fresh code.
+    systemctl restart "$SERVICE_NAME"
     sleep 3
     systemctl is-active --quiet "$SERVICE_NAME" || {
         journalctl -u "$SERVICE_NAME" -n 30 --no-pager
         die "service failed — rollback: sudo rsync -a --delete --exclude venv $rollback/ $INSTALL_DIR/"
     }
+    ok "service restarted"
     ok "update complete (rollback available at $rollback)"
 }
 

@@ -496,12 +496,24 @@ function Invoke-Update {
         icacls "$InstallDir\certs\key.pem" /inheritance:r /grant:r 'Administrators:F' 'SYSTEM:F' | Out-Null
     }
 
-    Start-Service $svcName
+    # Clear compiled Python bytecode so the freshly-started service picks up the
+    # new .py files rather than an interpreter-cached .pyc from the prior release.
+    # Skip venv\ so we don't invalidate the site-packages caches we just installed.
+    Get-ChildItem -Path $InstallDir -Recurse -Directory -Filter '__pycache__' -EA SilentlyContinue |
+        Where-Object { $_.FullName -notlike "$InstallDir\venv\*" } |
+        Remove-Item -Recurse -Force -EA SilentlyContinue
+    Ok 'bytecode cache cleared'
+
+    # Restart-Service (not Start-Service) is idempotent -- if the service was
+    # somehow still running, it gets stopped and started; if it's stopped, it
+    # just starts. Either way the service ends this script running fresh code.
+    Restart-Service $svcName -Force
     Start-Sleep -Seconds 3
     $status = (Get-Service $svcName).Status
     if ($status -ne 'Running') {
         Die "service failed to restart. Rollback:  robocopy $rollback $InstallDir /MIR /XD venv"
     }
+    Ok 'service restarted'
     Ok "update complete (rollback: $rollback)"
 }
 
