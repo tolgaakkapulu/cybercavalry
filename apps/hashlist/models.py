@@ -59,11 +59,16 @@ class HashEntry(models.Model):
     vt_malicious   = models.IntegerField(null=True, blank=True, help_text="Number of engines detecting as malicious")
     vt_total       = models.IntegerField(null=True, blank=True, help_text="Total number of engines scanned")
     vt_checked_at  = models.DateTimeField(null=True, blank=True, help_text="Last VirusTotal query time")
-    # True when VT was queried but returned no result (timeout/quota/network).
-    # The entry stays is_active=True so admins still see it in the console, but
-    # /api/v1/hashlist/ hides it until a real score arrives -- avoids pushing a
-    # hash to downstream consumers on the basis of "we couldn't verify it".
-    vt_unavailable = models.BooleanField(default=False, db_index=True)
+    vt_unavailable = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text=(
+            "True when VirusTotal was queried but did not return a result "
+            "(timeout, quota exhausted, network error). Such entries stay "
+            "is_active=True for admin visibility but are excluded from the "
+            "downstream /api/v1/hashlist/ feed until a valid score arrives."
+        ),
+    )
     # VirusTotal enrichment metadata (shown in the hash tooltip)
     vt_threat_label     = models.CharField(max_length=255, blank=True, default='')
     vt_type_description = models.CharField(max_length=120, blank=True, default='')

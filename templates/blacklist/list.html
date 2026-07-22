@@ -59,9 +59,11 @@
   <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
     <!-- Left: status tabs + filters toggle + active badges -->
     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-      {# Preserve every filter across status-tab clicks. Each param is
-         emitted only when truthy so a fresh visit stays free of dangling
-         `&pinned=&hit_min=...` in the URL. #}
+      {% comment %}
+      Preserve every filter across status-tab clicks. Each param is
+      emitted only when truthy so a fresh visit stays free of dangling
+      `&pinned=&hit_min=...` in the URL.
+      {% endcomment %}
       <a href="?{% if filters.search %}search={{ filters.search }}&{% endif %}{% if filters.group %}group={{ filters.group }}&{% endif %}{% if filters.source %}source={{ filters.source }}&{% endif %}{% if filters.pinned %}pinned={{ filters.pinned }}&{% endif %}{% if filters.hit_min %}hit_min={{ filters.hit_min }}&{% endif %}{% if filters.hit_max %}hit_max={{ filters.hit_max }}&{% endif %}{% if filters.score_min %}score_min={{ filters.score_min }}&{% endif %}{% if filters.score_max %}score_max={{ filters.score_max }}&{% endif %}status=active"
          class="btn btn-sm {% if filters.status == 'active' %}btn-brand{% else %}btn-ghost{% endif %}">Active <span data-bl-count="active" style="opacity:.7;font-size:11px;">{{ count_active }}</span></a>
       <a href="?{% if filters.search %}search={{ filters.search }}&{% endif %}{% if filters.group %}group={{ filters.group }}&{% endif %}{% if filters.source %}source={{ filters.source }}&{% endif %}{% if filters.pinned %}pinned={{ filters.pinned }}&{% endif %}{% if filters.hit_min %}hit_min={{ filters.hit_min }}&{% endif %}{% if filters.hit_max %}hit_max={{ filters.hit_max }}&{% endif %}{% if filters.score_min %}score_min={{ filters.score_min }}&{% endif %}{% if filters.score_max %}score_max={{ filters.score_max }}&{% endif %}status=inactive"
