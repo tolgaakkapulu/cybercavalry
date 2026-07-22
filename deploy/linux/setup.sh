@@ -13,6 +13,10 @@
 #    --https-port   N      TLS listening port  (default: 8443)
 #    --service-user NAME   System user that runs the service  (default: cavalry)
 #    --service-name NAME   systemd unit name  (default: cybercavalry)
+#    --reinstall-deps      Force pip install during update (default: skipped
+#                          -- venv already has every package needed for
+#                          runtime; only pass this when requirements.txt
+#                          actually gained/dropped a package).
 #
 #  Prerequisites (install once, before running this script):
 #    - python3.9+ (with python3-venv on Debian family) and unzip
@@ -32,6 +36,11 @@ SERVICE_NAME="cybercavalry"
 HTTPS_PORT=8443
 ZIP_SOURCE="/home/cavalry.svc"
 ROLLBACK_DIR="/data/rollback"
+# Update flow only calls pip when the user asks for it (--reinstall-deps) or
+# the venv is genuinely broken. Runtime doesn't need wheels -- the packages
+# already live under venv/lib/site-packages -- so skipping pip is the safe
+# default for offline production boxes.
+REINSTALL_DEPS="no"
 
 # ── Helpers ────────────────────────────────────────────────────────
 C_INFO=$'\e[96m'; C_OK=$'\e[92m'; C_WARN=$'\e[93m'; C_ERR=$'\e[91m'; C_END=$'\e[0m'
@@ -67,6 +76,7 @@ while [[ $# -gt 0 ]]; do
         --service-user=*) SERVICE_USER="${1#*=}"; shift ;;
         --service-name)   SERVICE_NAME="$2";   shift 2 ;;
         --service-name=*) SERVICE_NAME="${1#*=}"; shift ;;
+        --reinstall-deps) REINSTALL_DEPS="yes"; shift ;;
         -h|--help)
             sed -n '/^# ─\+$/,/^# ─\+$/p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
@@ -104,23 +114,97 @@ detect_source() {
 }
 
 # ── Shared: venv + offline dependencies ────────────────────────────
+# Emit a warning (non-fatal) when requirements.txt hash differs from the last
+# successful install. Called from do_update on the "venv OK, no --reinstall-deps"
+# path so the operator sees a hint that pip might be needed. The update still
+# proceeds -- if imports are actually missing, the service will fail on start.
+_warn_if_requirements_changed() {
+    local req_file="$INSTALL_DIR/requirements.txt"
+    local hash_file="$INSTALL_DIR/venv/.requirements.sha256"
+    [[ -f "$req_file" && -f "$hash_file" ]] || return 0
+    local current_hash stored_hash
+    current_hash=$(sha256sum "$req_file" | awk '{print $1}')
+    stored_hash=$(awk '{print $1}' "$hash_file")
+    if [[ "$current_hash" != "$stored_hash" ]]; then
+        warn "requirements.txt changed since the last install."
+        warn "The current venv packages will be used as-is. If a NEW package"
+        warn "was added, the service will fail on startup. To refresh packages:"
+        warn "    sudo bash $0 update --install-dir $INSTALL_DIR --reinstall-deps"
+    fi
+}
+
 install_deps() {
+    log "install_deps: entering"
     local py="$INSTALL_DIR/venv/bin/python"
     local pip="$INSTALL_DIR/venv/bin/pip"
+
+    if [[ ! -x "$py" ]]; then die "venv python not executable at $py"; fi
+    if [[ ! -x "$pip" ]]; then die "venv pip not executable at $pip"; fi
+
+    local req_file="$INSTALL_DIR/requirements.txt"
+    local hash_file="$INSTALL_DIR/venv/.requirements.sha256"
+
     local tag; tag=py$("$py" -c "import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))")
     local wheels="$INSTALL_DIR/deploy/wheels/$tag"
-    if [[ ! -d "$wheels" ]]; then
-        local available; available=$(ls "$INSTALL_DIR/deploy/wheels/" 2>/dev/null | tr '\n' ' ')
-        die "Wheel bundle missing: $wheels
-Your Python is $tag but only these bundles ship: ${available:-(none)}.
-Fix: install a matching Python (e.g. 'dnf install python3.11' / 'apt install python3.11'),
-then remove venv and rerun this script. Or regenerate the bundle with:
-    python deploy/prepare_offline_bundle.py --py ${tag#py}"
+    log "python tag: $tag  |  wheels dir: $wheels"
+
+    # Count *.whl files. Using a simple glob + shopt(nullglob) is more robust
+    # than `find -name X -o -name Y` (whose default -print action interacts
+    # badly with -o and silently underreports).
+    local wheel_count=0
+    if [[ -d "$wheels" ]]; then
+        shopt -s nullglob
+        local wheels_arr=("$wheels"/*.whl "$wheels"/*.tar.gz)
+        shopt -u nullglob
+        wheel_count=${#wheels_arr[@]}
     fi
-    sudo -u "$SERVICE_USER" "$pip" install --no-index --find-links "$wheels/" --upgrade pip >/dev/null
+    log "wheels found: $wheel_count"
+
+    # Three install strategies (mirrors Windows setup.ps1):
+    #   1. Bundle missing/empty       -> install from PyPI (needs internet)
+    #   2. Bundle present + complete  -> fully offline
+    #   3. Bundle present but partial -> try offline, fall back to PyPI on failure
+    if [[ "$wheel_count" -eq 0 ]]; then
+        local available; available=$(ls "$INSTALL_DIR/deploy/wheels/" 2>/dev/null | tr '\n' ' ')
+        warn "No wheel bundle for $tag (available: ${available:-none}). Falling back to PyPI (needs internet)."
+        warn "If this hangs, the box likely has no PyPI connectivity."
+        warn "Verify with:  curl -m 5 https://pypi.org/simple/ -o /dev/null -w 'http_code=%{http_code}\\n'"
+        # --timeout=30 caps EACH TCP connection at 30s so the script fails
+        # fast on air-gapped boxes instead of hanging on default (15min).
+        log "upgrading pip via PyPI (timeout=30s per attempt)..."
+        sudo -u "$SERVICE_USER" "$pip" install --disable-pip-version-check --timeout=30 --upgrade pip 2>&1 \
+            || die "pip upgrade from PyPI failed. Either the box is air-gapped OR the wheel bundle
+is missing. Fix by regenerating the bundle on an internet-connected box:
+    python deploy/prepare_offline_bundle.py --os linux --py ${tag#py}
+Then include deploy/wheels/ in the release zip and rerun update."
+        log "installing requirements from PyPI (timeout=30s per attempt)..."
+        sudo -u "$SERVICE_USER" "$pip" install --disable-pip-version-check --timeout=30 \
+            -r "$INSTALL_DIR/requirements.txt" gunicorn 2>&1 \
+            || die "pip install from PyPI failed. See diagnostic above."
+        ok "dependencies from PyPI ($tag)"
+        sudo -u "$SERVICE_USER" sh -c "sha256sum '$req_file' > '$hash_file'"
+        return
+    fi
+
+    log "upgrading pip from $tag bundle ($wheel_count wheels)..."
     sudo -u "$SERVICE_USER" "$pip" install --no-index --find-links "$wheels/" \
-        -r "$INSTALL_DIR/requirements.txt" gunicorn
-    ok "dependencies from $tag"
+        --upgrade pip 2>&1 || warn "pip self-upgrade skipped (already up to date, or missing from bundle)"
+
+    log "installing requirements from $tag bundle..."
+    if sudo -u "$SERVICE_USER" "$pip" install --no-index --find-links "$wheels/" \
+            -r "$INSTALL_DIR/requirements.txt" gunicorn 2>&1; then
+        ok "dependencies from $tag (fully offline)"
+    else
+        warn "offline install incomplete -- retrying with PyPI as fallback"
+        sudo -u "$SERVICE_USER" "$pip" install --find-links "$wheels/" \
+            -r "$INSTALL_DIR/requirements.txt" gunicorn 2>&1 \
+            || die "pip install failed even with PyPI fallback. Check network + package availability."
+        ok "dependencies: $tag bundle + PyPI fallback"
+    fi
+    # Record the requirements hash so next update can short-circuit when
+    # nothing changed (see install_deps prologue). Written after a successful
+    # install so a failed attempt doesn't leave a stale marker.
+    sudo -u "$SERVICE_USER" sh -c "sha256sum '$req_file' > '$hash_file'"
 }
 
 create_venv() {
@@ -334,9 +418,16 @@ do_update() {
     local rollback="$ROLLBACK_DIR/$stamp"
     install -d -o "$SERVICE_USER" -g "$SERVICE_USER" "$ROLLBACK_DIR"
     mkdir -p "$rollback"
-    sudo -u "$SERVICE_USER" "$INSTALL_DIR/venv/bin/python" \
-        "$INSTALL_DIR/manage.py" backup_db --force 2>/dev/null || \
-        warn "app backup_db failed — snapshot only"
+    # Capture stderr so we can show WHY backup_db fell over instead of just
+    # silently degrading to "snapshot only". Common causes:
+    #   * Postgres DB in use (backup_db supports SQLite only)
+    #   * `.env` unreadable by SERVICE_USER
+    #   * backup dir has wrong ownership
+    # cd first: the DATABASE_URL default `sqlite:///cybercavalry.db` is a
+    # relative path -- run from anywhere else and Django can't find the DB.
+    local backup_err; backup_err=$(cd "$INSTALL_DIR" && sudo -u "$SERVICE_USER" \
+        "$INSTALL_DIR/venv/bin/python" "$INSTALL_DIR/manage.py" backup_db --force 2>&1 >/dev/null) \
+        || warn "app backup_db failed — snapshot only  (reason: ${backup_err:-unknown; check the SERVICE_USER can read .env and write to $INSTALL_DIR/backups})"
     rsync -a --exclude venv --exclude backups "$INSTALL_DIR/" "$rollback/"
     ok "snapshot: $rollback"
 
@@ -345,46 +436,76 @@ do_update() {
     local tmp; tmp=$(mktemp -d)
     unzip -q "$zip" -d "$tmp"
     [[ -d "$tmp/CYBERCavalry" ]] || { rm -rf "$tmp"; die "unexpected zip layout"; }
+    # deploy/wheels/ is excluded so an air-gapped target keeps its offline
+    # wheel bundle even if the incoming zip's dev machine happens to have
+    # an empty wheels/ dir. Regenerate the bundle explicitly with
+    # `prepare_offline_bundle.py` when dependencies actually change.
     rsync -a --delete \
         --exclude '.env' --exclude 'venv/' --exclude 'certs/' \
         --exclude 'logs/' --exclude 'backups/' --exclude 'cybercavalry.db*' \
-        --exclude 'media/' \
+        --exclude 'media/' --exclude 'deploy/wheels/' \
         "$tmp/CYBERCavalry/" "$INSTALL_DIR/"
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
     rm -rf "$tmp"
     ok "code synced (.env / db / certs / logs preserved)"
 
-    # venv health pre-flight: rebuild if pip is broken (rename bug, shebang rot, etc.)
+    # venv health pre-flight. Three outcomes:
+    #   1. venv broken       -> rebuild (needs wheels OR PyPI)
+    #   2. --reinstall-deps  -> user asked, run install_deps explicitly
+    #   3. venv OK, default  -> SKIP pip entirely. Runtime doesn't need wheels;
+    #                           the packages are already under site-packages.
+    #                           Warn if requirements.txt hash changed since the
+    #                           last install so the user knows to consider
+    #                           --reinstall-deps.
+    log "checking venv health..."
     if ! sudo -u "$SERVICE_USER" "$INSTALL_DIR/venv/bin/pip" --version >/dev/null 2>&1; then
-        warn "venv broken — rebuilding"
+        warn "venv broken — rebuilding (needs wheels bundle OR PyPI access)"
         rm -rf "$INSTALL_DIR/venv"
+        log "creating fresh venv..."
         create_venv
-    else
+    elif [[ "$REINSTALL_DEPS" == "yes" ]]; then
+        log "venv OK -- --reinstall-deps passed, running install_deps"
         install_deps
+    else
+        log "venv OK -- skipping pip (venv already has all runtime packages)"
+        _warn_if_requirements_changed
     fi
 
     cd "$INSTALL_DIR"
+    log "running migrations..."
     sudo -u "$SERVICE_USER" ./venv/bin/python manage.py migrate --noinput
+    ok "migrations applied"
+    log "collecting static files..."
     sudo -u "$SERVICE_USER" ./venv/bin/python manage.py collectstatic --noinput >/dev/null
+    ok "static collected"
     apply_selinux
 
     # Clear compiled Python bytecode so the freshly-started service picks up the
     # new .py files rather than an interpreter-cached .pyc from the prior release.
     # Skip venv/ so we don't invalidate the site-packages caches we just installed.
+    # `|| true` because find can print harmless "cannot access ..." warnings
+    # when it descends into a __pycache__ we just removed.
     find "$INSTALL_DIR" -name __pycache__ -type d -not -path "*/venv/*" -exec rm -rf {} + 2>/dev/null || true
     ok "bytecode cache cleared"
 
-    # `restart` (not `start`) is idempotent -- works whether the earlier `stop`
-    # succeeded, whether the service was already running, or whether systemd
-    # auto-started it between stop and now. Guarantees the service ends this
-    # script running fresh code.
-    systemctl restart "$SERVICE_NAME"
+    # Restart the service. Wrapped in an `if` block so a non-zero exit from
+    # systemctl (unit-not-found, unit-masked, permission-denied, etc.) does
+    # NOT trigger `set -e` and silently kill the script -- we want to
+    # explicitly report the failure with journalctl output.
+    log "restarting $SERVICE_NAME..."
+    if ! systemctl restart "$SERVICE_NAME" 2>&1; then
+        warn "systemctl restart returned non-zero -- trying manual start as fallback..."
+        systemctl start "$SERVICE_NAME" 2>&1 || warn "manual start also failed"
+    fi
     sleep 3
-    systemctl is-active --quiet "$SERVICE_NAME" || {
-        journalctl -u "$SERVICE_NAME" -n 30 --no-pager
-        die "service failed — rollback: sudo rsync -a --delete --exclude venv $rollback/ $INSTALL_DIR/"
-    }
-    ok "service restarted"
+    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+        warn "service is not active after restart -- diagnostic dump:"
+        systemctl status "$SERVICE_NAME" --no-pager -n 20 || true
+        echo "--- journalctl ---"
+        journalctl -u "$SERVICE_NAME" -n 40 --no-pager || true
+        die "service failed to start. Rollback: sudo rsync -a --delete --exclude venv $rollback/ $INSTALL_DIR/"
+    fi
+    ok "service restarted (active)"
     ok "update complete (rollback available at $rollback)"
 }
 

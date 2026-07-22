@@ -468,10 +468,12 @@ function Invoke-Update {
     $newSrc = Join-Path $tmp 'CYBERCavalry'
     if (-not (Test-Path $newSrc)) { Die 'unexpected zip layout' }
 
-    # Sync -- preserve .env, venv, certs, logs, backups, db, media (uploaded brand assets)
+    # Sync -- preserve .env, venv, certs, logs, backups, db, media (uploaded
+    # brand assets), and deploy\wheels (offline bundle survives an update
+    # even if the dev machine happened to have an empty wheels\ dir).
     $roboArgs = @($newSrc, $InstallDir, '/MIR',
         '/XF', '.env', 'cybercavalry.db', 'cybercavalry.db-wal', 'cybercavalry.db-shm',
-        '/XD', "$InstallDir\venv", "$InstallDir\certs", "$InstallDir\logs", "$InstallDir\backups", "$InstallDir\media")
+        '/XD', "$InstallDir\venv", "$InstallDir\certs", "$InstallDir\logs", "$InstallDir\backups", "$InstallDir\media", "$InstallDir\deploy\wheels")
     robocopy @roboArgs | Out-Null
     if ($LASTEXITCODE -ge 8) { Die "robocopy failed ($LASTEXITCODE)" }
     Remove-Item -Recurse -Force $tmp
