@@ -8,7 +8,7 @@
 
 Aggregate, score and distribute IP / hash blacklists from a single Django control plane.
 
-![Python](https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12-blue.svg)
+![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![Django](https://img.shields.io/badge/django-4.2%20LTS-092E20.svg)
 ![License](https://img.shields.io/badge/license-GPL%20v3-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux%20|%20Windows-lightgrey.svg)
@@ -194,7 +194,7 @@ CYBERCavalry/
 
 ## 📋 Prerequisites
 
-- **Python** 3.10, 3.11, or 3.12
+- **Python** 3.10+
 - **pip** and `venv`
 - **git**
 - (Prod only) **PostgreSQL** 12+, **SMTP relay**, **Nginx / Traefik** or standalone Gunicorn with TLS
