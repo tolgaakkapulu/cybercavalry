@@ -696,6 +696,41 @@ def blacklist_bulk_deactivate(request):
     return _bl_redirect()
 
 
+def _bulk_pin_common(request, pin_value):
+    """Set is_pinned to a fixed value on every selected blacklist entry.
+    Shared helper for bulk_pin / bulk_unpin -- both are one-liners on top of it."""
+    status = request.POST.get('status', 'active')
+    ids = request.POST.getlist('entry_ids')
+    if not ids:
+        messages.warning(request, "No entries selected.")
+        return _bl_redirect(status)
+    entries = BlacklistEntry.objects.filter(pk__in=ids)
+    cidrs = list(entries.values_list('cidr', flat=True))
+    count = entries.update(is_pinned=pin_value)
+    action = 'bulk_pin' if pin_value else 'bulk_unpin'
+    ActivityLog.log(request.user, f'blacklist.{action}', 'BlacklistEntry', None,
+                    {'count': count, 'cidrs': cidrs}, getattr(request, 'client_ip', ''))
+    verb = 'pinned' if pin_value else 'unpinned'
+    messages.success(request, f"{count} entr{'y' if count == 1 else 'ies'} {verb}.")
+    return _bl_redirect(status)
+
+
+@login_required_custom
+@role_required('admin', 'operator')
+def blacklist_bulk_pin(request):
+    if request.method == 'POST':
+        return _bulk_pin_common(request, pin_value=True)
+    return _bl_redirect()
+
+
+@login_required_custom
+@role_required('admin', 'operator')
+def blacklist_bulk_unpin(request):
+    if request.method == 'POST':
+        return _bulk_pin_common(request, pin_value=False)
+    return _bl_redirect()
+
+
 @login_required_custom
 @role_required('admin', 'operator')
 def blacklist_deactivate_all(request):

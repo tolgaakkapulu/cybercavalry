@@ -155,22 +155,22 @@
         <option value="yes" {% if filters.pinned == 'yes' %}selected{% endif %}>Pinned Only</option>
         <option value="no"  {% if filters.pinned == 'no'  %}selected{% endif %}>Unpinned Only</option>
       </select>
-    </div>
-    <div class="filter-bar" style="margin-top:8px;">
-      <span class="text-muted text-sm" style="white-space:nowrap;">Count:</span>
-      <input type="number" name="hit_min" class="form-input form-input-sm" style="max-width:100px;"
-             placeholder="min" min="0" value="{{ filters.hit_min }}">
-      <span class="text-muted text-sm">to</span>
-      <input type="number" name="hit_max" class="form-input form-input-sm" style="max-width:100px;"
-             placeholder="max" min="0" value="{{ filters.hit_max }}">
-      <span style="width:12px;"></span>
-      <span class="text-muted text-sm" style="white-space:nowrap;">AbuseIPDB score:</span>
-      <input type="number" name="score_min" class="form-input form-input-sm" style="max-width:100px;"
-             placeholder="min" min="0" max="100" value="{{ filters.score_min }}">
-      <span class="text-muted text-sm">to</span>
-      <input type="number" name="score_max" class="form-input form-input-sm" style="max-width:100px;"
-             placeholder="max" min="0" max="100" value="{{ filters.score_max }}">
-      <span style="flex:1;"></span>
+      <div style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">
+        <span class="text-muted text-sm">Count:</span>
+        <input type="number" name="hit_min" class="form-input form-input-sm" style="width:70px;"
+               placeholder="min" min="0" value="{{ filters.hit_min }}">
+        <span class="text-muted text-sm">–</span>
+        <input type="number" name="hit_max" class="form-input form-input-sm" style="width:70px;"
+               placeholder="max" min="0" value="{{ filters.hit_max }}">
+      </div>
+      <div style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">
+        <span class="text-muted text-sm">AbuseIPDB:</span>
+        <input type="number" name="score_min" class="form-input form-input-sm" style="width:70px;"
+               placeholder="min" min="0" max="100" value="{{ filters.score_min }}">
+        <span class="text-muted text-sm">–</span>
+        <input type="number" name="score_max" class="form-input form-input-sm" style="width:70px;"
+               placeholder="max" min="0" max="100" value="{{ filters.score_max }}">
+      </div>
       <button type="submit" class="btn btn-brand btn-sm">Apply</button>
       <a href="{% url 'blacklist:list' %}" class="btn btn-ghost btn-sm">Clear</a>
     </div>
@@ -192,6 +192,8 @@
     <a type="button" class="btn btn-warning btn-sm" data-on-click="blConfirm('deactivate')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg> Deactivate</a>
     {% endif %}
     <a type="button" class="btn btn-orange btn-sm" data-on-click="openBlBulkEditModal()"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> Edit</a>
+    <a type="button" class="btn btn-purple btn-sm" data-on-click="blConfirm('pin')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg> Pin</a>
+    <a type="button" class="btn btn-ghost btn-sm" data-on-click="blConfirm('unpin')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="4" y1="4" x2="20" y2="20"/><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg> Unpin</a>
     <a type="button" class="btn btn-pink btn-sm" data-on-click="blConfirm('score')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> Query AbuseIPDB</a>
     <a type="button" class="btn btn-ghost btn-sm" data-on-click="clearSelectionBl()">Clear</a>
 
@@ -819,6 +821,24 @@ window.blSwitchTab = function (tab) {
       iconStroke: '#c83c8c',
       iconPath: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
       action: '{% url "blacklist:bulk_score" %}',
+    },
+    pin: {
+      title: 'Pin Selected',
+      body: 'Selected entries will be pinned. Pinned entries are exempt from automatic score-based deactivation and group reassignment.',
+      btnText: 'Pin',
+      btnClass: 'btn-purple',
+      iconStroke: '#7c3aed',
+      iconPath: '<line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>',
+      action: '{% url "blacklist:bulk_pin" %}',
+    },
+    unpin: {
+      title: 'Unpin Selected',
+      body: 'Selected entries will be unpinned. They will resume normal scoring/deactivation rules.',
+      btnText: 'Unpin',
+      btnClass: 'btn-ghost',
+      iconStroke: 'var(--text-muted)',
+      iconPath: '<line x1="4" y1="4" x2="20" y2="20"/><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>',
+      action: '{% url "blacklist:bulk_unpin" %}',
     },
     hard_remove: {
       title: 'Permanently Remove Selected',

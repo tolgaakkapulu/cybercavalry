@@ -528,6 +528,44 @@ def hashlist_bulk_activate(request):
     return _hl_redirect()
 
 
+# ── Bulk Pin / Unpin ──────────────────────────────────────────────────────────
+
+def _hl_bulk_pin_common(request, pin_value):
+    """Set is_pinned to a fixed value on every selected hash entry.
+    Shared helper for bulk_pin / bulk_unpin."""
+    status = request.POST.get('status', 'active')
+    ids = request.POST.getlist('entry_ids')
+    if not ids:
+        messages.warning(request, 'No entries selected.')
+        return _hl_redirect(status)
+    qs = HashEntry.objects.filter(pk__in=ids, list_type='black')
+    hashes = list(qs.values_list('hash_value', flat=True)[:20])
+    count = qs.update(is_pinned=pin_value)
+    action = 'bulk_pin' if pin_value else 'bulk_unpin'
+    ActivityLog.log(request.user, f'hashlist.{action}', 'HashEntry', None,
+                    {'count': count, 'hashes': [h[:16] + '...' for h in hashes]},
+                    getattr(request, 'client_ip', ''))
+    verb = 'pinned' if pin_value else 'unpinned'
+    messages.success(request, '{} entry(s) {}.'.format(count, verb))
+    return _hl_redirect(status)
+
+
+@login_required_custom
+@role_required('admin', 'operator')
+def hashlist_bulk_pin(request):
+    if request.method == 'POST':
+        return _hl_bulk_pin_common(request, pin_value=True)
+    return _hl_redirect()
+
+
+@login_required_custom
+@role_required('admin', 'operator')
+def hashlist_bulk_unpin(request):
+    if request.method == 'POST':
+        return _hl_bulk_pin_common(request, pin_value=False)
+    return _hl_redirect()
+
+
 # ── Edit ──────────────────────────────────────────────────────────────────────
 
 @login_required_custom

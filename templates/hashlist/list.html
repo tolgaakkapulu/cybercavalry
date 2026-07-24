@@ -136,6 +136,14 @@ da39a3ee5e6b4b0d3255bfef95601890afd80709</code>
   {% csrf_token %}
   <input type="hidden" name="status" value="{{ status }}">
 </form>
+<form method="post" action="{% url 'hashlist:bulk_pin' %}" id="hl-bulk-pin-form">
+  {% csrf_token %}
+  <input type="hidden" name="status" value="{{ status }}">
+</form>
+<form method="post" action="{% url 'hashlist:bulk_unpin' %}" id="hl-bulk-unpin-form">
+  {% csrf_token %}
+  <input type="hidden" name="status" value="{{ status }}">
+</form>
 
 {% if request.user.profile.role.can_manage_hashlist or request.user.is_superuser %}
 <div id="hl-bulk-toolbar" style="display:none;margin-bottom:10px;align-items:center;gap:10px;">
@@ -158,6 +166,14 @@ da39a3ee5e6b4b0d3255bfef95601890afd80709</code>
     Remove
   </a>
   {% endif %}
+  <a type="button" class="btn btn-purple btn-sm" data-on-click="hlConfirmBulkPin()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
+    Pin
+  </a>
+  <a type="button" class="btn btn-ghost btn-sm" data-on-click="hlConfirmBulkUnpin()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="4" y1="4" x2="20" y2="20"/><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
+    Unpin
+  </a>
   <a type="button" class="btn btn-pink btn-sm" data-on-click="hlVtBulkScore()">
     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
    Query VirusTotal
@@ -517,7 +533,8 @@ var _hlActionUrl  = '';
 
 function _syncCheckboxesToBulkForms() {
   var ids = Array.from(document.querySelectorAll('.hl-row-check:checked')).map(function (cb) { return cb.value; });
-  ['hl-bulk-deactivate-form', 'hl-bulk-activate-form', 'hl-bulk-delete-form'].forEach(function (formId) {
+  ['hl-bulk-deactivate-form', 'hl-bulk-activate-form', 'hl-bulk-delete-form',
+   'hl-bulk-pin-form', 'hl-bulk-unpin-form'].forEach(function (formId) {
     var form = document.getElementById(formId);
     form.querySelectorAll('input[name="entry_ids"]').forEach(function (el) { el.remove(); });
     ids.forEach(function (id) {
@@ -576,6 +593,20 @@ window.hlConfirmBulkActivate = function () {
   _hlActionMode = 'bulk-activate'; _syncCheckboxesToBulkForms();
   showHlConfirm('Activate Entries', count + ' entr' + (count === 1 ? 'y' : 'ies') + ' will be activated.', 'btn-success', 'Activate');
 };
+window.hlConfirmBulkPin = function () {
+  var count = document.querySelectorAll('.hl-row-check:checked').length;
+  if (count === 0) return;
+  _hlActionMode = 'bulk-pin'; _syncCheckboxesToBulkForms();
+  showHlConfirm('Pin Entries', count + ' entr' + (count === 1 ? 'y' : 'ies')
+    + ' will be pinned (exempt from automatic score-based deactivation).', 'btn-purple', 'Pin');
+};
+window.hlConfirmBulkUnpin = function () {
+  var count = document.querySelectorAll('.hl-row-check:checked').length;
+  if (count === 0) return;
+  _hlActionMode = 'bulk-unpin'; _syncCheckboxesToBulkForms();
+  showHlConfirm('Unpin Entries', count + ' entr' + (count === 1 ? 'y' : 'ies')
+    + ' will be unpinned. They will resume normal scoring rules.', 'btn-ghost', 'Unpin');
+};
 
 window.hlDoAction = function () {
   document.getElementById('hl-confirm-modal').style.display = 'none';
@@ -588,6 +619,10 @@ window.hlDoAction = function () {
     document.getElementById('hl-bulk-deactivate-form').submit();
   } else if (_hlActionMode === 'bulk-activate') {
     document.getElementById('hl-bulk-activate-form').submit();
+  } else if (_hlActionMode === 'bulk-pin') {
+    document.getElementById('hl-bulk-pin-form').submit();
+  } else if (_hlActionMode === 'bulk-unpin') {
+    document.getElementById('hl-bulk-unpin-form').submit();
   }
 };
 
