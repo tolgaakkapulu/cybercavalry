@@ -1001,6 +1001,11 @@ def _apply_activity_filters(logs, request):
             Q(action__startswith='threat_intel.virustotal') |
             Q(action__in=['api.hashlist', 'api.hash_report'])
         )
+    elif type_filter == 'api':
+        # Every incoming firewall / SIEM / SOAR request lands here. Matches
+        # api.blacklist (GET pulls), api.hashlist, api.report, api.hash_report,
+        # api.status, api.rate_limit, etc. -- everything the api app writes.
+        logs = logs.filter(action__startswith='api.')
     elif type_filter == 'rate_limit':
         logs = logs.filter(action='api.rate_limit')
     elif type_filter == 'report':

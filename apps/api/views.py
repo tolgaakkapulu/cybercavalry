@@ -50,6 +50,29 @@ def _log_api_request(request):
                 request.method, request.path, ip, user, body or '-')
 
 
+def _api_request_context(request):
+    """Structured version of the file-log line for the ActivityLog detail dict.
+    Same fields as _log_api_request but returned instead of logged, so each
+    endpoint's ActivityLog entry carries the full request context (method,
+    path, query/body, header-declared username) alongside its business result."""
+    body = ''
+    try:
+        if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
+            raw = request.body or b''
+            body = ' '.join(raw.decode('utf-8', errors='replace').split())[:2048]
+        elif request.META.get('QUERY_STRING'):
+            body = '?' + request.META['QUERY_STRING'][:512]
+    except Exception:
+        body = '<unreadable>'
+    return {
+        'method':      request.method,
+        'path':        request.path,
+        'body':        body or '-',
+        'req_user':    request.META.get('HTTP_X_USERNAME', 'anon'),
+        'user_agent':  (request.META.get('HTTP_USER_AGENT', '') or '')[:200],
+    }
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def report_ip(request):
@@ -237,7 +260,8 @@ def report_ip(request):
 
     ActivityLog.log(profile.user, 'api.report', 'BlacklistEntry', cidr,
                  {'cidr': cidr, 'group': entry.group.name, 'score': score,
-                  'action': action, 'reporter_ip': reporter_ip}, reporter_ip)
+                  'action': action, 'reporter_ip': reporter_ip,
+                  **_api_request_context(request)}, reporter_ip)
 
     return JsonResponse({
         'status': 'blacklisted',
@@ -290,7 +314,8 @@ def get_blacklist(request, group_filter=None):
     output_format = request.GET.get('format', 'json')
 
     ActivityLog.log(None, 'api.blacklist', 'BlacklistEntry', group_filter or 'all',
-                 {'count': len(entries_list), 'format': output_format, 'source_ip': client_ip}, client_ip)
+                 {'count': len(entries_list), 'format': output_format, 'source_ip': client_ip,
+                  **_api_request_context(request)}, client_ip)
 
     if output_format == 'txt':
         # Use the stored CIDR (`ip/prefix`) so single-IP rows ship as `x.x.x.x/32`
@@ -496,6 +521,7 @@ def report_hash(request):
                 if vt_result is not None else {}
             ),
             **({'vt_unavailable': True} if vt_unavailable else {}),
+            **_api_request_context(request),
         },
         client_ip
     )
@@ -549,7 +575,8 @@ def get_hashlist(request):
 
     output_format = request.GET.get('format', 'json')
     ActivityLog.log(None, 'api.hashlist', 'HashEntry', 'black',
-                 {'count': len(entries), 'format': output_format, 'source_ip': client_ip}, client_ip)
+                 {'count': len(entries), 'format': output_format, 'source_ip': client_ip,
+                  **_api_request_context(request)}, client_ip)
 
     if output_format == 'txt':
         lines = [e.hash_value for e in entries]
@@ -623,7 +650,7 @@ def api_status(request):
     ).count()
 
     client_ip = get_client_ip(request)
-    ActivityLog.log(profile.user, 'api.status', None, None, {}, client_ip)
+    ActivityLog.log(profile.user, 'api.status', None, None, _api_request_context(request), client_ip)
 
     from apps.settings_app.branding import platform_name as _platform_name
     platform_name = _platform_name()
