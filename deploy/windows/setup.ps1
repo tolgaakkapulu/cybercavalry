@@ -465,8 +465,17 @@ function Invoke-Update {
     if (-not $zip) { Die "No CYBERCavalry_v*.zip in $ZipSource" }
     $tmp = Join-Path $env:TEMP "cc-upd-$stamp"
     Expand-Archive -Path $zip.FullName -DestinationPath $tmp -Force
+    # Fresh releases always put `CYBERCavalry\` at the zip root; older zips
+    # (built when the dev dir had a different name) may not. Prefer the
+    # canonical name; fall back to any single top-level subdirectory that
+    # carries a requirements.txt.
     $newSrc = Join-Path $tmp 'CYBERCavalry'
-    if (-not (Test-Path $newSrc)) { Die 'unexpected zip layout' }
+    if (-not (Test-Path $newSrc)) {
+        $newSrc = (Get-ChildItem -Path $tmp -Directory |
+                   Where-Object { Test-Path (Join-Path $_.FullName 'requirements.txt') } |
+                   Select-Object -First 1 -ExpandProperty FullName)
+    }
+    if (-not $newSrc -or -not (Test-Path $newSrc)) { Die 'unexpected zip layout' }
 
     # Sync -- preserve .env, venv, certs, logs, backups, db, media (uploaded
     # brand assets), and deploy\wheels (offline bundle survives an update

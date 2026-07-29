@@ -167,6 +167,11 @@ class Command(BaseCommand):
                 self.stdout.write(f'  Removed {count} log file(s).')
 
     def _create_zip(self, base_dir: Path, out_path: Path) -> None:
+        # Force the top-level folder inside the zip to a canonical name --
+        # setup.sh and setup.ps1 both expect exactly `CYBERCavalry/` at the
+        # root, so we can't let the local dev directory name leak into the
+        # release artifact.
+        project_root = Path('CYBERCavalry')
         added = 0
         with zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
             for root, dirs, files in os.walk(base_dir, topdown=True):
@@ -191,9 +196,10 @@ class Command(BaseCommand):
                             or filename.startswith('.')):
                         continue
 
-                    # Archive path relative to base_dir's parent so the zip
-                    # contains a single top-level folder named after the project.
-                    arcname = file_path.relative_to(base_dir.parent)
+                    # Relative to base_dir (not base_dir.parent) so the zip's
+                    # single top-level folder is always `CYBERCavalry`
+                    # regardless of what the dev directory is called.
+                    arcname = project_root / file_path.relative_to(base_dir)
                     zf.write(file_path, arcname)
                     added += 1
 

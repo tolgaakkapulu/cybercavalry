@@ -435,7 +435,19 @@ do_update() {
 
     local tmp; tmp=$(mktemp -d)
     unzip -q "$zip" -d "$tmp"
-    [[ -d "$tmp/CYBERCavalry" ]] || { rm -rf "$tmp"; die "unexpected zip layout"; }
+    # Fresh releases always put `CYBERCavalry/` at the zip root, but older
+    # zips (built when the dev dir was named `01-CYBERCavalry` etc.) may use
+    # a different top-level folder. Prefer the canonical name and fall back
+    # to any single subdirectory. Sanity-checked with requirements.txt so a
+    # malformed zip still dies loudly.
+    local src_root=""
+    if [[ -d "$tmp/CYBERCavalry" ]]; then
+        src_root="$tmp/CYBERCavalry"
+    else
+        src_root=$(find "$tmp" -maxdepth 1 -mindepth 1 -type d | head -1)
+    fi
+    [[ -n "$src_root" && -f "$src_root/requirements.txt" ]] \
+        || { rm -rf "$tmp"; die "unexpected zip layout (top-level folder in zip: $(ls "$tmp"))"; }
     # deploy/wheels/ is excluded so an air-gapped target keeps its offline
     # wheel bundle even if the incoming zip's dev machine happens to have
     # an empty wheels/ dir. Regenerate the bundle explicitly with
@@ -444,7 +456,7 @@ do_update() {
         --exclude '.env' --exclude 'venv/' --exclude 'certs/' \
         --exclude 'logs/' --exclude 'backups/' --exclude 'cybercavalry.db*' \
         --exclude 'media/' --exclude 'deploy/wheels/' \
-        "$tmp/CYBERCavalry/" "$INSTALL_DIR/"
+        "$src_root/" "$INSTALL_DIR/"
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
     rm -rf "$tmp"
     ok "code synced (.env / db / certs / logs preserved)"

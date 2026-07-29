@@ -558,7 +558,11 @@ def _get_platform_info(base_dir: Path):
 
 
 def _create_zip(base_dir: Path, out_path: Path) -> int:
-    project_root = base_dir.relative_to(base_dir.parent)  # e.g. "CYBERCavalry"
+    # Force the top-level folder inside the zip to a canonical name -- setup.sh
+    # and setup.ps1 both expect exactly `CYBERCavalry/` at the root, so we can't
+    # let the local dev directory name (`01-CYBERCavalry`, `CYBERCavalry-dev`,
+    # etc.) leak into the release artifact.
+    project_root = Path('CYBERCavalry')
     added = 0
     with zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         # Project files
@@ -578,7 +582,10 @@ def _create_zip(base_dir: Path, out_path: Path) -> int:
                         or filename in _ZIP_EXCLUDE_FILES
                         or filename.startswith('.')):
                     continue
-                arcname = file_path.relative_to(base_dir.parent)
+                # Path relative to base_dir (not base_dir.parent) so the
+                # top-level folder is always our canonical `project_root`,
+                # regardless of what the dev directory is called.
+                arcname = project_root / file_path.relative_to(base_dir)
                 zf.write(file_path, arcname)
                 added += 1
 
