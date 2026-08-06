@@ -6,6 +6,7 @@ from django.contrib import messages
 from django.core.paginator import Paginator
 from django.http import HttpResponse, JsonResponse
 from django.db.models import Q, F
+from django.db.models.functions import Lower
 from django.urls import reverse
 from django.utils import timezone
 
@@ -16,6 +17,47 @@ from apps.settings_app.models import ActivityLog
 logger = logging.getLogger(__name__)
 
 _VALID_STATUSES = {'active', 'inactive', 'all'}
+
+
+# ── Search helper ──────────────────────────────────────────────────────────
+# Extend this whenever a new VT enrichment column lands on URLEntry — the
+# list + export flows both delegate here so the filter stays consistent.
+# Everything visible in the URL row's tooltip is searchable: primary URL,
+# hostname, VT threat label, categories, tags, final URL, page title, the
+# resolved serving IP, page languages, and (domain endpoint only) registrar.
+#
+# Django's `__icontains` on SQLite is case-insensitive for ASCII only — so
+# Turkish letters (İ/ı, Ş/ş, Ğ/ğ, Ü/ü, Ö/ö, Ç/ç) miss matches on their
+# opposite case. Annotating a lowercased copy of every field and comparing
+# against a lowercased query fixes it across all languages and every backend.
+_SEARCH_LOWER_FIELDS = {
+    '_url_l':      'url_value',
+    '_reason_l':   'reason',
+    '_host_l':     'hostname',
+    '_threat_l':   'vt_threat_label',
+    '_cats_l':     'vt_categories',
+    '_finalurl_l': 'vt_final_url',
+    '_title_l':    'vt_title',
+    '_sip_l':      'vt_serving_ip',
+    '_tags_l':     'vt_tags',
+    '_langs_l':    'vt_languages',
+    '_reg_l':      'vt_registrar',
+}
+
+
+def _apply_search(qs, search):
+    """Case-insensitive substring search over URL + VT enrichment fields.
+    No-op when `search` is empty."""
+    if not search:
+        return qs
+    s = search.lower()
+    qs = qs.annotate(**{alias: Lower(field) for alias, field in _SEARCH_LOWER_FIELDS.items()})
+    q = Q()
+    for alias in _SEARCH_LOWER_FIELDS:
+        q |= Q(**{f'{alias}__contains': s})
+    if search.isdigit():
+        q |= Q(pk=int(search))
+    return qs.filter(q)
 
 
 def _ul_redirect(status='active'):
@@ -70,11 +112,7 @@ def urllist_list(request):
     pinned = request.GET.get('pinned', '')            # '' | 'yes' | 'no'
 
     if search:
-        # Pure-digit query also matches the row's primary key.
-        q = Q(url_value__icontains=search) | Q(reason__icontains=search)
-        if search.isdigit():
-            q |= Q(pk=int(search))
-        base_qs = base_qs.filter(q)
+        base_qs = _apply_search(base_qs, search)
     if pinned == 'yes':
         base_qs = base_qs.filter(is_pinned=True)
     elif pinned == 'no':
@@ -326,10 +364,7 @@ def urllist_export(request):
     search = request.GET.get('search', '').strip()
     status = request.GET.get('status', 'active')
     if search:
-        q = Q(url_value__icontains=search) | Q(reason__icontains=search)
-        if search.isdigit():
-            q |= Q(pk=int(search))
-        entries = entries.filter(q)
+        entries = _apply_search(entries, search)
     if status == 'active':
         entries = entries.filter(is_active=True)
     elif status == 'inactive':

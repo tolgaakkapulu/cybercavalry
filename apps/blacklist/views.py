@@ -8,6 +8,7 @@ from django.http import HttpResponse, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
 from django.db.models import Q, F
+from django.db.models.functions import Lower
 from django.core.paginator import Paginator
 
 from .models import BlacklistEntry, BlacklistGroup
@@ -16,6 +17,52 @@ from .utils import normalize_cidr, is_valid_ip_or_cidr, check_whitelist_overlap,
 from . import abuseipdb_service
 from apps.accounts.decorators import login_required_custom, role_required
 from apps.settings_app.models import ActivityLog
+
+
+# ── Search helper ──────────────────────────────────────────────────────────
+# The list, deactivate-all, and export flows all filter by the same search
+# term, so the field-set stays here in one place. Anything visible in the
+# AbuseIPDB tooltip (ISP, ASN, usage type, hostnames, country/city, domain)
+# should be searchable; the list only widens over time as new enrichment
+# columns land, so update this rather than the per-view Q blocks.
+#
+# Django's `__icontains` on SQLite is case-insensitive for ASCII only, so
+# Turkish characters (İ/ı, Ş/ş, Ğ/ğ, Ü/ü, Ö/ö, Ç/ç) miss matches on their
+# opposite case. We annotate lowercased copies of every CharField/TextField
+# and compare against the lowercased search term instead — that gives us
+# true case-insensitive behaviour across all languages and every backend.
+# `abuse_hostnames` (JSONField) stays on __icontains because DNS labels are
+# ASCII-only, and Lower() isn't guaranteed to work on JSON columns.
+_SEARCH_LOWER_FIELDS = {
+    '_cidr_l':   'cidr',
+    '_reason_l': 'reason',
+    '_isp_l':    'abuse_isp',
+    '_usage_l':  'abuse_usage_type',
+    '_domain_l': 'abuse_domain',
+    '_cc_l':     'abuse_country_code',
+    '_cname_l':  'abuse_country_name',
+    '_asn_l':    'abuse_asn',
+    '_city_l':   'abuse_city',
+}
+
+
+def _apply_search(qs, search):
+    """Apply the shared blacklist search filter to `qs`. Case-insensitive
+    across all annotated fields (see comment above). No-op when `search`
+    is empty so callers can drop the outer `if search:` guard if they want."""
+    if not search:
+        return qs
+    s = search.lower()
+    qs = qs.annotate(**{alias: Lower(field) for alias, field in _SEARCH_LOWER_FIELDS.items()})
+    q = Q()
+    for alias in _SEARCH_LOWER_FIELDS:
+        q |= Q(**{f'{alias}__contains': s})
+    q |= Q(abuse_hostnames__icontains=search)   # ASCII-only DNS labels
+    # Pure-digit terms additionally match the row's primary key so admins
+    # can paste an ID from an activity-log row and land on the exact entry.
+    if search.isdigit():
+        q |= Q(pk=int(search))
+    return qs.filter(q)
 
 logger = logging.getLogger(__name__)
 
@@ -69,13 +116,7 @@ def blacklist_list(request):
     score_max = _parse_int(score_max_raw)
 
     if search:
-        # Search box matches CIDR + reason substrings; a pure-digit query
-        # additionally matches the row's primary key so admins can paste an
-        # ID from an activity-log row and land on the exact entry.
-        q = Q(cidr__icontains=search) | Q(reason__icontains=search)
-        if search.isdigit():
-            q |= Q(pk=int(search))
-        entries = entries.filter(q)
+        entries = _apply_search(entries, search)
     if group_id:
         entries = entries.filter(group_id=group_id)
     if source:
@@ -742,10 +783,7 @@ def blacklist_deactivate_all(request):
         group_id = request.POST.get('group', '').strip()
         source = request.POST.get('source', '').strip()
         if search:
-            q = Q(cidr__icontains=search) | Q(reason__icontains=search)
-            if search.isdigit():
-                q |= Q(pk=int(search))
-            entries = entries.filter(q)
+            entries = _apply_search(entries, search)
         if group_id:
             entries = entries.filter(group_id=group_id)
         if source:
@@ -944,7 +982,7 @@ def blacklist_export(request):
     status   = request.GET.get('status', 'active')
 
     if search:
-        entries = entries.filter(Q(cidr__icontains=search) | Q(reason__icontains=search))
+        entries = _apply_search(entries, search)
     if group_id:
         entries = entries.filter(group_id=group_id)
     if source:

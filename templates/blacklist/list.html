@@ -55,9 +55,14 @@
 {% endif %}
 
 <!-- Filters + Status tabs -->
-<div id="bl-filter-area" x-data="{ open: {% if filters.search or filters.group or filters.source %}true{% else %}false{% endif %} }">
+{% comment %}
+`open` only tracks the ADVANCED filters (group/source/hit/score). Search and
+pinned live in the always-visible top form now, so they don't influence
+whether the advanced pane starts expanded.
+{% endcomment %}
+<div id="bl-filter-area" x-data="{ open: {% if filters.group or filters.source or filters.hit_min or filters.hit_max or filters.score_min or filters.score_max %}true{% else %}false{% endif %} }">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
-    <!-- Left: status tabs + filters toggle + active badges -->
+    <!-- Left: status tabs + top-row search form + advanced-filters toggle -->
     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
       {% comment %}
       Preserve every filter across status-tab clicks. Each param is
@@ -71,6 +76,30 @@
       <a href="?{% if filters.search %}search={{ filters.search }}&{% endif %}{% if filters.group %}group={{ filters.group }}&{% endif %}{% if filters.source %}source={{ filters.source }}&{% endif %}{% if filters.pinned %}pinned={{ filters.pinned }}&{% endif %}{% if filters.hit_min %}hit_min={{ filters.hit_min }}&{% endif %}{% if filters.hit_max %}hit_max={{ filters.hit_max }}&{% endif %}{% if filters.score_min %}score_min={{ filters.score_min }}&{% endif %}{% if filters.score_max %}score_max={{ filters.score_max }}&{% endif %}status=all"
          class="btn btn-sm {% if filters.status == 'all' %}btn-brand{% else %}btn-ghost{% endif %}">All <span data-bl-count="all" style="opacity:.7;font-size:11px;">{{ count_all }}</span></a>
       <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+      {% comment %}
+      Top-row quick search — mirrors the URL / Hash blacklist pattern.
+      Hidden inputs carry the current advanced-filter selections so a
+      Search-button submit preserves group / source / hit / score.
+      {% endcomment %}
+      <form method="get" style="display:flex;gap:6px;align-items:center;">
+        <input type="hidden" name="status" value="{{ filters.status }}">
+        {% if filters.group %}<input type="hidden" name="group" value="{{ filters.group }}">{% endif %}
+        {% if filters.source %}<input type="hidden" name="source" value="{{ filters.source }}">{% endif %}
+        {% if filters.hit_min %}<input type="hidden" name="hit_min" value="{{ filters.hit_min }}">{% endif %}
+        {% if filters.hit_max %}<input type="hidden" name="hit_max" value="{{ filters.hit_max }}">{% endif %}
+        {% if filters.score_min %}<input type="hidden" name="score_min" value="{{ filters.score_min }}">{% endif %}
+        {% if filters.score_max %}<input type="hidden" name="score_max" value="{{ filters.score_max }}">{% endif %}
+        <input type="search" name="search" class="form-input" style="height:30px;font-size:12px;padding:4px 16px;min-width:375px;"
+               placeholder="Search IP, reason, ISP, ASN, hostname, country…" title="Searches the CIDR, reason, and every AbuseIPDB enrichment field surfaced in the tooltip (ISP, ASN, usage type, hostnames, country, city, domain)." value="{{ filters.search }}">
+        <select name="pinned" class="form-select" style="height:30px;font-size:12px;padding:4px 8px;">
+          <option value="">All Entries</option>
+          <option value="yes" {% if filters.pinned == 'yes' %}selected{% endif %}>Pinned Only</option>
+          <option value="no"  {% if filters.pinned == 'no'  %}selected{% endif %}>Unpinned Only</option>
+        </select>
+        <button type="submit" class="btn btn-info btn-sm">Search</button>
+        {% if filters.search or filters.pinned %}<a href="?status={{ filters.status }}{% if filters.group %}&group={{ filters.group }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}{% if filters.hit_min %}&hit_min={{ filters.hit_min }}{% endif %}{% if filters.hit_max %}&hit_max={{ filters.hit_max }}{% endif %}{% if filters.score_min %}&score_min={{ filters.score_min }}{% endif %}{% if filters.score_max %}&score_max={{ filters.score_max }}{% endif %}" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
+      </form>
+      <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
       <a @click="open = !open" class="btn btn-info btn-sm">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
         Filters
@@ -82,7 +111,11 @@
         History
       </a>
       {% endif %}
-      {% if filters.search %}<span class="badge badge-blue">Search: {{ filters.search }}</span>{% endif %}
+      {% comment %}
+      Search value already sits in the always-visible input, so no
+      redundant badge. Group/source badges stay useful because they
+      mirror advanced-filter state that's hidden until Filters expands.
+      {% endcomment %}
       {% if filters.group %}<span class="badge badge-blue">Group filtered</span>{% endif %}
       {% if filters.source %}<span class="badge badge-blue">{{ filters.source|capfirst }}</span>{% endif %}
     </div>
@@ -135,11 +168,16 @@
     </div>
   </div>
 
+  {% comment %}
+  Advanced filters — search + pinned moved to the top form, so they
+  ride along here as hidden inputs. That way an Apply on this pane
+  preserves the quick-search state instead of wiping it.
+  {% endcomment %}
   <form method="get" x-show="open" style="display:none;margin-bottom:16px;">
     <input type="hidden" name="status" value="{{ filters.status }}">
+    {% if filters.search %}<input type="hidden" name="search" value="{{ filters.search }}">{% endif %}
+    {% if filters.pinned %}<input type="hidden" name="pinned" value="{{ filters.pinned }}">{% endif %}
     <div class="filter-bar">
-      <input type="search" name="search" class="form-input form-input-sm" placeholder="Search IP or reason..."
-             value="{{ filters.search }}">
       <select name="group" class="form-select form-select-sm">
         <option value="">All Groups</option>
         {% for g in groups %}<option value="{{ g.pk }}" {% if filters.group == g.pk|stringformat:"s" %}selected{% endif %}>{{ g.label }}</option>{% endfor %}
@@ -149,11 +187,6 @@
         <option value="manual" {% if filters.source == 'manual' %}selected{% endif %}>Manual</option>
         <option value="api" {% if filters.source == 'api' %}selected{% endif %}>API</option>
         <option value="import" {% if filters.source == 'import' %}selected{% endif %}>Import</option>
-      </select>
-      <select name="pinned" class="form-select form-select-sm">
-        <option value="">All Entries</option>
-        <option value="yes" {% if filters.pinned == 'yes' %}selected{% endif %}>Pinned Only</option>
-        <option value="no"  {% if filters.pinned == 'no'  %}selected{% endif %}>Unpinned Only</option>
       </select>
       <div style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">
         <span class="text-muted text-sm">Count:</span>
@@ -172,7 +205,11 @@
                placeholder="max" min="0" max="100" value="{{ filters.score_max }}">
       </div>
       <button type="submit" class="btn btn-brand btn-sm">Apply</button>
-      <a href="{% url 'blacklist:list' %}" class="btn btn-ghost btn-sm">Clear</a>
+      {% comment %}
+      Clear here only wipes the advanced filters; search + pinned stay so
+      a user can iterate on advanced filters without losing their query.
+      {% endcomment %}
+      <a href="?status={{ filters.status }}{% if filters.search %}&search={{ filters.search }}{% endif %}{% if filters.pinned %}&pinned={{ filters.pinned }}{% endif %}" class="btn btn-ghost btn-sm">Clear</a>
     </div>
   </form>
 </div>

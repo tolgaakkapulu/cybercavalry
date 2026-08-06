@@ -59,8 +59,8 @@
     <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
     <form method="get" style="display:flex;gap:6px;align-items:center;">
       <input type="hidden" name="status" value="{{ status }}">
-      <input type="search" name="search" class="form-input" style="height:30px;font-size:12px;padding:4px 16px;"
-             placeholder="Search URL or reason…" value="{{ search }}">
+      <input type="search" name="search" class="form-input" style="height:30px;font-size:12px;padding:4px 16px;min-width:375px;"
+             placeholder="Search URL, hostname, reason, threat, category, title, tag, IP…" title="Searches the URL, hostname, reason, and every VT enrichment field shown in the tooltip (threat label, categories, tags, final URL, page title, serving IP, languages, registrar)." value="{{ search }}">
       <select name="pinned" class="form-select" style="height:30px;font-size:12px;padding:4px 8px;">
         <option value="">All Entries</option>
         <option value="yes" {% if pinned == 'yes' %}selected{% endif %}>Pinned Only</option>

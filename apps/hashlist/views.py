@@ -6,6 +6,7 @@ from django.contrib import messages
 from django.core.paginator import Paginator
 from django.http import HttpResponse, JsonResponse
 from django.db.models import Q, F
+from django.db.models.functions import Lower
 from django.urls import reverse
 from django.utils import timezone
 
@@ -16,6 +17,40 @@ from apps.settings_app.models import ActivityLog
 logger = logging.getLogger(__name__)
 
 _VALID_STATUSES = {'active', 'inactive', 'all'}
+
+
+# ── Search helper ──────────────────────────────────────────────────────────
+# Kept adjacent to the imports so the field-set has a single source of truth
+# across the list and export flows. Extend this rather than the per-view
+# Q blocks whenever VT enrichment surfaces a new searchable field.
+#
+# Django's `__icontains` on SQLite is case-insensitive for ASCII only — so
+# Turkish letters (İ/ı, Ş/ş, Ğ/ğ, Ü/ü, Ö/ö, Ç/ç) miss matches on their
+# opposite case. Annotating a lowercased copy of every searched field and
+# comparing against a lowercased query gives us true case-insensitive
+# behaviour across all languages and every DB backend.
+_SEARCH_LOWER_FIELDS = {
+    '_hash_l':    'hash_value',
+    '_reason_l':  'reason',
+    '_threat_l':  'vt_threat_label',
+    '_typed_l':   'vt_type_description',
+    '_mname_l':   'vt_meaningful_name',
+}
+
+
+def _apply_search(qs, search):
+    """Case-insensitive substring search over the hash + VT enrichment
+    fields. No-op when `search` is empty."""
+    if not search:
+        return qs
+    s = search.lower()
+    qs = qs.annotate(**{alias: Lower(field) for alias, field in _SEARCH_LOWER_FIELDS.items()})
+    q = Q()
+    for alias in _SEARCH_LOWER_FIELDS:
+        q |= Q(**{f'{alias}__contains': s})
+    if search.isdigit():
+        q |= Q(pk=int(search))
+    return qs.filter(q)
 
 
 def _hl_redirect(status='active'):
@@ -71,11 +106,7 @@ def hashlist_list(request):
     pinned = request.GET.get('pinned', '')            # '' | 'yes' | 'no'
 
     if search:
-        # Pure-digit query also matches the row's primary key.
-        q = Q(hash_value__icontains=search) | Q(reason__icontains=search)
-        if search.isdigit():
-            q |= Q(pk=int(search))
-        base_qs = base_qs.filter(q)
+        base_qs = _apply_search(base_qs, search)
     if pinned == 'yes':
         base_qs = base_qs.filter(is_pinned=True)
     elif pinned == 'no':
@@ -327,10 +358,7 @@ def hashlist_export(request):
     search = request.GET.get('search', '').strip()
     status = request.GET.get('status', 'active')
     if search:
-        q = Q(hash_value__icontains=search) | Q(reason__icontains=search)
-        if search.isdigit():
-            q |= Q(pk=int(search))
-        entries = entries.filter(q)
+        entries = _apply_search(entries, search)
     if status == 'active':
         entries = entries.filter(is_active=True)
     elif status == 'inactive':
