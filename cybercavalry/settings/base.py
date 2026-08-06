@@ -81,6 +81,7 @@ INSTALLED_APPS = [
     'apps.blacklist',
     'apps.whitelist',
     'apps.hashlist',
+    'apps.urllist',
     'apps.dashboard',
     'apps.api',
     'apps.settings_app',

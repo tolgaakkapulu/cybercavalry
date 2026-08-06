@@ -32,18 +32,6 @@
 <!-- Stats -->
 <div class="stats-grid">
   <div class="stat-card sc-c1 db-widget">
-    <div class="db-bar" id="db-bar-hashlist"></div>
-    <div class="stat-label">
-      <span class="sc-lbl-icon" style="color:#CB5B63;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>
-      <b>Hash Blacklist</b>
-      <span class="info-tip" data-tip="Count: {{ stats.hashlist_total }}" style="margin-left:4px;">
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-      </span>
-    </div>
-    <div class="stat-value" id="db-stat-hashlist">{{ stats.hashlist_total|compact_number }}</div>
-    <div class="stat-sub">Active hash entries</div>
-  </div>
-  <div class="stat-card sc-c2 db-widget">
     <div class="db-bar" id="db-bar-bl30d"></div>
     <div class="stat-label">
       <span class="sc-lbl-icon" style="color:#E37D89;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span>
@@ -55,7 +43,7 @@
     <div class="stat-value" id="db-stat-bl30d">{{ stats.blacklist_30d|compact_number }}</div>
     <div class="stat-sub">Active 30 days blacklist entries</div>
   </div>
-  <div class="stat-card sc-c3 db-widget">
+  <div class="stat-card sc-c2 db-widget">
     <div class="db-bar" id="db-bar-bl24h"></div>
     <div class="stat-label">
       <span class="sc-lbl-icon" style="color:#F29DA8;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span>
@@ -67,7 +55,32 @@
     <div class="stat-value" id="db-stat-bl24h">{{ stats.blacklist_24h|compact_number }}</div>
     <div class="stat-sub">Active 24 hours blacklist entries</div>
   </div>
+  <div class="stat-card sc-c3 db-widget">
+    {# URL Blacklist — icon color synced with the card gradient (#F29DA8). #}
+    <div class="db-bar" id="db-bar-urllist"></div>
+    <div class="stat-label">
+      <span class="sc-lbl-icon" style="color:#F29DA8;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>
+      <b>URL Blacklist</b>
+      <span class="info-tip" data-tip="Count: {{ stats.urllist_total }}" style="margin-left:4px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      </span>
+    </div>
+    <div class="stat-value" id="db-stat-urllist">{{ stats.urllist_total|compact_number }}</div>
+    <div class="stat-sub">Active URL entries</div>
+  </div>
   <div class="stat-card sc-c6 db-widget">
+    <div class="db-bar" id="db-bar-hashlist"></div>
+    <div class="stat-label">
+      <span class="sc-lbl-icon" style="color:#9D86BA;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>
+      <b>Hash Blacklist</b>
+      <span class="info-tip" data-tip="Count: {{ stats.hashlist_total }}" style="margin-left:4px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      </span>
+    </div>
+    <div class="stat-value" id="db-stat-hashlist">{{ stats.hashlist_total|compact_number }}</div>
+    <div class="stat-sub">Active hash entries</div>
+  </div>
+  <div class="stat-card sc-c5 db-widget">
     <div class="db-bar" id="db-bar-whitelist"></div>
     <div class="stat-label">
       <span class="sc-lbl-icon" style="color:#9D86BA;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>
@@ -79,29 +92,17 @@
     <div class="stat-value" id="db-stat-whitelist">{{ stats.whitelist_total|compact_number }}</div>
     <div class="stat-sub">Active whitelist entries</div>
   </div>
-  <div class="stat-card sc-c5 db-widget">
+  <div class="stat-card sc-c4 db-widget">
     <div class="db-bar" id="db-bar-api"></div>
     <div class="stat-label">
-      <span class="sc-lbl-icon" style="color:#BDAED6;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></span>
+      <span class="sc-lbl-icon" style="color:#b2a8c3;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></span>
       <b>API Requests</b>
-      <span class="info-tip" data-tip="Count: {{ stats.api_reports }}" style="margin-left:4px;">
+      <span class="info-tip info-tip-left" data-tip="Count: {{ stats.api_reports }}" style="margin-left:4px;">
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
       </span>
     </div>
     <div class="stat-value" id="db-stat-api">{{ stats.api_reports|compact_number }}</div>
     <div class="stat-sub">Successful API reports (Last 24 hours)</div>
-  </div>
-  <div class="stat-card sc-c4 db-widget">
-    <div class="db-bar" id="db-bar-users"></div>
-    <div class="stat-label">
-      <span class="sc-lbl-icon" style="color:#b2a8c3;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
-      <b>Users</b>
-      <span class="info-tip info-tip-left" data-tip="Count: {{ stats.users_total }}" style="margin-left:4px;">
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-      </span>
-    </div>
-    <div class="stat-value" id="db-stat-users">{{ stats.users_total|compact_number }}</div>
-    <div class="stat-sub">Active accounts</div>
   </div>
 </div>
 
@@ -247,37 +248,73 @@
     </div>
   </div>
 
-  <!-- Recent Whitelist -->
+  <!-- Recent URL Blacklist -->
   <div class="card db-widget" style="position:relative;overflow:hidden;">
-    <div class="db-bar" id="db-bar-tbl-whitelist"></div>
+    <div class="db-bar" id="db-bar-tbl-urllist"></div>
     <div class="card-header">
-      <span class="card-title">Recent IP Whitelist</span>
-      <a href="{% url 'whitelist:list' %}" class="btn btn-brand btn-sm">View All</a>
+      <span class="card-title">Recent URL Blacklist</span>
+      <a href="{% url 'urllist:list' %}" class="btn btn-brand btn-sm">View All</a>
     </div>
     <div class="table-wrapper" style="border:none;border-radius:0;">
       <table style="text-align:center;min-width:480px;">
         <thead><tr>
           <th style="width:38px;" title="Row ID — hover the status icon to view."></th>
-          <th style="text-align:center;white-space:nowrap;">CIDR</th>
-          <th style="text-align:center;white-space:nowrap;">Prefix</th>
+          <th style="text-align:left;">URL</th>
+          <th style="text-align:center;white-space:nowrap;">Hostname</th>
           <th style="text-align:center;white-space:nowrap;">Source</th>
           <th style="text-align:center;white-space:nowrap;">Added</th>
         </tr></thead>
-        <tbody id="db-tbody-whitelist">
-          {% for entry in recent_whitelist %}
+        <tbody id="db-tbody-urllist">
+          {% for entry in recent_urllist %}
           <tr>
             <td style="width:38px;">
-              <span class="tbl-row-icon info-tip" data-tip="ID: {{ entry.pk }}" style="background:rgba(157,134,186,0.13);color:#9D86BA;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <span class="tbl-row-icon info-tip" data-tip="ID: {{ entry.pk }}" style="background:rgba(139,92,246,0.13);color:#8b5cf6;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
               </span>
             </td>
-            <td style="white-space:nowrap;"><span class="db-copy-cell"><span class="cidr">{{ entry.cidr }}</span><button type="button" class="copy-btn" data-copy="{{ entry.cidr }}" title="Copy" style="background:none;border:none;cursor:pointer;padding:0;color:var(--text-muted);line-height:1;opacity:0;transition:opacity .15s;flex-shrink:0;"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></span></td>
-            <td style="white-space:nowrap;"><span class="badge badge-pink">/{{ entry.prefix_length }}</span></td>
-            <td style="white-space:nowrap;">
-              {% if entry.source == 'import' %}<span class="badge badge-yellow">Import</span>
-              {% else %}<span class="badge badge-green">Manual</span>{% endif %}
+            <td style="text-align:left;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+              <span class="db-copy-cell">
+                {% comment %}
+                Underline hugs the actual text -- see urllist/_list_rows.html for
+                the rationale (wrapper handles truncation, inner is plain inline).
+                {% endcomment %}
+                <span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:baseline;">
+                  <span class="cidr" style="cursor:help;border-bottom:1px dotted var(--text-muted);"
+                        data-url-intel="1"
+                        data-intel-fullurl="{{ entry.url_value }}"
+                        {% if entry.has_vt_intel %}
+                        data-intel-threat="{{ entry.vt_threat_label }}"
+                        data-intel-categories="{{ entry.vt_categories }}"
+                        data-intel-tags="{{ entry.vt_tags }}"
+                        data-intel-reputation="{% if entry.vt_reputation is not None %}{{ entry.vt_reputation }}{% endif %}"
+                        data-intel-votes="{% if entry.vt_votes_harmless is not None or entry.vt_votes_malicious is not None %}{{ entry.vt_votes_harmless|default:0 }} harmless / {{ entry.vt_votes_malicious|default:0 }} malicious{% endif %}"
+                        data-intel-enginebreakdown="{% if entry.vt_harmless is not None or entry.vt_suspicious is not None or entry.vt_undetected is not None %}{{ entry.vt_harmless|default:0 }} harmless · {{ entry.vt_suspicious|default:0 }} suspicious · {{ entry.vt_undetected|default:0 }} undetected{% endif %}"
+                        data-intel-finalurl="{{ entry.vt_final_url }}"
+                        data-intel-redirects="{% if entry.vt_redirect_count is not None %}{{ entry.vt_redirect_count }}{% endif %}"
+                        data-intel-title="{{ entry.vt_title }}"
+                        data-intel-httpcode="{% if entry.vt_http_code is not None %}{{ entry.vt_http_code }}{% endif %}"
+                        data-intel-contentlength="{% if entry.vt_content_length is not None %}{{ entry.vt_content_length }} bytes{% endif %}"
+                        data-intel-servingip="{{ entry.vt_serving_ip }}"
+                        data-intel-languages="{{ entry.vt_languages }}"
+                        data-intel-registrar="{{ entry.vt_registrar }}"
+                        data-intel-created="{{ entry.vt_creation_date|date:'Y-m-d' }}"
+                        data-intel-popularity="{% if entry.vt_popularity_rank is not None %}#{{ entry.vt_popularity_rank }}{% endif %}"
+                        data-intel-firstseen="{{ entry.vt_first_seen|date:'Y-m-d' }}"
+                        data-intel-lastanalysis="{{ entry.vt_last_analysis|date:'Y-m-d' }}"
+                        data-intel-submitted="{{ entry.vt_times_submitted|default:'' }}"
+                        {% endif %}>{{ entry.url_value|slice:":48" }}{% if entry.url_value|length > 48 %}…{% endif %}</span>
+                </span>
+                <button type="button" class="copy-btn" data-copy="{{ entry.url_value }}" title="Copy" style="background:none;border:none;cursor:pointer;padding:0;color:var(--text-muted);line-height:1;opacity:0;transition:opacity .15s;flex-shrink:0;"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+                <a class="vt-link" href="https://www.virustotal.com/gui/search?query={{ entry.url_value }}" target="_blank" rel="noopener noreferrer" title="View on VirusTotal" style="display:inline-flex;align-items:center;padding:0 0 0 2px;color:var(--text-muted);line-height:1;opacity:0;transition:opacity .15s;flex-shrink:0;text-decoration:none;"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+              </span>
             </td>
-            <td class="text-muted" style="white-space:nowrap;">{{ entry.added_at|date:"Y-m-d H:i" }}</td>
+            <td class="text-muted text-sm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;" title="{{ entry.hostname }}">{{ entry.hostname|default:"—" }}</td>
+            <td style="white-space:nowrap;">
+              {% if entry.source == 'api' %}<span class="badge badge-blue">{{ entry.get_source_display }}</span>
+              {% elif entry.source == 'import' %}<span class="badge badge-yellow">{{ entry.get_source_display }}</span>
+              {% else %}<span class="badge badge-green">{{ entry.get_source_display }}</span>{% endif %}
+            </td>
+            <td class="text-muted text-sm" style="white-space:nowrap;">{{ entry.added_at|date:"Y-m-d H:i" }}</td>
           </tr>
           {% empty %}
           <tr><td colspan="5" class="table-empty">No entries yet.</td></tr>
@@ -337,8 +374,18 @@
         <code class="text-mono text-accent"> /api/v1/blacklist/30d/</code>
       </div>
       <div>
+        <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">Report a URL</p>
+        <code class="badge badge-yellow" style="color:var(--warning);">POST</code>
+        <code class="text-mono text-accent"> /api/v1/report/url/</code>
+      </div>
+      <div>
+        <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">URL blacklist</p>
+        <code class="badge badge-green" style="color:var(--success);">GET</code>
+        <code class="text-mono text-accent"> /api/v1/urllist/</code>
+      </div>
+      <div>
         <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">Annotation</p>
-        <p class="text-xs text-muted mt-12" style="text-align:left;">Add <b><code class="text-mono">?format=txt</code></b> to blacklist/hashlist endpoints for plain text output.</p>
+        <p class="text-xs text-muted mt-12" style="text-align:left;">Add <b><code class="text-mono">?format=txt</code></b> to blacklist/hashlist/urllist endpoints for plain text output.</p>
       </div>
     </div>
   </div>
@@ -462,9 +509,9 @@
   var autoTimer  = null;
   var fetching   = false;
 
-  var STAT_BARS  = ['db-bar-hashlist','db-bar-bl30d','db-bar-bl24h',
-                    'db-bar-whitelist','db-bar-api','db-bar-users'];
-  var TABLE_BARS = ['db-bar-tbl-hashlist','db-bar-tbl-blacklist','db-bar-tbl-whitelist'];
+  var STAT_BARS  = ['db-bar-hashlist','db-bar-urllist','db-bar-bl30d','db-bar-bl24h',
+                    'db-bar-whitelist','db-bar-api'];
+  var TABLE_BARS = ['db-bar-tbl-hashlist','db-bar-tbl-blacklist','db-bar-tbl-urllist'];
   var ALL_BARS   = STAT_BARS.concat(TABLE_BARS);
 
   /* ── Helpers ── */
@@ -505,6 +552,36 @@
            ' data-intel-firstseen="'    + escAttr(e.firstseen)    + '"' +
            ' data-intel-lastanalysis="' + escAttr(e.lastanalysis) + '"' +
            ' data-intel-submitted="'    + escAttr(e.submitted)    + '"';
+    }
+    return s;
+  }
+
+  // URL blacklist: full URL always shown; VT enrichment appended when present.
+  // Field list mirrors the server-side template block in the Recent URL
+  // Blacklist table so hovering a live-refreshed row shows the same intel as
+  // one rendered on the initial page load.
+  function urlIntelAttrs(e) {
+    var s = ' data-url-intel="1" data-intel-fullurl="' + escAttr(e.url) + '"';
+    if (e.has_intel) {
+      s += ' data-intel-threat="'          + escAttr(e.threat)          + '"' +
+           ' data-intel-categories="'      + escAttr(e.categories)      + '"' +
+           ' data-intel-tags="'            + escAttr(e.tags)            + '"' +
+           ' data-intel-reputation="'      + escAttr(e.reputation)      + '"' +
+           ' data-intel-votes="'           + escAttr(e.votes)           + '"' +
+           ' data-intel-enginebreakdown="' + escAttr(e.enginebreakdown) + '"' +
+           ' data-intel-finalurl="'        + escAttr(e.finalurl)        + '"' +
+           ' data-intel-redirects="'       + escAttr(e.redirects)       + '"' +
+           ' data-intel-title="'           + escAttr(e.pagetitle)       + '"' +
+           ' data-intel-httpcode="'        + escAttr(e.httpcode)        + '"' +
+           ' data-intel-contentlength="'   + escAttr(e.contentlength)   + '"' +
+           ' data-intel-servingip="'       + escAttr(e.servingip)       + '"' +
+           ' data-intel-languages="'       + escAttr(e.languages)       + '"' +
+           ' data-intel-registrar="'       + escAttr(e.registrar)       + '"' +
+           ' data-intel-created="'         + escAttr(e.created)         + '"' +
+           ' data-intel-popularity="'      + escAttr(e.popularity)      + '"' +
+           ' data-intel-firstseen="'       + escAttr(e.firstseen)       + '"' +
+           ' data-intel-lastanalysis="'    + escAttr(e.lastanalysis)    + '"' +
+           ' data-intel-submitted="'       + escAttr(e.submitted)       + '"';
     }
     return s;
   }
@@ -601,15 +678,16 @@
 
     var s = data.stats;
     setStat('db-stat-hashlist',  s.hashlist_total);
+    setStat('db-stat-urllist',   s.urllist_total);
     setStat('db-stat-bl30d',     s.blacklist_30d);
     setStat('db-stat-bl24h',     s.blacklist_24h);
     setStat('db-stat-whitelist', s.whitelist_total);
     setStat('db-stat-api',       s.api_reports);
-    setStat('db-stat-users',     s.users_total);
 
     var HASH_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>';
     var BL_ICON   = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>';
     var WL_ICON   = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
+    var URL_ICON  = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
     var COPY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
     var EXT_ICON  = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
 
@@ -683,19 +761,32 @@
         : '<tr><td colspan="5" class="table-empty">No entries yet.</td></tr>';
     }
 
-    var wlTbody = el('db-tbody-whitelist');
-    if (wlTbody) {
-      wlTbody.innerHTML = data.recent_whitelist.length
-        ? data.recent_whitelist.map(function (e) {
-            var sb = e.source === 'import'
-              ? '<span class="badge badge-yellow">Import</span>'
-              : '<span class="badge badge-green">Manual</span>';
+    var ulTbody = el('db-tbody-urllist');
+    if (ulTbody && data.recent_urllist) {
+      ulTbody.innerHTML = data.recent_urllist.length
+        ? data.recent_urllist.map(function (e) {
+            var uIntel = urlIntelAttrs(e);
+            // Truncation on the WRAPPER; the inner .cidr span stays inline so
+            // its dotted underline hugs the visible text (mirrors the pattern
+            // in urllist/_list_rows.html). Underline + tooltip cursor apply
+            // unconditionally -- matches the hash blacklist behaviour where
+            // hovering always shows at least the full URL row.
+            var uInner = 'cursor:help;border-bottom:1px dotted var(--text-muted);';
+            var uWrap  = 'display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:baseline;';
             return '<tr>' +
-              rowIcon('rgba(157,134,186,0.13)', '#9D86BA', WL_ICON, e.id) +
-              '<td style="white-space:nowrap;"><span class="db-copy-cell"><span class="cidr">' + e.cidr + '</span>' + copyBtn(e.cidr) + '</span></td>' +
-              '<td style="white-space:nowrap;"><span class="badge badge-pink">/' + e.prefix_length + '</span></td>' +
-              '<td style="white-space:nowrap;">' + sb + '</td>' +
-              '<td class="text-muted" style="white-space:nowrap;">' + e.added_at + '</td>' +
+              rowIcon('rgba(139,92,246,0.13)', '#8b5cf6', URL_ICON, e.id) +
+              '<td style="text-align:left;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+                '<span class="db-copy-cell">' +
+                  '<span style="' + uWrap + '">' +
+                    '<span class="cidr" style="' + uInner + '"' + uIntel + '>' + escAttr(e.url_short) + '</span>' +
+                  '</span>' +
+                  copyBtn(e.url) +
+                  vtLink(e.url) +
+                '</span>' +
+              '</td>' +
+              '<td class="text-muted text-sm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;" title="' + escAttr(e.hostname || '') + '">' + escAttr(e.hostname || '—') + '</td>' +
+              '<td style="white-space:nowrap;">' + srcBadge(e.source, e.source_display) + '</td>' +
+              '<td class="text-muted text-sm" style="white-space:nowrap;">' + e.added_at + '</td>' +
             '</tr>';
           }).join('')
         : '<tr><td colspan="5" class="table-empty">No entries yet.</td></tr>';

@@ -477,8 +477,33 @@
     ['intelFirstseen', 'First Seen'], ['intelLastanalysis', 'Last Analysis'],
     ['intelSubmitted', 'Times Submitted'],
   ];
-  // Fields whose value should render in monospace (e.g. the full hash).
-  var MONO_FIELDS = { intelFullhash: 1 };
+  var URL_FIELDS = [
+    ['intelFullurl',        'URL'],
+    ['intelThreat',         'Threat Label'],
+    ['intelCategories',     'Categories'],
+    ['intelTags',           'Tags'],
+    ['intelReputation',     'Reputation'],
+    ['intelVotes',          'Community Votes'],
+    ['intelEnginebreakdown','Engine Breakdown'],
+    ['intelFinalurl',       'Final URL'],
+    ['intelRedirects',      'Redirects'],
+    ['intelTitle',          'Page Title'],
+    ['intelHttpcode',       'HTTP Code'],
+    ['intelContentlength',  'Content Length'],
+    ['intelServingip',      'Serving IP'],
+    ['intelLanguages',      'Languages'],
+    ['intelRegistrar',      'Registrar'],
+    ['intelCreated',        'Domain Created'],
+    ['intelPopularity',     'Popularity Rank'],
+    ['intelFirstseen',      'First Seen'],
+    ['intelLastanalysis',   'Last Analysis'],
+    ['intelSubmitted',      'Times Submitted'],
+  ];
+  // Fields whose value should render in monospace (e.g. the full hash / URL).
+  var MONO_FIELDS = {
+    intelFullhash: 1, intelFullurl: 1, intelFinalurl: 1,
+    intelServingip: 1, intelHttpcode: 1, intelContentlength: 1,
+  };
 
   function reposition(e) {
     var gap = 16, bw = box.offsetWidth, bh = box.offsetHeight;
@@ -494,8 +519,9 @@
   function build(el) {
     rows.innerHTML = '';
     var isHash = el.hasAttribute('data-hash-intel');
-    var fields = isHash ? HASH_FIELDS : IP_FIELDS;
-    if (title) title.textContent = isHash ? 'VirusTotal Intel' : 'AbuseIPDB Intel';
+    var isUrl  = el.hasAttribute('data-url-intel');
+    var fields = isHash ? HASH_FIELDS : (isUrl ? URL_FIELDS : IP_FIELDS);
+    if (title) title.textContent = (isHash || isUrl) ? 'VirusTotal Intel' : 'AbuseIPDB Intel';
     var any = false;
     fields.forEach(function (f) {
       var val = el.dataset[f[0]];
@@ -519,7 +545,7 @@
     return any;
   }
 
-  var SELECTOR = '[data-ip-intel],[data-hash-intel]';
+  var SELECTOR = '[data-ip-intel],[data-hash-intel],[data-url-intel]';
 
   document.addEventListener('mouseover', function (e) {
     var el = e.target.closest(SELECTOR);

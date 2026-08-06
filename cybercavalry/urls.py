@@ -51,6 +51,7 @@ urlpatterns = [
     path('blacklist/', include('apps.blacklist.urls')),
     path('whitelist/', include('apps.whitelist.urls')),
     path('hashlist/', include('apps.hashlist.urls')),
+    path('urllist/',  include('apps.urllist.urls')),
     path('dashboard/', include('apps.dashboard.urls')),
     path('api/v1/', include('apps.api.urls')),
     path('settings/', include('apps.settings_app.urls')),

@@ -71,8 +71,9 @@ The context variables / api view in views.py are harmless if left in place.
   window.__dbCharts = window.__dbCharts || {};
 
   var API_URL    = '{% url "dashboard:timeline_api" %}';
-  var IP_COLOR   = '#d3737a';   // matches the "high" score colour
-  var HASH_COLOR = '#6c9bd2';
+  var IP_COLOR   = '#D3737A';   // warm rose — IP Blacklist series
+  var HASH_COLOR = '#9AB5C4';   // soft steel blue — Hash Blacklist series
+  var URL_COLOR  = '#B49CC4';   // muted lavender — URL Blacklist series
 
   // Current selection (kept in sync with the controls; used by auto-refresh).
   // curDays drives hour/day/month buckets; curMinutes drives the minute bucket.
@@ -101,7 +102,7 @@ The context variables / api view in views.py are harmless if left in place.
     // ~10% padding above the highest point, with a +1 floor so even peaks of
     // 1–2 leave a visible gap; ticks stay integers via `precision: 0` below.
     var peak = 0;
-    [data.ip, data.hash].forEach(function (arr) {
+    [data.ip, data.hash, data.url].forEach(function (arr) {
       (arr || []).forEach(function (v) {
         if (typeof v === 'number' && v > peak) peak = v;
       });
@@ -128,10 +129,19 @@ The context variables / api view in views.py are harmless if left in place.
             label: 'Hash Blacklist',
             data: data.hash,
             borderColor: HASH_COLOR,
-            backgroundColor: 'rgba(108,155,210,.12)',
+            backgroundColor: 'rgba(154,181,196,.12)',
             borderWidth: 2, tension: 0.3, fill: true,
             pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 8,
             pointBackgroundColor: HASH_COLOR
+          },
+          {
+            label: 'URL Blacklist',
+            data: data.url,
+            borderColor: URL_COLOR,
+            backgroundColor: 'rgba(180,156,196,.12)',
+            borderWidth: 2, tension: 0.3, fill: true,
+            pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 8,
+            pointBackgroundColor: URL_COLOR
           }
         ]
       },

@@ -19,8 +19,9 @@ The context variables in views.py are harmless if left in place.
    push that column wider than its sibling. `minmax(0, 1fr)` clamps the
    minimum to 0 so every column stays exactly the same width regardless
    of payload. */
-.db-an-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; margin-top:24px; }
-@media (max-width:1200px) { .db-an-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.db-an-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:16px; margin-top:24px; }
+@media (max-width:1400px) { .db-an-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (max-width:900px)  { .db-an-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width:680px)  { .db-an-grid { grid-template-columns:minmax(0,1fr); } }
 /* Centre the pie-chart card titles via the flex parent only — leave
    .card-title untouched so it inherits identical typography from main.css
@@ -76,6 +77,26 @@ The context variables in views.py are harmless if left in place.
   <div class="card">
     <div class="card-header">
       <span style="display:inline-flex;align-items:center;gap:6px;">
+        <span class="card-title">URL Score</span>
+        <span class="info-tip" data-tip="VirusTotal malicious-engine bands:&#10;• Info — 0 engines&#10;• Low — 1–5 engines&#10;• Medium — 6–12 engines&#10;• High — 13–19 engines&#10;• Critical — 20+ engines">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        </span>
+      </span>
+    </div>
+    <div class="card-body">
+      {% if url_score_dist.total %}
+        <div class="db-chart-box">
+          <div class="db-pie-canvas"><canvas id="ch-urlscore"></canvas></div>
+          <div class="db-legend-html" id="leg-urlscore"></div>
+        </div>
+        {{ url_score_dist|json_script:"d-urlscore" }}
+      {% else %}<p class="db-an-empty">No scored URLs yet.</p>{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span style="display:inline-flex;align-items:center;gap:6px;">
         <span class="card-title">Hash Score</span>
         <span class="info-tip" data-tip="VirusTotal malicious-engine bands:&#10;• Info — 0 engines&#10;• Low — 1–5 engines&#10;• Medium — 6–12 engines&#10;• High — 13–19 engines&#10;• Critical — 20+ engines">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
@@ -112,10 +133,10 @@ The context variables in views.py are harmless if left in place.
 <script nonce="{{ csp_nonce }}">
 (function () {
   if (typeof Chart === 'undefined') return;
-  var KEYS = ['ipscore', 'ipcountry', 'hashscore', 'hashthreat'];
+  var KEYS = ['ipscore', 'ipcountry', 'urlscore', 'hashscore', 'hashthreat'];
   // Score charts store buckets low→high (Info..Critical); reverse the legend
   // so it reads Critical → Info. Categorical charts keep their order.
-  var REVERSE_LEGEND = { ipscore: 1, hashscore: 1 };
+  var REVERSE_LEGEND = { ipscore: 1, urlscore: 1, hashscore: 1 };
   window.__dbCharts = window.__dbCharts || {};
 
   function buildOne(key, cfg, border) {

@@ -39,6 +39,7 @@ Everything runs behind a clean web UI with role-based access, activity auditing,
 ### 🎯 Blacklist Management
 - **IP blacklist** with rolling 24 h and long-term 30 d groups
 - **Hash blacklist** (MD5 / SHA-1 / SHA-256 / SHA-512) for malware IOCs
+- **URL blacklist** — malicious/phishing URLs with VirusTotal reputation lookups
 - **Whitelist** with CIDR overlap detection
 - **Hit tracking** with rolling report count per IP
 - **Automatic promotion** — repeat offenders escalated from 24 h → 30 d based on configurable threshold within an N-day window
@@ -51,7 +52,7 @@ Everything runs behind a clean web UI with role-based access, activity auditing,
 
 ### 🧠 Threat Intelligence
 - **AbuseIPDB** integration with per-score group assignment
-- **VirusTotal** integration with malicious-engine threshold
+- **VirusTotal** integration with malicious-engine threshold — for both file hashes AND URLs
 - **Multi-key rotation** — stack N keys per provider, transparent failover on quota exhaustion
 - **Automatic scoring** on ingest + scheduled bulk re-scoring
 - **Cleanup rules** — retention by score band and age
@@ -347,10 +348,12 @@ Two authentication modes, applied per endpoint:
 | `GET`  | `/api/status/`         | Source IP | Health check — platform version + counts |
 | `POST` | `/api/report/ip/`      | Token + Source IP | Report an IP; auto-scores and buckets it |
 | `POST` | `/api/report/hash/`    | Token + Source IP | Report a hash (MD5 / SHA-1 / SHA-256 / SHA-512) |
+| `POST` | `/api/report/url/`     | Token + Source IP | Report a URL (http/https) |
 | `GET`  | `/api/blacklist/`      | Source IP | Full active IP blacklist (both groups) |
 | `GET`  | `/api/blacklist/24h/`  | Source IP | Only the 24 h group |
 | `GET`  | `/api/blacklist/30d/`  | Source IP | Only the 30 d group |
 | `GET`  | `/api/hashlist/`       | Source IP | Full active hash blacklist |
+| `GET`  | `/api/urllist/`        | Source IP | Full active URL blacklist |
 
 **Example — reporting an IP from a honeypot:**
 
@@ -382,6 +385,16 @@ curl -X POST https://blacklist.example.com/api/report/hash/ \
   -H "X-Username: edr-connector" \
   -H "Content-Type: application/json" \
   -d '{"hash": "9b71d224bd62f3785d96d46ad3ea3d73...", "type": "sha512", "reason": "Ransomware"}'
+```
+
+**Example — reporting a phishing URL:**
+
+```bash
+curl -X POST https://blacklist.example.com/api/report/url/ \
+  -H "Authorization: Token 9c1e0f..." \
+  -H "X-Username: xdr-connector" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://phishing.example/login", "reason": "Credential theft page"}'
 ```
 
 **Example — pulling the current 24 h blacklist from your firewall (no token, IP allowlist enforced):**

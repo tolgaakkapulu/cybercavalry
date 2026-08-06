@@ -34,6 +34,7 @@
       <option value="whitelist"    {% if type_filter == 'whitelist'    %}selected{% endif %}>IP Whitelist</option>
       <option value="hashlist"     {% if type_filter == 'hashlist'     %}selected{% endif %}>Hash Blacklist</option>
       <option value="hash_blacklist" {% if type_filter == 'hash_blacklist' %}selected{% endif %}>Hash Blacklist &amp; VirusTotal</option>
+      <option value="url_blacklist"  {% if type_filter == 'url_blacklist'  %}selected{% endif %}>URL Blacklist &amp; VirusTotal</option>
       <option value="api"          {% if type_filter == 'api'          %}selected{% endif %}>API Requests</option>
       <option value="rate_limit"   {% if type_filter == 'rate_limit'   %}selected{% endif %}>Rate Limit</option>
       <option value="report"       {% if type_filter == 'report'       %}selected{% endif %}>Report Downloads</option>

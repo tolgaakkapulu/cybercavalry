@@ -10,6 +10,7 @@ from apps.accounts.decorators import login_required_custom, role_required
 from apps.blacklist.models import BlacklistEntry, BlacklistGroup
 from apps.whitelist.models import WhitelistEntry
 from apps.hashlist.models import HashEntry
+from apps.urllist.models import URLEntry
 
 from apps.settings_app.models import ActivityLog
 from apps.reports.pdf_generator import generate_dashboard_snapshot
@@ -197,7 +198,20 @@ def _analytics_distributions(active_q):
     if other_n:
         pairs.append(('Other', other_n))
     hash_threat = _chart_data(pairs, _CATEGORICAL_STOPS, reverse=True)
+
+    # URL Score — same VirusTotal malicious-engine bands as hash score. VT's
+    # URL reputation returns fewer engines than files (~90 vs ~70+), but the
+    # thresholds hold: a URL flagged by 20+ engines is unambiguously bad.
+    ul_scored = URLEntry.objects.filter(is_active=True, list_type='black', vt_malicious__isnull=False)
+    url_score = _chart_data([
+        ('Info',     ul_scored.filter(vt_malicious=0).count()),
+        ('Low',      ul_scored.filter(vt_malicious__gte=1,  vt_malicious__lt=6).count()),
+        ('Medium',   ul_scored.filter(vt_malicious__gte=6,  vt_malicious__lt=13).count()),
+        ('High',     ul_scored.filter(vt_malicious__gte=13, vt_malicious__lt=20).count()),
+        ('Critical', ul_scored.filter(vt_malicious__gte=20).count()),
+    ], _SCORE_STOPS)
     return {'ipscore': ip_score, 'ipcountry': ip_country,
+            'urlscore': url_score,
             'hashscore': hash_score, 'hashthreat': hash_threat}
 
 
@@ -304,13 +318,15 @@ def _timeline(now, days=_TIMELINE_DEFAULT_DAYS, bucket='day', minutes=_TIMELINE_
             out[k] = out.get(k, 0) + r['n']
         return out
 
-    ip_map = counts(BlacklistEntry.objects.all())
+    ip_map   = counts(BlacklistEntry.objects.all())
     hash_map = counts(HashEntry.objects.filter(list_type='black'))
+    url_map  = counts(URLEntry.objects.filter(list_type='black'))
     keys = [p.strftime(keyfmt) for p in periods]
     return {
         'labels':  [p.strftime(fmt) for p in periods],
-        'ip':      [ip_map.get(k, 0) for k in keys],
+        'ip':      [ip_map.get(k, 0)   for k in keys],
         'hash':    [hash_map.get(k, 0) for k in keys],
+        'url':     [url_map.get(k, 0)  for k in keys],
         'days':    days,
         'minutes': minutes,
         'bucket':  bucket,
@@ -329,6 +345,7 @@ def index(request):
         'blacklist_30d': BlacklistEntry.objects.filter(active_q, group__name='30d').count(),
         'whitelist_total': WhitelistEntry.objects.filter(is_active=True).count(),
         'hashlist_total': HashEntry.objects.filter(is_active=True, list_type='black').count(),
+        'urllist_total':  URLEntry.objects.filter(is_active=True, list_type='black').count(),
         'api_reports': ActivityLog.objects.filter(
             action__in=['api.report', 'api.hash_report'],
             timestamp__gte=now - timedelta(hours=24)
@@ -357,6 +374,13 @@ def index(request):
         .order_by('-added_at')[:8]
     )
 
+    recent_urllist = (
+        URLEntry.objects
+        .filter(is_active=True, list_type='black')
+        .select_related('added_by')
+        .order_by('-added_at')[:8]
+    )
+
     entry_active_q = Q(entries__is_active=True) & (
         Q(entries__expires_at__isnull=True) | Q(entries__expires_at__gt=now)
     )
@@ -378,10 +402,12 @@ def index(request):
         'recent_blacklist': recent_blacklist,
         'recent_whitelist': recent_whitelist,
         'recent_hashlist': recent_hashlist,
+        'recent_urllist': recent_urllist,
         'groups': groups,
         'ip_score_dist': charts['ipscore'],
         'ip_score_tooltip': ip_score_tooltip,
         'ip_country_dist': charts['ipcountry'],
+        'url_score_dist': charts['urlscore'],
         'hash_score_dist': charts['hashscore'],
         'hash_threat_dist': charts['hashthreat'],
         'timeline_init': _timeline(now, 1, 'minute', minutes=60),
@@ -402,6 +428,7 @@ def stats_api(request):
 
     stats = {
         'hashlist_total':  HashEntry.objects.filter(is_active=True, list_type='black').count(),
+        'urllist_total':   URLEntry.objects.filter(is_active=True, list_type='black').count(),
         'blacklist_total': BlacklistEntry.objects.filter(active_q).count(),
         'blacklist_24h':   BlacklistEntry.objects.filter(active_q, group__name='24h').count(),
         'blacklist_30d':   BlacklistEntry.objects.filter(active_q, group__name='30d').count(),
@@ -475,11 +502,56 @@ def stats_api(request):
                                .select_related('added_by').order_by('-added_at')[:8]
     ]
 
+    recent_urllist = [
+        {
+            'id':             e.id,
+            'url':            e.url_value,
+            'url_short':      (e.url_value[:48] + '…') if len(e.url_value) > 48 else e.url_value,
+            'hostname':       e.hostname,
+            'source':         e.source,
+            'source_display': e.get_source_display(),
+            'added_at':       fmt(e.added_at),
+            # VirusTotal enrichment for the hover tooltip. Numeric fields are
+            # pre-formatted into display strings (empty when the underlying value
+            # is None) so the JS emitter can splice them straight into the DOM
+            # without extra null-checks.
+            'has_intel':      e.has_vt_intel,
+            'threat':         e.vt_threat_label,
+            'categories':     e.vt_categories,
+            'tags':           e.vt_tags,
+            'reputation':     '' if e.vt_reputation is None else str(e.vt_reputation),
+            'votes':          (
+                '' if (e.vt_votes_harmless is None and e.vt_votes_malicious is None)
+                else f"{e.vt_votes_harmless or 0} harmless / {e.vt_votes_malicious or 0} malicious"
+            ),
+            'enginebreakdown': (
+                '' if (e.vt_harmless is None and e.vt_suspicious is None and e.vt_undetected is None)
+                else f"{e.vt_harmless or 0} harmless · {e.vt_suspicious or 0} suspicious · {e.vt_undetected or 0} undetected"
+            ),
+            'finalurl':       e.vt_final_url,
+            'redirects':      '' if e.vt_redirect_count is None else str(e.vt_redirect_count),
+            'pagetitle':      e.vt_title,
+            'httpcode':       '' if e.vt_http_code is None else str(e.vt_http_code),
+            'contentlength':  '' if e.vt_content_length is None else f"{e.vt_content_length} bytes",
+            'servingip':      e.vt_serving_ip,
+            'languages':      e.vt_languages,
+            'registrar':      e.vt_registrar,
+            'created':        fmt_d(e.vt_creation_date),
+            'popularity':     '' if e.vt_popularity_rank is None else f"#{e.vt_popularity_rank}",
+            'firstseen':      fmt_d(e.vt_first_seen),
+            'lastanalysis':   fmt_d(e.vt_last_analysis),
+            'submitted':      e.vt_times_submitted or '',
+        }
+        for e in URLEntry.objects.filter(is_active=True, list_type='black')
+                         .select_related('added_by').order_by('-added_at')[:8]
+    ]
+
     return JsonResponse({
         'stats':            stats,
         'recent_hashlist':  recent_hashlist,
         'recent_blacklist': recent_blacklist,
         'recent_whitelist': recent_whitelist,
+        'recent_urllist':   recent_urllist,
         'charts':           _analytics_distributions(active_q),
     })
 
@@ -520,6 +592,7 @@ def dashboard_pdf(request):
         'blacklist_30d':   BlacklistEntry.objects.filter(active_q, group__name='30d').count(),
         'whitelist_total': WhitelistEntry.objects.filter(is_active=True).count(),
         'hashlist_total':  HashEntry.objects.filter(is_active=True, list_type='black').count(),
+        'urllist_total':   URLEntry.objects.filter(is_active=True, list_type='black').count(),
         'api_reports':     ActivityLog.objects.filter(
             action__in=['api.report', 'api.hash_report'],
             timestamp__gte=now - timedelta(hours=24)
@@ -552,6 +625,12 @@ def dashboard_pdf(request):
         .select_related('added_by')
         .order_by('-added_at')[:8]
     )
+    recent_urllist = (
+        URLEntry.objects
+        .filter(is_active=True, list_type='black')
+        .select_related('added_by')
+        .order_by('-added_at')[:8]
+    )
 
     _full = request.user.get_full_name()
     generated_by = f'{request.user.username} ({_full})' if _full else request.user.username
@@ -570,7 +649,7 @@ def dashboard_pdf(request):
 
     pdf_bytes = generate_dashboard_snapshot(
         stats, groups, recent_blacklist, recent_whitelist, recent_hashlist, generated_by,
-        charts=charts, timeline=timeline,
+        charts=charts, timeline=timeline, recent_urllist=recent_urllist,
     )
 
     ts = timezone.localtime(now).strftime('%Y%m%d_%H%M%S')

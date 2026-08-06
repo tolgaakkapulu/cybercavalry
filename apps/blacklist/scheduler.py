@@ -174,11 +174,16 @@ def _run_scheduled_refresh():
 
 
 def _run_virustotal_refresh():
-    """Executed by APScheduler on each trigger. Reads live settings each time."""
+    """Executed by APScheduler on each trigger. Reads live settings each time.
+
+    Both Hash Blacklist AND URL Blacklist share this schedule -- the
+    admin-facing Settings knobs (`virustotal_schedule_enabled`,
+    `virustotal_enabled`, `virustotal_api_key`) apply globally, so a
+    single tick refreshes both types in sequence. Same story for the
+    cleanup toggle -- one flag, both apps."""
     from django.utils import timezone
     from apps.settings_app.cache import SettingsCache
     from apps.settings_app.models import ActivityLog
-    from apps.hashlist.virustotal_service import bulk_refresh as vt_bulk_refresh
 
     refresh_on = (
         SettingsCache.get('threat_intel.virustotal_schedule_enabled', False)
@@ -191,22 +196,27 @@ def _run_virustotal_refresh():
         logger.info("VirusTotal scheduler tick: both refresh and cleanup disabled — skipping.")
         return
 
-    if refresh_on:
+    def _do_refresh(label, target_model, bulk_refresh):
+        """Wrapper around a single-app bulk_refresh() call so a failure in
+        one app doesn't stop the other from running. Logs and writes an
+        ActivityLog row per app."""
         started_at = timezone.now()
-        logger.info("VirusTotal scheduled refresh: starting...")
+        logger.info("VirusTotal scheduled refresh (%s): starting...", label)
         try:
-            checked, skipped, failed = vt_bulk_refresh(only_unchecked=False)
+            checked, skipped, failed = bulk_refresh(only_unchecked=False)
             elapsed = round((timezone.now() - started_at).total_seconds(), 1)
             logger.info(
-                f"VirusTotal scheduled refresh complete — "
-                f"checked={checked}, skipped={skipped}, failed={failed}, elapsed={elapsed}s"
+                "VirusTotal scheduled refresh (%s) complete — "
+                "checked=%d, skipped=%d, failed=%d, elapsed=%ss",
+                label, checked, skipped, failed, elapsed,
             )
             ActivityLog.log(
                 user=None,
                 action='threat_intel.virustotal_scheduled_refresh',
-                target_model='HashEntry',
+                target_model=target_model,
                 target_id='bulk',
                 detail={
+                    'app': label,
                     'checked': checked, 'skipped': skipped, 'failed': failed,
                     'elapsed_seconds': elapsed, 'trigger': 'scheduled',
                 },
@@ -214,28 +224,43 @@ def _run_virustotal_refresh():
         except Exception as exc:
             elapsed = round((timezone.now() - started_at).total_seconds(), 1)
             logger.error(
-                f"VirusTotal scheduled refresh failed after {elapsed}s: {exc}",
-                exc_info=True,
+                "VirusTotal scheduled refresh (%s) failed after %ss: %s",
+                label, elapsed, exc, exc_info=True,
             )
             try:
                 ActivityLog.log(
                     user=None,
                     action='threat_intel.virustotal_scheduled_refresh_error',
-                    target_model='HashEntry',
+                    target_model=target_model,
                     target_id='bulk',
-                    detail={'error': str(exc), 'elapsed_seconds': elapsed, 'trigger': 'scheduled'},
+                    detail={
+                        'app': label,
+                        'error': str(exc), 'elapsed_seconds': elapsed,
+                        'trigger': 'scheduled',
+                    },
                 )
             except Exception:
                 pass
 
+    if refresh_on:
+        from apps.hashlist.virustotal_service import bulk_refresh as hl_bulk_refresh
+        from apps.urllist.virustotal_service import bulk_refresh as ul_bulk_refresh
+        _do_refresh('hashlist', 'HashEntry', hl_bulk_refresh)
+        _do_refresh('urllist',  'URLEntry',  ul_bulk_refresh)
+
     # Cleanup runs independently of refresh — honoured even when refresh
-    # is off or just failed.
+    # is off or just failed. Same app pairing.
     if cleanup_on:
         try:
             from apps.hashlist.cleanup_service import run_cleanup as _hl_cleanup
             _hl_cleanup(actor=None, client_ip='')
         except Exception as ce:
-            logger.warning("VirusTotal scheduled cleanup failed: %s", ce)
+            logger.warning("VirusTotal scheduled cleanup (hashlist) failed: %s", ce)
+        try:
+            from apps.urllist.cleanup_service import run_cleanup as _ul_cleanup
+            _ul_cleanup(actor=None, client_ip='')
+        except Exception as ce:
+            logger.warning("VirusTotal scheduled cleanup (urllist) failed: %s", ce)
 
 
 def _run_db_backup():

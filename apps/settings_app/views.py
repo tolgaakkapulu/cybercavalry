@@ -644,18 +644,24 @@ def _settings_save_impl(request):
                 add_msg('warning', "Threshold saved, but automatic re-evaluation failed. Check server logs.")
 
         if vt_threshold_changed:
+            # Apply the new threshold across BOTH hash and URL blacklists --
+            # the VT detection threshold setting is a single global knob.
             try:
-                from apps.hashlist.virustotal_service import reapply_vt_threshold
-                activated, deactivated = reapply_vt_threshold()
+                from apps.hashlist.virustotal_service import reapply_vt_threshold as _hl_reapply
+                from apps.urllist.virustotal_service  import reapply_vt_threshold as _ul_reapply
+                hl_activated, hl_deactivated = _hl_reapply()
+                ul_activated, ul_deactivated = _ul_reapply()
+                total_act = hl_activated + ul_activated
+                total_deact = hl_deactivated + ul_deactivated
                 parts = []
-                if activated:
-                    parts.append(f"{activated} re-activated")
-                if deactivated:
-                    parts.append(f"{deactivated} deactivated")
+                if total_act:
+                    parts.append(f"{total_act} re-activated (hashes {hl_activated} + URLs {ul_activated})")
+                if total_deact:
+                    parts.append(f"{total_deact} deactivated (hashes {hl_deactivated} + URLs {ul_deactivated})")
                 if parts:
-                    add_msg('info', f"VirusTotal threshold applied to scored hashes: {', '.join(parts)}.")
+                    add_msg('info', f"VirusTotal threshold applied to scored entries: {', '.join(parts)}.")
                 else:
-                    add_msg('info', "VirusTotal threshold updated — no scored hashes required changes.")
+                    add_msg('info', "VirusTotal threshold updated — no scored entries required changes.")
             except Exception as e:
                 logger.error(f"Failed to reapply VirusTotal threshold: {e}")
                 add_msg('warning', "VirusTotal threshold saved, but automatic re-evaluation failed. Check server logs.")
@@ -1021,6 +1027,12 @@ def _apply_activity_filters(logs, request):
             Q(action__startswith='hashlist.') |
             Q(action__startswith='threat_intel.virustotal') |
             Q(action__in=['api.hashlist', 'api.hash_report'])
+        )
+    elif type_filter == 'url_blacklist':
+        logs = logs.filter(
+            Q(action__startswith='urllist.') |
+            Q(action__startswith='threat_intel.virustotal') |
+            Q(action__in=['api.urllist', 'api.url_report'])
         )
     elif type_filter == 'api':
         # Every incoming firewall / SIEM / SOAR request lands here. Matches
@@ -1639,7 +1651,9 @@ def virustotal_check_key(request):
 @login_required_custom
 @role_required('admin')
 def virustotal_refresh(request):
-    """Trigger a bulk VirusTotal score refresh for all active hash blacklist entries."""
+    """Trigger a bulk VirusTotal score refresh for BOTH hash and URL blacklist
+    entries. The Settings knobs (enabled / api key) are global to VirusTotal,
+    so the button covers both apps in one click."""
     if request.method != 'POST':
         return JsonResponse({'error': 'POST required'}, status=405)
 
@@ -1653,17 +1667,43 @@ def virustotal_refresh(request):
 
     only_unchecked = request.POST.get('only_unchecked', 'false').lower() == 'true'
 
-    try:
-        from apps.hashlist.virustotal_service import bulk_refresh as vt_bulk_refresh
-        checked, skipped, failed = vt_bulk_refresh(only_unchecked=only_unchecked)
-        msg = f"Refresh complete: {checked} scored, {skipped} skipped, {failed} failed."
-        ActivityLog.log(request.user, 'threat_intel.virustotal_refresh', 'HashEntry', 'bulk',
-                     {'checked': checked, 'skipped': skipped, 'failed': failed},
-                     getattr(request, 'client_ip', ''))
-        return JsonResponse({'success': True, 'message': msg, 'checked': checked, 'skipped': skipped, 'failed': failed})
-    except Exception as e:
-        logger.error(f"VirusTotal bulk refresh error: {e}")
-        return JsonResponse({'success': False, 'message': 'Refresh failed. Check server logs for details.'})
+    from apps.hashlist.virustotal_service import bulk_refresh as hl_bulk_refresh
+    from apps.urllist.virustotal_service  import bulk_refresh as ul_bulk_refresh
+
+    totals = {'checked': 0, 'skipped': 0, 'failed': 0}
+    per_app = {}
+
+    for label, target_model, bulk in (
+        ('hashlist', 'HashEntry', hl_bulk_refresh),
+        ('urllist',  'URLEntry',  ul_bulk_refresh),
+    ):
+        try:
+            c, s, f = bulk(only_unchecked=only_unchecked)
+        except Exception as e:
+            logger.error(f"VirusTotal bulk refresh ({label}) error: {e}")
+            per_app[label] = {'error': str(e)}
+            continue
+        per_app[label] = {'checked': c, 'skipped': s, 'failed': f}
+        totals['checked'] += c
+        totals['skipped'] += s
+        totals['failed']  += f
+        ActivityLog.log(
+            request.user, 'threat_intel.virustotal_refresh', target_model, 'bulk',
+            {'app': label, 'checked': c, 'skipped': s, 'failed': f},
+            getattr(request, 'client_ip', ''),
+        )
+
+    msg = (
+        f"Refresh complete: {totals['checked']} scored "
+        f"(hashes {per_app.get('hashlist', {}).get('checked', 0)} + "
+        f"URLs {per_app.get('urllist', {}).get('checked', 0)}), "
+        f"{totals['skipped']} skipped, {totals['failed']} failed."
+    )
+    return JsonResponse({
+        'success': True, 'message': msg,
+        'checked': totals['checked'], 'skipped': totals['skipped'], 'failed': totals['failed'],
+        'per_app': per_app,
+    })
 
 
 @login_required_custom
@@ -1702,8 +1742,9 @@ def abuseipdb_run_cleanup(request):
 @login_required_custom
 @role_required('admin')
 def virustotal_run_cleanup(request):
-    """Trigger an immediate VirusTotal cleanup pass — same shape as the
-    AbuseIPDB endpoint above but operates on inactive hash entries."""
+    """Trigger an immediate VirusTotal cleanup pass — deletes inactive
+    entries in BOTH hash and URL blacklists that match the configured
+    score-range + retention rule. Same shape as the AbuseIPDB endpoint."""
     if request.method != 'POST':
         return JsonResponse({'error': 'POST required'}, status=405)
     if not SettingsCache.get('threat_intel.virustotal_cleanup_enabled', False):
@@ -1711,21 +1752,36 @@ def virustotal_run_cleanup(request):
             'success': False,
             'message': 'Cleanup is disabled — enable it in settings first.',
         })
-    try:
-        from apps.hashlist.cleanup_service import run_cleanup
-        summary = run_cleanup(actor=request.user, client_ip=getattr(request, 'client_ip', ''))
-    except Exception as e:
-        logger.error(f"VirusTotal cleanup error: {e}")
-        return JsonResponse({'success': False, 'message': 'Cleanup failed. Check server logs.'})
-    rule = summary['rule']
+
+    from apps.hashlist.cleanup_service import run_cleanup as hl_cleanup
+    from apps.urllist.cleanup_service  import run_cleanup as ul_cleanup
+
+    total_deleted = 0
+    per_app = {}
+    rule = None
+    for label, cleanup_fn in (('hashlist', hl_cleanup), ('urllist', ul_cleanup)):
+        try:
+            summary = cleanup_fn(actor=request.user, client_ip=getattr(request, 'client_ip', ''))
+        except Exception as e:
+            logger.error(f"VirusTotal cleanup ({label}) error: {e}")
+            per_app[label] = {'error': str(e)}
+            continue
+        per_app[label] = {'deleted': summary['deleted_count']}
+        total_deleted += summary['deleted_count']
+        rule = summary.get('rule') or rule  # both apps share the same rule keys
+
+    rule = rule or {}
     msg = (
-        f"Cleanup complete: deleted {summary['deleted_count']} inactive hashes "
-        f"(malicious {rule['score_min']}-{rule['score_max']}, "
-        f"older than {rule['retention_days']}d)."
+        f"Cleanup complete: deleted {total_deleted} inactive entries "
+        f"(hashes {per_app.get('hashlist', {}).get('deleted', 0)} + "
+        f"URLs {per_app.get('urllist', {}).get('deleted', 0)}) — "
+        f"malicious {rule.get('score_min', '?')}-{rule.get('score_max', '?')}, "
+        f"older than {rule.get('retention_days', '?')}d."
     )
     return JsonResponse({
         'success': True,
         'message': msg,
-        'deleted_count': summary['deleted_count'],
+        'deleted_count': total_deleted,
         'rule': rule,
+        'per_app': per_app,
     })

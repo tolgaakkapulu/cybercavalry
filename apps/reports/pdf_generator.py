@@ -1086,6 +1086,143 @@ def generate_hashlist_executive(queryset, filters, generated_by, vt_threshold=5)
     return buf.getvalue()
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  URL BLACKLIST REPORT
+# ══════════════════════════════════════════════════════════════════════════
+
+def generate_urllist_executive(queryset, filters, generated_by, vt_threshold=5):
+    """Return PDF bytes for URL Blacklist report — mirrors the hashlist layout
+    but drops the fixed hash-type column (URLs have no type) and adds a
+    Hostname column so the reader can scan by domain even when the full URL
+    is truncated."""
+    from collections import Counter
+    _refresh_brand_suffix()
+    buf = io.BytesIO()
+    now = timezone.now()
+    entries = list(queryset.select_related('added_by').order_by('-added_at'))
+    total = len(entries)
+    generated_at = timezone.localtime(now).strftime('%Y-%m-%d %H:%M')
+    filters_text = _filter_line(filters)
+
+    # ── Stats ─────────────────────────────────────────────────────────────
+    active_ct   = sum(1 for e in entries if e.is_active)
+    inactive_ct = total - active_ct
+    vt_checked  = sum(1 for e in entries if e.vt_checked_at)
+    vt_detected = sum(1 for e in entries
+                      if e.vt_checked_at and e.vt_malicious is not None
+                      and e.vt_malicious >= vt_threshold)
+    by_source = Counter(e.source for e in entries)
+    by_user   = Counter(_added_by_display(e.added_by) for e in entries)
+    # Top hostnames (proxy for "what domains dominate this list")
+    by_host   = Counter((e.hostname or 'unknown') for e in entries)
+
+    # Columns: #, URL, Hostname, Source, Reason, VT Score, VT Checked, Added By, Added At
+    # Landscape A4 usable = 14+269+14 = 297 mm
+    col_w = [12, 74, 34, 14, 40, 20, 32, 27, 16]  # sum = 269 mm
+    col_w_pts = [w * mm for w in col_w]
+    pw = sum(col_w) * mm
+    headers = ['#', 'URL', 'Hostname', 'Source', 'Reason', 'VirusTotal\nScore', 'VirusTotal\nChecked', 'Added By', 'Added At']
+
+    content_pagesize = rl_landscape(A4)
+    lm = rm = 14 * mm
+    tm = 22 * mm
+    bm = 22 * mm
+
+    cover_cb = _cover_fn(
+        report_name='URL Blacklist Report',
+        report_type_label='Report',
+        generated_at=generated_at,
+        generated_by=generated_by,
+        filters_text=filters_text,
+    )
+    content_cb = _page_fn(
+        title='URL Blacklist Report',
+        subtitle=f'Generated: {generated_at}',
+        generated_at=generated_at,
+        generated_by=generated_by,
+        total_count=total,
+        filters_text=filters_text,
+    )
+
+    doc, prefix = _build_doc(buf, content_pagesize, (lm, rm, tm, bm), cover_cb, content_cb)
+    elems = list(prefix)
+
+    # ── Statistics section ────────────────────────────────────────────────
+    _sf = filters.get('status', 'all')
+    _stat_boxes = [_stat_box(total, 'Total URLs')]
+    if _sf != 'inactive':
+        _stat_boxes.append(_stat_box(active_ct,   'Active',   _C.SUCCESS_BG, _C.SUCCESS_FG))
+    if _sf != 'active':
+        _stat_boxes.append(_stat_box(inactive_ct, 'Inactive', _C.DANGER_BG,  _C.DANGER_FG))
+    _stat_boxes += [
+        _stat_box(vt_checked,  'VirusTotal Checked',      _C.INFO_BG,    _C.INFO_FG),
+        _stat_box(vt_detected, f'VirusTotal Detected (≥{vt_threshold})', _C.WARNING_BG, _C.WARNING_FG),
+    ]
+    elems.append(_stat_row(_stat_boxes, pw / len(_stat_boxes)))
+    elems.append(Spacer(1, 10))
+
+    src_map = {'api': 'API', 'manual': 'Manual', 'import': 'Import'}
+    if by_source:
+        rows = [(src_map.get(s, s.capitalize()), c,
+                 f'{c / total * 100:.1f}%' if total else '0%',
+                 *_source_col(s))
+                for s, c in sorted(by_source.items(), key=lambda x: -x[1])]
+        elems += _breakdown_table(rows, [pw * 0.5, pw * 0.25, pw * 0.25], 'Breakdown by Source')
+
+    if by_host:
+        rows = [(_trunc(h, 50), c, f'{c / total * 100:.1f}%' if total else '0%',
+                 _C.INFO_BG, _C.INFO_FG)
+                for h, c in sorted(by_host.items(), key=lambda x: -x[1])[:15]]
+        elems += _breakdown_table(rows, [pw * 0.5, pw * 0.25, pw * 0.25], 'Top Hostnames')
+
+    if by_user:
+        rows = [(_trunc(u, 40), c, f'{c / total * 100:.1f}%' if total else '0%',
+                 _C.PURPLE_BG, _C.PURPLE_FG)
+                for u, c in sorted(by_user.items(), key=lambda x: -x[1])[:15]]
+        elems += _breakdown_table(rows, [pw * 0.5, pw * 0.25, pw * 0.25], 'Breakdown by User')
+
+    elems.append(Spacer(1, 14))
+
+    # ── Data table ────────────────────────────────────────────────────────
+    data = [[Paragraph(h, _ST['hdr']) for h in headers]]
+    style_cmds = list(_BASE_TBL)
+
+    for idx, e in enumerate(entries, start=1):
+        s_bg, s_fg = _source_col(e.source)
+        if e.vt_malicious is not None and e.vt_total is not None:
+            vt_str = f'{e.vt_malicious}/{e.vt_total}'
+            vt_bg  = _C.DANGER_BG  if e.vt_malicious >= vt_threshold else _C.SUCCESS_BG
+            vt_fg  = _C.DANGER_FG  if e.vt_malicious >= vt_threshold else _C.SUCCESS_FG
+        elif e.vt_unavailable:
+            vt_str, vt_bg, vt_fg = 'N/A', _C.WARNING_BG, _C.WARNING_FG
+        else:
+            vt_str, vt_bg, vt_fg = '—', None, None
+        added_by = _added_by_display(e.added_by)
+
+        data.append([
+            Paragraph(str(idx),                    _ST['cell_c']),
+            Paragraph(_trunc(e.url_value, 80),     _ST['cell']),
+            Paragraph(_trunc(e.hostname, 32),      _ST['cell_c']),
+            Paragraph(e.get_source_display(),      _ST['cell_c']),
+            Paragraph(_trunc(e.reason, 50),        _ST['cell_c']),
+            Paragraph(vt_str,                      _ST['cell_c']),
+            Paragraph(_fmt(e.vt_checked_at),       _ST['cell_c']),
+            Paragraph(_trunc(added_by, 24),        _ST['cell_c']),
+            Paragraph(_fmt(e.added_at),            _ST['cell_c']),
+        ])
+        r = idx
+        style_cmds += [('BACKGROUND', (3, r), (3, r), s_bg), ('TEXTCOLOR', (3, r), (3, r), s_fg)]
+        if vt_bg:
+            style_cmds += [('BACKGROUND', (5, r), (5, r), vt_bg), ('TEXTCOLOR', (5, r), (5, r), vt_fg)]
+
+    table = Table(data, colWidths=col_w_pts, repeatRows=1)
+    table.setStyle(TableStyle(style_cmds))
+    table.hAlign = 'LEFT'
+    elems.append(table)
+    doc.build(elems)
+    return buf.getvalue()
+
+
 # ════════════════════════════════════════════════════════════════════════════
 #  DASHBOARD
 # ════════════════════════════════════════════════════════════════════════════
@@ -1139,9 +1276,12 @@ def _pie_drawing(dist, w, h):
 
 
 def _timeline_drawing(timeline, w, h):
-    """Two-line daily timeline (IP + hash additions) with a small manual legend."""
+    """Three-line daily timeline (IP + Hash + URL additions) with a small manual legend."""
     d = Drawing(w, h)
     ip, hsh, names = timeline['ip'], timeline['hash'], timeline['labels']
+    # URL series is optional — legacy callers may omit it; fall back to zeros
+    # matched to the label count so the chart's x-axis stays aligned.
+    url = timeline.get('url') or [0] * len(names)
 
     # Thin out the x-axis labels so they never overlap — keep about MAX_TICKS
     # spread evenly across the window (first and last always visible).
@@ -1162,27 +1302,31 @@ def _timeline_drawing(timeline, w, h):
     lc.y = 18
     lc.width = w - 42
     lc.height = h - 44
-    lc.data = [ip, hsh]
+    lc.data = [ip, hsh, url]
     lc.categoryAxis.categoryNames = display_names
     lc.categoryAxis.labels.fontName = 'Helvetica'
     lc.categoryAxis.labels.fontSize = 6
     lc.categoryAxis.labels.dy = -2
     lc.valueAxis.valueMin = 0
-    lc.valueAxis.valueMax = max(ip + hsh + [1])
+    lc.valueAxis.valueMax = max(ip + hsh + url + [1])
     lc.valueAxis.labels.fontName = 'Helvetica'
     lc.valueAxis.labels.fontSize = 6
-    lc.lines[0].strokeColor = HexColor('#d3737a')
-    lc.lines[1].strokeColor = HexColor('#6c9bd2')
+    lc.lines[0].strokeColor = HexColor('#D3737A')
+    lc.lines[1].strokeColor = HexColor('#9AB5C4')
+    lc.lines[2].strokeColor = HexColor('#B49CC4')
     lc.lines[0].strokeWidth = 1.5
     lc.lines[1].strokeWidth = 1.5
+    lc.lines[2].strokeWidth = 1.5
     d.add(lc)
 
-    # Manual legend (top-left) — two series.
+    # Manual legend (top-left) — three series, evenly spaced.
     ly = h - 9
-    d.add(Rect(30, ly, 8, 8, fillColor=HexColor('#d3737a'), strokeColor=None))
+    d.add(Rect(30, ly, 8, 8, fillColor=HexColor('#D3737A'), strokeColor=None))
     d.add(String(42, ly + 1, 'IP Blacklist', fontName='Helvetica', fontSize=7, fillColor=_C.TEXT))
-    d.add(Rect(120, ly, 8, 8, fillColor=HexColor('#6c9bd2'), strokeColor=None))
+    d.add(Rect(120, ly, 8, 8, fillColor=HexColor('#9AB5C4'), strokeColor=None))
     d.add(String(132, ly + 1, 'Hash Blacklist', fontName='Helvetica', fontSize=7, fillColor=_C.TEXT))
+    d.add(Rect(215, ly, 8, 8, fillColor=HexColor('#B49CC4'), strokeColor=None))
+    d.add(String(227, ly + 1, 'URL Blacklist', fontName='Helvetica', fontSize=7, fillColor=_C.TEXT))
     return d
 
 
@@ -1222,15 +1366,20 @@ def _timeline_window_label(days, bucket, minutes=None):
 
 
 def generate_dashboard_snapshot(stats, groups, recent_blacklist, recent_whitelist,
-                                recent_hashlist, generated_by, charts=None, timeline=None):
+                                recent_hashlist, generated_by, charts=None, timeline=None,
+                                recent_urllist=None):
     """
     Portrait A4 dashboard PDF.
-    stats           : dict  — keys: hashlist_total, blacklist_total, blacklist_30d,
-                              blacklist_24h, whitelist_total, api_reports, users_total
+    stats           : dict  — keys: hashlist_total, urllist_total, blacklist_total,
+                              blacklist_30d, blacklist_24h, whitelist_total,
+                              api_reports, users_total
     groups          : annotated BlacklistGroup queryset (active_count annotation)
     recent_blacklist: queryset[:10] — select_related('group', 'added_by')
     recent_whitelist: queryset[:10] — select_related('added_by')
     recent_hashlist : queryset[:10] — select_related('added_by')
+    recent_urllist  : queryset[:10] — select_related('added_by') (optional; None
+                      keeps the dashboard rendering exactly as before for
+                      callers that haven't been updated yet)
     generated_by    : str
     """
     _refresh_brand_suffix()
@@ -1276,25 +1425,28 @@ def generate_dashboard_snapshot(stats, groups, recent_blacklist, recent_whitelis
     elems.append(Paragraph('Platform Statistics', _sect_c))
     elems.append(Spacer(1, 6))
 
+    # Widget order mirrors the dashboard header row:
+    #   Row 1: 30d IP · 24h IP · URL
+    #   Row 2: Hash · IP Whitelist · API Requests
     box_w = pw / 3
     row1 = [
-        _stat_box(stats.get('hashlist_total', 0), 'Hash Blacklist\n(Active)',
-                  _C.DANGER_BG, _C.DANGER_FG),
         _stat_box(stats.get('blacklist_30d', 0), '30d IP Blacklist\n(Active)',
-                  _C.PURPLE_BG, _C.PURPLE_FG),
+                  _C.DANGER_BG, _C.DANGER_FG),
         _stat_box(stats.get('blacklist_24h', 0), '24h IP Blacklist\n(Active)',
                   _C.PINK_BG, _C.PINK_FG),
+        _stat_box(stats.get('urllist_total', 0), 'URL Blacklist\n(Active)',
+                  _C.PURPLE_BG, _C.PURPLE_FG),
     ]
     elems.append(_stat_row(row1, box_w))
     elems.append(Spacer(1, 6))
 
     row2 = [
+        _stat_box(stats.get('hashlist_total', 0), 'Hash Blacklist\n(Active)',
+                  _C.DANGER_BG, _C.DANGER_FG),
         _stat_box(stats.get('whitelist_total', 0), 'IP Whitelist\n(Active)',
                   _C.SUCCESS_BG, _C.SUCCESS_FG),
         _stat_box(stats.get('api_reports', 0), 'API Requests\n(Last 24h)',
                   _C.INFO_BG, _C.INFO_FG),
-        _stat_box(stats.get('users_total', 0), 'Active Users',
-                  _C.MUTED_BG, _C.MUTED_FG),
     ]
     elems.append(_stat_row(row2, box_w))
     elems.append(Spacer(1, 14))
@@ -1313,10 +1465,14 @@ def generate_dashboard_snapshot(stats, groups, recent_blacklist, recent_whitelis
         elems.append(Spacer(1, 14))
 
     # ── Section 1c: Analytics distributions (pie charts) ─────────────────────
+    # 5 charts arranged 3 + 2 in a 3-column grid so the layout matches the
+    # 5-column dashboard analytics row. Order mirrors the UI:
+    #   IP Score · IP Top Countries · URL Score
+    #   Hash Score · Hash Top Threat Labels · (empty)
     if charts:
         elems.append(Paragraph('Analytics', _sect_c))
         elems.append(Spacer(1, 6))
-        cw = pw / 2
+        cw = pw / 3
         ch = 122
 
         def _pie_cell(title, key):
@@ -1330,10 +1486,14 @@ def generate_dashboard_snapshot(stats, groups, recent_blacklist, recent_whitelis
             return cell
 
         pie_rows = [
-            [_pie_cell('IP Score', 'ipscore'), _pie_cell('IP Top Countries', 'ipcountry')],
-            [_pie_cell('Hash Score', 'hashscore'), _pie_cell('Hash Top Threat Labels', 'hashthreat')],
+            [_pie_cell('IP Score', 'ipscore'),
+             _pie_cell('IP Top Countries', 'ipcountry'),
+             _pie_cell('URL Score', 'urlscore')],
+            [_pie_cell('Hash Score', 'hashscore'),
+             _pie_cell('Hash Top Threat Labels', 'hashthreat'),
+             ''],  # placeholder to keep grid symmetric
         ]
-        pie_tbl = Table(pie_rows, colWidths=[cw, cw])
+        pie_tbl = Table(pie_rows, colWidths=[cw, cw, cw])
         pie_tbl.setStyle(TableStyle([
             ('VALIGN',       (0, 0), (-1, -1), 'TOP'),
             ('LEFTPADDING',  (0, 0), (-1, -1), 4),
@@ -1361,43 +1521,7 @@ def generate_dashboard_snapshot(stats, groups, recent_blacklist, recent_whitelis
         elems.append(KeepTogether(_breakdown_table(group_rows, gw, title_='Blacklist Groups')))
         elems.append(Spacer(1, 14))
 
-    # ── Section 3: Recent Hash Blacklist ─────────────────────────────────────
-    elems.append(Paragraph('Recent Hash Blacklist', _ST['sect']))
-    elems.append(Spacer(1, 4))
-
-    # col widths sum to 170 mm
-    hl_col_w = [w * mm for w in [10, 80, 20, 20, 40]]
-    hl_data = [[
-        Paragraph('#',        _ST['hdr']),
-        Paragraph('Hash',     _ST['hdr']),
-        Paragraph('Type',     _ST['hdr']),
-        Paragraph('Source',   _ST['hdr']),
-        Paragraph('Added At', _ST['hdr']),
-    ]]
-    hl_style = list(_BASE_TBL)
-
-    for idx, e in enumerate(recent_hashlist, start=1):
-        ht_bg, ht_fg = _hash_type_col(e.hash_type)
-        s_bg,  s_fg  = _source_col(e.source)
-        hl_data.append([
-            Paragraph(str(idx),                         _ST['cell_c']),
-            Paragraph(_trunc(e.hash_value.upper(), 60), _ST['cell_c']),
-            Paragraph(e.hash_type.upper(),              _ST['cell_c']),
-            Paragraph(e.get_source_display(),           _ST['cell_c']),
-            Paragraph(_fmt(e.added_at),                 _ST['cell_c']),
-        ])
-        hl_style += [('BACKGROUND', (2, idx), (2, idx), ht_bg),
-                     ('TEXTCOLOR',  (2, idx), (2, idx), ht_fg)]
-        hl_style += [('BACKGROUND', (3, idx), (3, idx), s_bg),
-                     ('TEXTCOLOR',  (3, idx), (3, idx), s_fg)]
-
-    hl_tbl = Table(hl_data, colWidths=hl_col_w, repeatRows=1)
-    hl_tbl.setStyle(TableStyle(hl_style))
-    hl_tbl.hAlign = 'LEFT'
-    elems.append(hl_tbl)
-    elems.append(Spacer(1, 14))
-
-    # ── Section 4: Recent IP Blacklist ───────────────────────────────────────
+    # ── Section 3: Recent IP Blacklist ───────────────────────────────────────
     elems.append(Paragraph('Recent IP Blacklist', _ST['sect']))
     elems.append(Spacer(1, 4))
 
@@ -1434,37 +1558,77 @@ def generate_dashboard_snapshot(stats, groups, recent_blacklist, recent_whitelis
     elems.append(bl_tbl)
     elems.append(Spacer(1, 14))
 
-    # ── Section 5: Recent IP Whitelist ───────────────────────────────────────
-    elems.append(Paragraph('Recent IP Whitelist', _ST['sect']))
+    # ── Section 3b: Recent URL Blacklist ─────────────────────────────────────
+    # Only render when the caller opted in by passing a queryset -- keeps
+    # older callers (that don't yet pass `recent_urllist`) rendering the
+    # same output as before.
+    if recent_urllist is not None:
+        elems.append(Paragraph('Recent URL Blacklist', _ST['sect']))
+        elems.append(Spacer(1, 4))
+        # col widths sum to 170 mm
+        ul_col_w = [w * mm for w in [10, 80, 40, 20, 20]]
+        ul_data = [[
+            Paragraph('#',        _ST['hdr']),
+            Paragraph('URL',      _ST['hdr']),
+            Paragraph('Hostname', _ST['hdr']),
+            Paragraph('Source',   _ST['hdr']),
+            Paragraph('Added At', _ST['hdr']),
+        ]]
+        ul_style = list(_BASE_TBL)
+        for idx, e in enumerate(recent_urllist, start=1):
+            s_bg, s_fg = _source_col(e.source)
+            ul_data.append([
+                Paragraph(str(idx),                _ST['cell_c']),
+                Paragraph(_trunc(e.url_value, 80), _ST['cell']),
+                Paragraph(_trunc(e.hostname, 32),  _ST['cell_c']),
+                Paragraph(e.get_source_display(),  _ST['cell_c']),
+                Paragraph(_fmt(e.added_at),        _ST['cell_c']),
+            ])
+            ul_style += [('BACKGROUND', (3, idx), (3, idx), s_bg),
+                         ('TEXTCOLOR',  (3, idx), (3, idx), s_fg)]
+        ul_tbl = Table(ul_data, colWidths=ul_col_w, repeatRows=1)
+        ul_tbl.setStyle(TableStyle(ul_style))
+        ul_tbl.hAlign = 'LEFT'
+        elems.append(ul_tbl)
+        elems.append(Spacer(1, 14))
+
+    # ── Section 4: Recent Hash Blacklist ─────────────────────────────────────
+    elems.append(Paragraph('Recent Hash Blacklist', _ST['sect']))
     elems.append(Spacer(1, 4))
 
     # col widths sum to 170 mm
-    wl_col_w = [w * mm for w in [10, 72, 18, 22, 48]]
-    wl_data = [[
+    hl_col_w = [w * mm for w in [10, 80, 20, 20, 40]]
+    hl_data = [[
         Paragraph('#',        _ST['hdr']),
-        Paragraph('CIDR',     _ST['hdr']),
-        Paragraph('Prefix',   _ST['hdr']),
+        Paragraph('Hash',     _ST['hdr']),
+        Paragraph('Type',     _ST['hdr']),
         Paragraph('Source',   _ST['hdr']),
         Paragraph('Added At', _ST['hdr']),
     ]]
-    wl_style = list(_BASE_TBL)
+    hl_style = list(_BASE_TBL)
 
-    for idx, e in enumerate(recent_whitelist, start=1):
-        s_bg, s_fg = _source_col(e.source)
-        wl_data.append([
-            Paragraph(str(idx),               _ST['cell_c']),
-            Paragraph(e.cidr,                 _ST['cell_c']),
-            Paragraph(f'/{e.prefix_length}',  _ST['cell_c']),
-            Paragraph(e.get_source_display(), _ST['cell_c']),
-            Paragraph(_fmt(e.added_at),       _ST['cell_c']),
+    for idx, e in enumerate(recent_hashlist, start=1):
+        ht_bg, ht_fg = _hash_type_col(e.hash_type)
+        s_bg,  s_fg  = _source_col(e.source)
+        hl_data.append([
+            Paragraph(str(idx),                         _ST['cell_c']),
+            Paragraph(_trunc(e.hash_value.upper(), 60), _ST['cell_c']),
+            Paragraph(e.hash_type.upper(),              _ST['cell_c']),
+            Paragraph(e.get_source_display(),           _ST['cell_c']),
+            Paragraph(_fmt(e.added_at),                 _ST['cell_c']),
         ])
-        wl_style += [('BACKGROUND', (3, idx), (3, idx), s_bg),
+        hl_style += [('BACKGROUND', (2, idx), (2, idx), ht_bg),
+                     ('TEXTCOLOR',  (2, idx), (2, idx), ht_fg)]
+        hl_style += [('BACKGROUND', (3, idx), (3, idx), s_bg),
                      ('TEXTCOLOR',  (3, idx), (3, idx), s_fg)]
 
-    wl_tbl = Table(wl_data, colWidths=wl_col_w, repeatRows=1)
-    wl_tbl.setStyle(TableStyle(wl_style))
-    wl_tbl.hAlign = 'LEFT'
-    elems.append(wl_tbl)
+    hl_tbl = Table(hl_data, colWidths=hl_col_w, repeatRows=1)
+    hl_tbl.setStyle(TableStyle(hl_style))
+    hl_tbl.hAlign = 'LEFT'
+    elems.append(hl_tbl)
+    # (Recent IP Whitelist section removed per dashboard PDF redesign — the
+    # `recent_whitelist` parameter is still accepted for API back-compat but
+    # is intentionally not rendered.)
 
     doc.build(elems)
     return buf.getvalue()

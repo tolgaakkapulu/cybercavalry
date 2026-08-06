@@ -665,3 +665,247 @@ def api_status(request):
             'active': active,
         },
     })
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# URL Blacklist API — mirrors the hash endpoints (get_hashlist / report_hash)
+# with URL-specific validation, normalization and VT enrichment.
+# ═════════════════════════════════════════════════════════════════════════
+
+@require_http_methods(["GET"])
+def get_urllist(request):
+    """
+    GET /api/v1/urllist/
+
+    Returns active blacklisted URLs.
+    Auth: source IP allowlist only (same as blacklist / hashlist reads).
+    Supports ?format=txt for plain-text output (one URL per line).
+    Supports ?page and ?page_size for pagination (default 1000, max 5000).
+    """
+    _log_api_request(request)
+    client_ip = get_client_ip(request)
+    if not check_source_ip(request):
+        logger.warning(f"API urllist blocked: source IP {client_ip} not in allowed list")
+        return json_error("Source IP not authorized.", status=403)
+
+    from apps.urllist.models import URLEntry
+    # Same vt_unavailable exclusion as hashlist: entries where VT couldn't
+    # be reached stay visible in the admin console but never leak into the
+    # downstream firewall/proxy feed without a real verdict.
+    entries = list(
+        URLEntry.objects.filter(is_active=True, list_type='black', vt_unavailable=False)
+        .order_by('hostname', 'url_value')
+    )
+
+    output_format = request.GET.get('format', 'json')
+    ActivityLog.log(None, 'api.urllist', 'URLEntry', 'black',
+                 {'count': len(entries), 'format': output_format, 'source_ip': client_ip,
+                  **_api_request_context(request)}, client_ip)
+
+    if output_format == 'txt':
+        lines = [e.url_value for e in entries]
+        response = HttpResponse('\n'.join(lines), content_type='text/plain')
+        response['Cache-Control'] = 'max-age=300'
+        return response
+
+    try:
+        page = max(1, int(request.GET.get('page', 1)))
+    except (ValueError, TypeError):
+        page = 1
+    try:
+        page_size = min(max(1, int(request.GET.get('page_size', 1000))), 5000)
+    except (ValueError, TypeError):
+        page_size = 1000
+    start = (page - 1) * page_size
+    page_entries = entries[start:start + page_size]
+
+    data = {
+        'count':        len(entries),
+        'page':         page,
+        'page_size':    page_size,
+        'generated_at': timezone.now().isoformat(),
+        'entries': [
+            {
+                'url':      e.url_value,
+                'hostname': e.hostname,
+                'added_at': e.added_at.isoformat(),
+            }
+            for e in page_entries
+        ],
+    }
+    response = JsonResponse(data)
+    response['Cache-Control'] = 'max-age=300'
+    return response
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def report_url(request):
+    """
+    POST /api/v1/report/url/
+    Add a URL to the blacklist.
+    Requires: Token auth + source IP allowlist.
+    Body: {"url": "<http(s)://...>", "reason": "<optional>"}
+
+    Behaviour mirrors report_hash:
+      * Existing record -- no changes, no VT re-query. Existing state respected.
+      * New record -- create as active, optionally query VT. When VT fails
+        the entry is flagged vt_unavailable=True (stays visible in UI,
+        excluded from /api/v1/urllist/ feed until a real verdict arrives).
+    """
+    _log_api_request(request)
+    profile = authenticate_token(request)
+    if profile is None:
+        return json_error(
+            "Authentication failed. Provide both 'Authorization: Token <token>' "
+            "and 'X-Username: <username>' headers with valid, matching credentials.",
+            status=401
+        )
+
+    limit_rpm = SettingsCache.get('api.rate_limit_rpm', 60)
+    _client_ip = get_client_ip(request)
+    if not check_rate_limit(profile.api_token_hash or '', limit_rpm, client_ip=_client_ip):
+        ActivityLog.log(
+            profile.user, 'api.rate_limit', 'API', '/api/v1/report/url/',
+            {'endpoint': '/api/v1/report/url/', 'limit_rpm': limit_rpm, 'client_ip': _client_ip},
+            _client_ip,
+        )
+        logger.warning(f"Rate limit exceeded: user={profile.user.username} ip={_client_ip} endpoint=/api/v1/report/url/")
+        return json_error("Rate limit exceeded.", status=429)
+
+    if not check_source_ip(request):
+        client_ip = get_client_ip(request)
+        logger.warning(f"API url report blocked: source IP {client_ip} not in allowed list")
+        return json_error("Source IP not authorized.", status=403)
+
+    if len(request.body) > _MAX_BODY_BYTES:
+        return json_error(f"Request body too large (max {_MAX_BODY_BYTES} bytes).", status=413)
+
+    try:
+        data = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return json_error("Invalid JSON body.")
+
+    url_input = (data.get('url') or '').strip()
+    reason = data.get('reason', 'API report')
+
+    if not url_input:
+        return json_error("'url' field is required.")
+
+    from apps.urllist.models import URLEntry, is_valid_url, normalize_url, url_sha256, _split_bare
+    from urllib.parse import urlparse
+    if not is_valid_url(url_input):
+        return json_error(
+            f"'{url_input[:80]}' is not a valid URL. "
+            "Accepted: a full URL (http:// or https://) or a bare domain like 'phishing.example' "
+            "(optionally with a path)."
+        )
+
+    url_value = normalize_url(url_input)
+    url_hash_val = url_sha256(url_value)
+    # Bare-domain inputs keep their non-scheme form -- urlparse().hostname
+    # returns None for them, so use _split_bare() to pull the host out.
+    if url_value.lower().startswith(('http://', 'https://')):
+        hostname = (urlparse(url_value).hostname or '')[:253]
+    else:
+        hostname = _split_bare(url_value)[0][:253]
+    client_ip = get_client_ip(request)
+
+    entry, created = URLEntry.objects.get_or_create(
+        url_hash=url_hash_val,
+        list_type=URLEntry.LIST_BLACK,
+        defaults={
+            'url_value': url_value,
+            'hostname':  hostname,
+            'reason':    reason,
+            'source':    URLEntry.SOURCE_API,
+            'added_by':  profile.user,
+            'is_active': True,
+        }
+    )
+
+    if not created:
+        action = 'existing'
+        _prior_state = 'active' if entry.is_active else 'inactive'
+        _prior_vt = (
+            f"{entry.vt_malicious}/{entry.vt_total}" if entry.vt_checked_at
+            else ('N/A' if entry.vt_unavailable else 'never-scored')
+        )
+        response_message = (
+            f'URL already tracked (currently {_prior_state}, VT={_prior_vt}) -- no changes made.'
+        )
+        logger.info(
+            "API url report NO-OP: url=%s state=%s vt=%s (no reactivation, no VT query)",
+            url_value[:60], _prior_state, _prior_vt,
+        )
+    else:
+        action = 'added'
+        response_message = 'New URL blacklist entry created.'
+        logger.info(
+            "API url report NEW: url=%s -- created as is_active=True (will be scored by VT if enabled)",
+            url_value[:60],
+        )
+
+    vt_result = None
+    vt_unavailable = False
+    if created and SettingsCache.get('threat_intel.virustotal_enabled', False) and \
+            SettingsCache.get('threat_intel.virustotal_auto_check', False):
+        from apps.urllist.virustotal_service import (
+            fetch_url_data_with_timeout, _stats_from_attrs, _apply_score_to_entry,
+        )
+        from django.utils import timezone as _tz
+        vt_attrs = fetch_url_data_with_timeout(url_value, timeout=30)
+        if vt_attrs is not None:
+            malicious, total = _stats_from_attrs(vt_attrs)
+            vt_result = (malicious, total)
+            entry.refresh_from_db()
+            _apply_score_to_entry(entry, malicious, total, _tz.now(), meta=vt_attrs)
+            entry.refresh_from_db()
+            logger.info(
+                "API url report VT check: url=%s malicious=%d/%d is_active=%s",
+                url_value[:60], malicious, total, entry.is_active,
+            )
+        else:
+            entry.vt_unavailable = True
+            entry.save(update_fields=['vt_unavailable'])
+            vt_unavailable = True
+            logger.warning(
+                "API url report: VT unavailable for url=%s -- flagged (hidden from /api/v1/urllist/)",
+                url_value[:60],
+            )
+
+    ActivityLog.log(
+        profile.user, 'api.url_report', 'URLEntry', url_hash_val,
+        {
+            'url': url_value,
+            'hostname': hostname,
+            'action': action,
+            'is_active_after': entry.is_active,
+            'reporter_ip': client_ip,
+            **(
+                {'vt_malicious': vt_result[0], 'vt_total': vt_result[1]}
+                if vt_result is not None else {}
+            ),
+            **({'vt_unavailable': True} if vt_unavailable else {}),
+            **_api_request_context(request),
+        },
+        client_ip,
+    )
+
+    response_data = {
+        'status':    'blacklisted' if entry.is_active else 'inactive',
+        'url':       url_value,
+        'hostname':  hostname,
+        'action':    action,
+        'message':   response_message,
+        'is_active': entry.is_active,
+    }
+    if vt_result is not None:
+        response_data['virustotal'] = {
+            'malicious': vt_result[0],
+            'total':     vt_result[1],
+            'threshold': max(0, int(SettingsCache.get('threat_intel.virustotal_detection_threshold', 5) or 5)),
+        }
+    elif vt_unavailable:
+        response_data['virustotal'] = {'status': 'unavailable'}
+    return JsonResponse(response_data, status=201 if action == 'added' else 200)

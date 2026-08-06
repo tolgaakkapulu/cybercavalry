@@ -41,6 +41,10 @@ class Role(models.Model):
         return self.name in (self.ADMIN, self.OPERATOR)
 
     @property
+    def can_manage_urllist(self):
+        return self.name in (self.ADMIN, self.OPERATOR)
+
+    @property
     def can_view(self):
         return self.name in (self.ADMIN, self.OPERATOR, self.VIEWER)
 
