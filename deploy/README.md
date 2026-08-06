@@ -89,8 +89,19 @@ sudo bash deploy/linux/setup.sh update \
 ```
 
 Every knob is a `--flag value` pair — `--install-dir`, `--zip-source`,
-`--rollback-dir`, `--https-port`, `--service-user`, `--service-name`.
-Run `sudo bash deploy/linux/setup.sh --help` for the full list.
+`--rollback-dir`, `--https-port`, `--service-user`, `--service-name`,
+`--reinstall-deps`. Run `sudo bash deploy/linux/setup.sh --help` for the
+full list.
+
+**Fast updates skip pip.** `setup.sh update` no longer runs pip by
+default — the existing venv already holds every package needed for
+runtime, and touching pip on an air-gapped box just risks hanging on
+wheels / PyPI. The update flow is: stop → sync code → migrate →
+collectstatic → clear `__pycache__` → restart. Pass `--reinstall-deps`
+explicitly when `requirements.txt` actually gained or dropped a package,
+and only then do you need `deploy/wheels/` (or PyPI reachability). The
+script warns you at update-time when `requirements.txt` has changed
+since the last install so you know when to pass the flag.
 
 Both commands end with a health check — if the service doesn't come up
 you'll see the last 30 lines of `journalctl` in your terminal.
@@ -196,6 +207,8 @@ under these paths untouched:
 - `logs/` (rotated log files)
 - `backups/` (DB snapshots)
 - `cybercavalry.db*` (SQLite database, if used)
+- `media/` (uploaded brand logo / background / login image)
+- `deploy/wheels/` (offline wheel bundle — an incoming zip with an empty `wheels/` no longer wipes what's on the target)
 
 Everything else is overwritten with the new release content.
 
@@ -211,7 +224,9 @@ bad upgrade by restoring that directory with `rsync`/`robocopy`.
 |---|---|
 | `service failed to start` | `sudo journalctl -u cybercavalry -n 100` (Linux) / `Get-Content C:\CYBERCavalry\logs\service.wrapper.log -Tail 100` (Windows) |
 | `No CYBERCavalry_v*.zip` | Copy the release zip to `/home/cavalry.svc/` (Linux) or `$env:USERPROFILE\Downloads` (Windows update) |
-| `Wheel bundle missing` | Re-run `python deploy/prepare_offline_bundle.py` on your connected workstation with the same Python major.minor as the target host |
+| `Wheel bundle missing` | Only surfaces when you passed `--reinstall-deps` (or the venv was so broken it had to be rebuilt). Re-run `python deploy/prepare_offline_bundle.py` on your connected workstation with the same Python major.minor as the target host |
+| `unexpected zip layout` | Rebuild the release with `python manage_server.py release` — the current builder always writes the top-level folder as `CYBERCavalry/`, regardless of your local dev directory name |
+| `install_deps: entering` never appears in update log | Update is skipping pip by design; that message only prints when pip actually runs (broken venv or `--reinstall-deps`) |
 | `File ... cannot be loaded` (Windows) | Use `powershell -ExecutionPolicy Bypass -File .\setup.ps1 ...` |
 | `File ... is not digitally signed` (Windows) | `Get-ChildItem -Path deploy\ -Recurse \| Unblock-File`, then re-run |
 | `Permission denied` on `certs/key.pem` | Linux: `chown cavalry:cavalry certs/*.pem` — Windows: `icacls certs\key.pem /inheritance:r /grant:r 'Administrators:F' 'SYSTEM:F'` |
@@ -223,8 +238,8 @@ bad upgrade by restoring that directory with `rsync`/`robocopy`.
 
 - **Worker count is 1** on both platforms because APScheduler runs
   in-process; extra workers would double up scheduled jobs. Raise
-  threads (`--threads` on Linux gunicorn, `--threads` on Windows
-  waitress) if you need more concurrency.
+  threads (`--threads` on Linux gunicorn) or worker concurrency on
+  Windows (hypercorn ASGI, native TLS on 8443) if you need more.
 - **Redis is optional.** When absent, Django's `DatabaseCache` handles
   the rate-limit / lockout store instead — perfectly fine for a single
   node.

@@ -43,6 +43,8 @@ Everything runs behind a clean web UI with role-based access, activity auditing,
 - **Hit tracking** with rolling report count per IP
 - **Automatic promotion** — repeat offenders escalated from 24 h → 30 d based on configurable threshold within an N-day window
 - **Pinned entries** — admin overrides that survive automatic re-evaluation
+- **Rich filters** — search + group + source + pinned + count / AbuseIPDB score ranges on IP Blacklist; search + pinned on Hash Blacklist
+- **Bulk actions** — activate / deactivate / delete / pin / unpin / score across every selection
 
 </td>
 <td width="50%" valign="top">
@@ -62,7 +64,9 @@ Everything runs behind a clean web UI with role-based access, activity auditing,
 ### 🔔 Alerting & Observability
 - **E-mail alerts** for quota exhaustion (AbuseIPDB / VirusTotal)
 - **E-mail alerts** for API rate-limit abuse per caller
-- **Activity log** with old/new diff for every configuration change
+- **E-mail alerts** for integration silence — notify when a regular firewall / XDR / SIEM caller stops pulling
+- **Activity log** with old/new diff for every configuration change and every API request (method, path, query, user-agent)
+- **Activity log filter for API requests** so firewall/XDR pull events are one click away
 - **Syslog forwarding** — mirror `cybercavalry.log`, `error.log`, `access.log` streams to a RFC 3164 collector
 - **Configurable cooldowns** so operators aren't paged twice for the same event
 
@@ -315,6 +319,7 @@ Most operational settings live in the **Settings** page and are stored in the DB
 - E-mail tab: SMTP host / port / user / password / from / TLS
 - Alerts → Quota: threshold `%`, cooldown, recipient list (`;`-separated)
 - Alerts → Rate limit: per-caller RPM threshold, alert e-mail
+- Alerts → Silence: heartbeat watchdog for integrated products (firewall / XDR / SIEM). Fires when a caller with a 24 h baseline stops calling for N minutes. Threshold / baseline / cooldown are all configurable.
 - Syslog: host / port / protocol, per-stream toggles (activity / error / access)
 
 </details>
@@ -399,7 +404,7 @@ management, update flow, rollback — lives at
 | Platform | Runner | Service | Installer / Updater |
 |---|---|---|---|
 | RHEL 9.x · Debian 12+ · Ubuntu 22.04+ | gunicorn | systemd ([`cybercavalry.service`](deploy/linux/cybercavalry.service)) | [`deploy/linux/setup.sh install\|update`](deploy/linux/setup.sh) |
-| Windows Server 2019 / 2022 · Windows 10 / 11 | waitress | WinSW ([`cybercavalry-service.xml`](deploy/windows/cybercavalry-service.xml)) | [`deploy/windows/setup.ps1 -Action install\|update`](deploy/windows/setup.ps1) |
+| Windows Server 2019 / 2022 · Windows 10 / 11 | hypercorn (ASGI, native TLS) | WinSW ([`cybercavalry-service.xml`](deploy/windows/cybercavalry-service.xml)) | [`deploy/windows/setup.ps1 -Action install\|update`](deploy/windows/setup.ps1) |
 
 Both platforms preserve `.env`, database, TLS certificates, logs and
 backups across updates; the Linux service runs as an unprivileged
