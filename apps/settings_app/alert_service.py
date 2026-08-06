@@ -75,6 +75,7 @@ def _from_address() -> str:
 # adding a new column.
 _LAST_SENT_KEY            = 'actions.quota_alert_last_sent'          # JSON blob: {"AbuseIPDB": iso, ...}
 _RATE_LIMIT_LAST_SENT_KEY = 'actions.rate_limit_alert_last_sent'      # JSON blob: {"user:42": iso, "ip:1.2.3.4": iso, ...}
+_SILENCE_LAST_SENT_KEY    = 'actions.silence_alert_last_sent'         # JSON blob: {"ip:10.34.36.254": iso, ...}
 
 
 def _get_last_sent(key: str = _LAST_SENT_KEY) -> dict:
@@ -430,3 +431,151 @@ def run_quota_alert_check(actor=None, ip: str = '') -> dict:
         'recipient': recipient,
         'providers': [p['provider'] for p in to_notify],
     }
+
+
+# ── API Silence Alert ────────────────────────────────────────────────────────
+
+def _build_silence_context(callers: list[dict], silent_only: list[dict],
+                           threshold_minutes: int, baseline_min_hits: int,
+                           is_test: bool = False) -> dict:
+    """Feed the silence-alert templates with brand + traffic snapshot."""
+    primary = SettingsCache.get('general.platform_name', 'CYBER') or 'CYBER'
+    suffix  = SettingsCache.get('general.platform_name_suffix', 'Cavalry') or 'Cavalry'
+    email   = SettingsCache.get('general.platform_email', '') or ''
+    brand   = (SettingsCache.get('general.brand_color', '#ee5356') or '#ee5356').strip()
+    cooldown = SettingsCache.get('actions.silence_alert_cooldown_hours', 6) or 6
+
+    # Local timestamps for display
+    for row in callers:
+        if row.get('last_seen'):
+            row['last_seen_local'] = timezone.localtime(row['last_seen']).strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            row['last_seen_local'] = 'never'
+        row['is_silent'] = row['silent_minutes'] >= threshold_minutes
+
+    return {
+        'platform_name':          f'{primary}{suffix}',
+        'platform_name_primary':  primary,
+        'platform_name_suffix':   suffix,
+        'platform_email':         email,
+        'brand_color':            brand,
+        'callers':                callers,
+        'silent_callers':         silent_only,
+        'threshold_minutes':      threshold_minutes,
+        'baseline_min_hits':      baseline_min_hits,
+        'checked_at':             timezone.localtime(timezone.now()).strftime('%Y-%m-%d %H:%M %Z'),
+        'cooldown_hours':         cooldown,
+        'is_test':                is_test,
+    }
+
+
+def _send_silence_mail(recipients, subject: str, ctx: dict) -> bool:
+    to_list = parse_recipients(recipients) if isinstance(recipients, str) else [
+        r for r in (recipients or []) if r
+    ]
+    if not to_list:
+        return False
+    try:
+        html_body = render_to_string('settings_app/emails/silence_alert.html', ctx)
+        text_body = render_to_string('settings_app/emails/silence_alert.txt',  ctx)
+        msg = EmailMultiAlternatives(
+            subject=subject, body=text_body,
+            from_email=_from_address(), to=to_list,
+            connection=_smtp_connection(),
+        )
+        msg.attach_alternative(html_body, 'text/html')
+        msg.send(fail_silently=False)
+        return True
+    except Exception as exc:
+        logger.error("Silence-alert e-mail failed: %s", exc)
+        return False
+
+
+def send_silence_test_mail(recipient: str) -> tuple[bool, str]:
+    """Deliver the silence-alert preview with the live monitored-caller list.
+    Used by the Settings → Actions → API Silence Alert "Send Test Mail" button."""
+    if not recipient:
+        return False, 'Recipient e-mail is empty.'
+    from apps.settings_app.silence_monitor import sample_recent_callers, find_silent_callers
+
+    callers = sample_recent_callers()
+    silent_only, threshold_minutes, baseline_min_hits = find_silent_callers()
+    ctx = _build_silence_context(
+        callers, silent_only, threshold_minutes, baseline_min_hits, is_test=True,
+    )
+    subject = f'[{ctx["platform_name"]}] API silence alert test'
+    ok = _send_silence_mail(recipient, subject, ctx)
+    return ok, ('Test e-mail sent.' if ok else 'Sending failed — check the server log for details.')
+
+
+def run_silence_alert_check(actor=None, ip: str = '') -> dict:
+    """Scheduler entry point. Finds monitored callers whose last API request
+    is older than the configured threshold, honours per-caller cooldown, and
+    mails the recipient if there's anything to say."""
+    from apps.settings_app.models import ActivityLog
+    from apps.settings_app.silence_monitor import find_silent_callers
+
+    if not SettingsCache.get('actions.silence_alert_enabled', False):
+        return {'skipped': 'disabled'}
+    recipient = (SettingsCache.get('actions.silence_alert_email', '') or '').strip()
+    if not recipient:
+        return {'skipped': 'no_recipient'}
+
+    silent, threshold_minutes, baseline_min_hits = find_silent_callers()
+    if not silent:
+        return {'skipped': 'no_silent_callers'}
+
+    cooldown_h = int(SettingsCache.get('actions.silence_alert_cooldown_hours', 6) or 6)
+    now = timezone.now()
+    last_sent_map = _get_last_sent(_SILENCE_LAST_SENT_KEY)
+
+    to_notify = []
+    for c in silent:
+        last_iso = last_sent_map.get(c['caller_key'])
+        if last_iso:
+            try:
+                last_dt = timezone.datetime.fromisoformat(last_iso)
+                if now - last_dt < timedelta(hours=cooldown_h):
+                    continue
+            except Exception:
+                pass
+        to_notify.append(c)
+
+    if not to_notify:
+        return {'skipped': 'cooldown_active',
+                'silent':  [c['caller'] for c in silent]}
+
+    ctx = _build_silence_context(
+        to_notify, to_notify, threshold_minutes, baseline_min_hits, is_test=False,
+    )
+    subject = (f'[{ctx["platform_name"]}] API silence alert — '
+               f'{len(to_notify)} integration(s) silent ≥ {threshold_minutes}m')
+    ok = _send_silence_mail(recipient, subject, ctx)
+
+    if ok:
+        for c in to_notify:
+            last_sent_map[c['caller_key']] = now.isoformat()
+        _set_last_sent(
+            last_sent_map, key=_SILENCE_LAST_SENT_KEY,
+            desc='Timestamps of the most recent silence alert e-mails per caller (managed internally).',
+        )
+
+    ActivityLog.log(
+        user=actor, action='actions.silence_alert_sent',
+        target_model='Setting', target_id='actions.silence_alert_email',
+        detail={
+            'recipient':          recipient,
+            'threshold_minutes':  threshold_minutes,
+            'baseline_min_hits':  baseline_min_hits,
+            'triggered':          [
+                {'caller': c['caller'],
+                 'silent_minutes':  c['silent_minutes'],
+                 'baseline_hits':   c['baseline_hits']}
+                for c in to_notify
+            ],
+            'delivered':          ok,
+        },
+        ip_address=ip,
+    )
+    return {'sent': ok, 'recipient': recipient,
+            'callers': [c['caller'] for c in to_notify]}

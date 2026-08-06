@@ -1,0 +1,20 @@
+{{ platform_name }} — API SILENCE ALERT
+{% if is_test %}(TEST MESSAGE — no caller actually silent){% endif %}
+
+{% if is_test %}Preview of the alert that fires when a monitored API integration (baseline ≥ {{ baseline_min_hits }} hits/24h) stops sending requests for {{ threshold_minutes }} minute(s). Snapshot below reflects live 24h traffic.{% else %}One or more monitored API integrations have stopped calling the platform for at least {{ threshold_minutes }} minute(s). Check the caller side (firewall / XDR / SIEM cron, token, network path).{% endif %}
+
+Threshold:      no request for ≥ {{ threshold_minutes }} minute(s)
+Baseline:       ≥ {{ baseline_min_hits }} hits in the last 24h to qualify
+Checked at:     {{ checked_at }}
+Cooldown:       {{ cooldown_hours }} hour(s) per caller
+
+Silent callers:
+{% for row in silent_callers %}  {{ row.caller }} — last seen {{ row.last_seen_local }} ({{ row.silent_minutes }} min ago) · 24h baseline: {{ row.baseline_hits }} hits
+{% empty %}  (no monitored callers are currently silent){% endfor %}
+{% if is_test and callers %}
+All monitored callers (24h):
+{% for row in callers %}  {{ row.caller }} — last seen {{ row.last_seen_local }} ({{ row.silent_minutes }} min ago) · {{ row.baseline_hits }} hits{% if row.is_silent %}  ← silent{% endif %}
+{% endfor %}
+{% endif %}
+Manage this alert: Settings → Actions → API Silence Alert
+{% if platform_email %}Contact: {{ platform_email }}{% endif %}

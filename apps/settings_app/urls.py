@@ -29,5 +29,6 @@ urlpatterns = [
     path('actions/quota-test-mail/', views.actions_quota_test_mail, name='actions_quota_test_mail'),
     path('actions/smtp-test/',       views.actions_smtp_test,       name='actions_smtp_test'),
     path('actions/rate-limit-test-mail/', views.actions_rate_limit_test_mail, name='actions_rate_limit_test_mail'),
+    path('actions/silence-test-mail/',    views.actions_silence_test_mail,    name='actions_silence_test_mail'),
     path('actions/syslog-test/',          views.actions_syslog_test,          name='actions_syslog_test'),
 ]

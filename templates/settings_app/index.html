@@ -30,6 +30,7 @@
   quotaTestSending: false, quotaTestSuccess: null, quotaTestMessage: '',
   smtpTesting: false, smtpTestSuccess: null, smtpTestMessage: '',
   rateTestSending: false, rateTestSuccess: null, rateTestMessage: '',
+  silenceTestSending: false, silenceTestSuccess: null, silenceTestMessage: '',
   syslogTesting: false, syslogTestSuccess: null, syslogTestMessage: '',
   _fv(name) {
     const el = document.getElementsByName(name)[0];
@@ -136,6 +137,19 @@
       .then(d => { this.rateTestSuccess = !!d.success; this.rateTestMessage = d.message || ''; this.rateTestSending = false; })
       .catch(e => { this.rateTestSuccess = false; this.rateTestMessage = 'Error: ' + e; this.rateTestSending = false; });
   },
+  sendSilenceTest() {
+    this.silenceTestSending = true;
+    this.silenceTestSuccess = null;
+    this.silenceTestMessage = '';
+    const fd = new FormData();
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    const emailField = this._fv('setting_actions.silence_alert_email');
+    if (emailField) fd.append('email', emailField);
+    fetch('{% url 'settings_app:actions_silence_test_mail' %}', {method: 'POST', body: fd})
+      .then(r => r.json())
+      .then(d => { this.silenceTestSuccess = !!d.success; this.silenceTestMessage = d.message || ''; this.silenceTestSending = false; })
+      .catch(e => { this.silenceTestSuccess = false; this.silenceTestMessage = 'Error: ' + e; this.silenceTestSending = false; });
+  },
   sendSyslogTest() {
     this.syslogTesting = true;
     this.syslogTestSuccess = null;
@@ -152,7 +166,7 @@ x-init="testLdap(); checkAbuseKey(); checkVtKey(); sendSmtpTest()">
 
   {% for category, settings_list in settings_by_category.items %}
   <div class="card settings-category" style="margin-bottom:12px;"
-       x-data="{ open: false{% if category == 'actions' %}, tab: 'email', alertTab: 'quota', quotaEnabled: false, rateEnabled: false, syslogEnabled: false{% endif %} }">
+       x-data="{ open: false{% if category == 'actions' %}, tab: 'email', alertTab: 'quota', quotaEnabled: false, rateEnabled: false, silenceEnabled: false, syslogEnabled: false{% endif %} }">
 
     <!-- Accordion Header -->
     <div class="card-header" @click="open = !open"
@@ -245,6 +259,18 @@ x-init="testLdap(); checkAbuseKey(); checkVtKey(); sendSmtpTest()">
            :disabled="rateTestSending" @click="sendRateTest()">
           <span x-show="!rateTestSending">Send Test Mail</span>
           <span x-show="rateTestSending">Sending…</span>
+        </a>
+        {# ── Alerts → API Silence Alert sub-tab: end-to-end preview mail ─── #}
+        <template x-if="tab === 'alerts' && alertTab === 'silence' && silenceTestSuccess === true">
+          <span class="badge badge-green" style="font-size:11px;">Sent</span>
+        </template>
+        <template x-if="tab === 'alerts' && alertTab === 'silence' && silenceTestSuccess === false">
+          <span class="badge badge-red" style="font-size:11px;" x-text="silenceTestMessage || 'Failed'"></span>
+        </template>
+        <a x-show="tab === 'alerts' && alertTab === 'silence'" type="button" class="btn btn-warning btn-sm"
+           :disabled="silenceTestSending" @click="sendSilenceTest()">
+          <span x-show="!silenceTestSending">Send Test Mail</span>
+          <span x-show="silenceTestSending">Sending…</span>
         </a>
         {# ── Syslog tab: probe datagram to the collector ─────────────── #}
         <template x-if="tab === 'syslog' && syslogTestSuccess === true">
@@ -1059,6 +1085,7 @@ x-init="testLdap(); checkAbuseKey(); checkVtKey(); sendSmtpTest()">
           <div x-show="tab === 'alerts'" class="settings-subtabbar">
             <a class="settings-subtab" :class="{ 'settings-subtab-active': alertTab === 'quota' }"      @click.prevent="alertTab = 'quota'">Quota Alert</a>
             <a class="settings-subtab" :class="{ 'settings-subtab-active': alertTab === 'rate_limit' }" @click.prevent="alertTab = 'rate_limit'">API Rate Limit Alert</a>
+            <a class="settings-subtab" :class="{ 'settings-subtab-active': alertTab === 'silence' }"    @click.prevent="alertTab = 'silence'">API Silence Alert</a>
           </div>
           {% endif %}
           {% for setting in settings_list %}
@@ -1071,6 +1098,9 @@ x-init="testLdap(); checkAbuseKey(); checkVtKey(); sendSmtpTest()">
             {% elif setting.tab_key == 'rate_limit' %}
             <div x-show="tab === 'alerts' && alertTab === 'rate_limit'"
                  {% if setting.key != 'actions.rate_limit_alert_enabled' %}:class="{ 'actions-tab-off': !rateEnabled }"{% endif %}>
+            {% elif setting.tab_key == 'silence' %}
+            <div x-show="tab === 'alerts' && alertTab === 'silence'"
+                 {% if setting.key != 'actions.silence_alert_enabled' %}:class="{ 'actions-tab-off': !silenceEnabled }"{% endif %}>
             {% elif setting.tab_key == 'syslog' %}
             <div x-show="tab === 'syslog'"
                  {% if setting.key != 'actions.syslog_enabled' %}:class="{ 'actions-tab-off': !syslogEnabled }"{% endif %}>
@@ -1170,7 +1200,7 @@ x-init="testLdap(); checkAbuseKey(); checkVtKey(); sendSmtpTest()">
               </select>
             </div>
           </div>
-          {% elif setting.key == 'actions.quota_alert_email' or setting.key == 'actions.rate_limit_alert_email' %}
+          {% elif setting.key == 'actions.quota_alert_email' or setting.key == 'actions.rate_limit_alert_email' or setting.key == 'actions.silence_alert_email' %}
           <div class="setting-row">
             <div class="setting-meta">
               <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;display:inline-flex;align-items:center;gap:6px;">
@@ -1233,6 +1263,7 @@ x-init="testLdap(); checkAbuseKey(); checkVtKey(); sendSmtpTest()">
           <div class="setting-row" x-data="{ checked: {% if setting.typed_value %}true{% else %}false{% endif %} }"
                {% if setting.key == 'actions.quota_alert_enabled' %}x-init="quotaEnabled = checked"{% endif %}
                {% if setting.key == 'actions.rate_limit_alert_enabled' %}x-init="rateEnabled = checked"{% endif %}
+               {% if setting.key == 'actions.silence_alert_enabled' %}x-init="silenceEnabled = checked"{% endif %}
                {% if setting.key == 'actions.syslog_enabled' %}x-init="syslogEnabled = checked"{% endif %}>
             <div class="setting-meta">
               <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">{{ setting.ui_label|default:setting.key }}</div>
@@ -1247,6 +1278,7 @@ x-init="testLdap(); checkAbuseKey(); checkVtKey(); sendSmtpTest()">
                          $refs.hidden_{{ setting.key|slugify }}.value = checked ? 'true' : 'false';
                          {% if setting.key == 'actions.quota_alert_enabled' %}quotaEnabled = checked;{% endif %}
                          {% if setting.key == 'actions.rate_limit_alert_enabled' %}rateEnabled = checked;{% endif %}
+                         {% if setting.key == 'actions.silence_alert_enabled' %}silenceEnabled = checked;{% endif %}
                          {% if setting.key == 'actions.syslog_enabled' %}syslogEnabled = checked;{% endif %}
                        ">
                 <span class="toggle-track"></span>

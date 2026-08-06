@@ -20,6 +20,7 @@ _VT_JOB_ID      = 'virustotal_auto_refresh'
 _BACKUP_JOB_ID  = 'db_backup'
 _QUOTA_JOB_ID       = 'actions_quota_alert'
 _RATE_LIMIT_JOB_ID  = 'actions_rate_limit_alert'
+_SILENCE_JOB_ID     = 'actions_silence_alert'
 
 # Management commands that should NOT start the scheduler
 _SKIP_COMMANDS = {
@@ -286,6 +287,21 @@ def _run_rate_limit_alert():
         logger.error("Rate-limit alert check crashed: %s", exc, exc_info=True)
 
 
+def _run_silence_alert():
+    """Actions → API Silence Alert scheduler entry — scans the last 24h of
+    API events for monitored callers (baseline hits >= configured) and mails
+    the recipient when any of them have gone silent past the threshold. Decision
+    logic in `alert_service.run_silence_alert_check`."""
+    try:
+        from apps.settings_app.alert_service import run_silence_alert_check
+        result = run_silence_alert_check(actor=None, ip='')
+        if result.get('sent'):
+            logger.info("Silence alert e-mail sent to %s for %s.",
+                        result.get('recipient'), ', '.join(result.get('callers', [])))
+    except Exception as exc:
+        logger.error("Silence alert check crashed: %s", exc, exc_info=True)
+
+
 def _build_trigger(interval, time_str):
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
@@ -343,6 +359,7 @@ def start():
             reschedule_backup()
             reschedule_quota_alert()
             reschedule_rate_limit_alert()
+            reschedule_silence_alert()
         except ImportError:
             logger.warning(
                 "APScheduler not installed — scheduled AbuseIPDB refresh unavailable. "
@@ -581,6 +598,45 @@ def reschedule_rate_limit_alert():
             logger.info("Rate-limit alert: job scheduled (every 60 s), next run: %s", next_run)
         except Exception as exc:
             logger.error(f"Rate-limit alert reschedule failed: {exc}", exc_info=True)
+
+
+def reschedule_silence_alert():
+    """Reconfigure the silence-alert job from Settings → Actions. Runs on a
+    60-second interval; per-minute callers with a 5-minute threshold need a
+    check cadence at least that fast to catch the transition promptly."""
+    if _scheduler is None:
+        return
+
+    with _lock:
+        try:
+            from apps.settings_app.cache import SettingsCache
+            from apscheduler.triggers.interval import IntervalTrigger
+
+            enabled = SettingsCache.get('actions.silence_alert_enabled', False)
+
+            if _scheduler.get_job(_SILENCE_JOB_ID):
+                _scheduler.remove_job(_SILENCE_JOB_ID)
+
+            if not enabled:
+                logger.info("Silence alert: disabled.")
+                return
+
+            _scheduler.add_job(
+                _run_silence_alert,
+                trigger=IntervalTrigger(seconds=60),
+                id=_SILENCE_JOB_ID,
+                name='API Silence Alert Check',
+                replace_existing=True,
+                misfire_grace_time=30,
+            )
+            job = _scheduler.get_job(_SILENCE_JOB_ID)
+            next_run = (
+                job.next_run_time.strftime('%Y-%m-%d %H:%M:%S')
+                if job and job.next_run_time else 'unknown'
+            )
+            logger.info("Silence alert: job scheduled (every 60 s), next run: %s", next_run)
+        except Exception as exc:
+            logger.error(f"Silence alert reschedule failed: {exc}", exc_info=True)
 
 
 def get_backup_status():

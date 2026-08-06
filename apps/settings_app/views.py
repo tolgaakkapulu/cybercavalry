@@ -67,6 +67,12 @@ SETTING_LABELS = {
     'actions.rate_limit_alert_email':               ('Recipient E-mail',          'Address(es) that receive API rate-limit alerts. Separate multiple addresses with a semicolon `;` — e.g. `ops@corp.tr; soc@corp.tr`.'),
     'actions.rate_limit_alert_threshold_pct':       ('Alert Threshold',           'Fire the alert when a caller\'s usage reaches this percentage of their per-minute rate-limit.'),
     'actions.rate_limit_alert_cooldown_hours':      ('Alert Cooldown',            'After an alert is sent for a caller, suppress further e-mails for this many hours.'),
+    # API Silence Alert — heartbeat watchdog for integrated products (firewall/XDR/SIEM)
+    'actions.silence_alert_enabled':                ('Enable Silence Alert',      'Send an e-mail when a regular API integration (firewall / XDR / SIEM) stops making requests. Detects broken cron jobs, revoked tokens, and network path changes.'),
+    'actions.silence_alert_email':                  ('Recipient E-mail',          'Address(es) that receive silence alerts. Separate multiple with `;`.'),
+    'actions.silence_threshold_minutes':            ('Silence Threshold',         'Fire the alert when a monitored caller has not made any API request for this many minutes. Default 5.'),
+    'actions.silence_baseline_min_hits':            ('Baseline Volume',           'Minimum number of API requests a caller must make in the last 24h to be considered a monitored integration. Filters one-off scripts and admins poking the endpoint. Default 30 (roughly two hits/hour for a full day).'),
+    'actions.silence_alert_cooldown_hours':         ('Alert Cooldown',            'After an alert is sent for a caller, suppress further e-mails for this many hours. Default 6.'),
     # Syslog forwarding
     'actions.syslog_enabled':                       ('Enable Syslog',             'Forward selected log streams to an external syslog collector.'),
     'actions.syslog_host':                          ('Syslog Host',               'Hostname or IP address of the syslog collector.'),
@@ -156,6 +162,12 @@ def settings_index(request):
         'actions.rate_limit_alert_email':        ('',       'str',  'actions', 'Recipient e-mail address for rate-limit alerts', False),
         'actions.rate_limit_alert_threshold_pct':('80',     'int',  'actions', 'Percentage of the per-minute rate-limit that triggers the alert', False),
         'actions.rate_limit_alert_cooldown_hours':('24',    'int',  'actions', 'Suppress repeat rate-limit alerts per caller for this many hours', False),
+        # Actions — API silence alert (heartbeat watchdog for integrated products)
+        'actions.silence_alert_enabled':          ('false', 'bool', 'actions', 'Send alert e-mails when a regular API integration goes silent', False),
+        'actions.silence_alert_email':            ('',      'str',  'actions', 'Recipient e-mail address for silence alerts', False),
+        'actions.silence_threshold_minutes':      ('5',     'int',  'actions', 'Fire the alert when a monitored caller has not made an API request in this many minutes', False),
+        'actions.silence_baseline_min_hits':      ('30',    'int',  'actions', 'Minimum API hits in the past 24h for a caller to be considered a monitored integration', False),
+        'actions.silence_alert_cooldown_hours':   ('6',     'int',  'actions', 'Suppress repeat silence alerts per caller for this many hours', False),
         # Actions — syslog forwarding
         'actions.syslog_enabled':                ('false',  'bool', 'actions', 'Enable syslog forwarding', False),
         'actions.syslog_host':                   ('',       'str',  'actions', 'Syslog collector hostname or IP', False),
@@ -258,6 +270,8 @@ def settings_index(request):
                     s.tab_key = 'quota'
                 elif s.key.startswith('actions.rate_limit_'):
                     s.tab_key = 'rate_limit'
+                elif s.key.startswith('actions.silence_'):
+                    s.tab_key = 'silence'
                 elif s.key.startswith('actions.syslog_'):
                     s.tab_key = 'syslog'
                 else:
@@ -290,6 +304,11 @@ def settings_index(request):
             'actions.rate_limit_alert_email':            21,
             'actions.rate_limit_alert_threshold_pct':    22,
             'actions.rate_limit_alert_cooldown_hours':   23,
+            'actions.silence_alert_enabled':             25,
+            'actions.silence_alert_email':               26,
+            'actions.silence_threshold_minutes':         27,
+            'actions.silence_baseline_min_hits':         28,
+            'actions.silence_alert_cooldown_hours':      29,
             'actions.syslog_enabled':                    30,
             'actions.syslog_host':                       31,
             'actions.syslog_port':                       32,
@@ -690,9 +709,11 @@ def _settings_save_impl(request):
             try:
                 from apps.blacklist.scheduler import (
                     reschedule_quota_alert, reschedule_rate_limit_alert,
+                    reschedule_silence_alert,
                 )
                 reschedule_quota_alert()
                 reschedule_rate_limit_alert()
+                reschedule_silence_alert()
             except Exception as e:
                 logger.error(f"Failed to reschedule alert jobs: {e}")
             # Drop the syslog socket cache so the next emit picks up any
@@ -1330,6 +1351,29 @@ def actions_rate_limit_test_mail(request):
     from apps.settings_app.models import ActivityLog
     ActivityLog.log(request.user, 'actions.rate_limit_alert_test', 'Setting',
                  'actions.rate_limit_alert_email',
+                 {'recipient': recipient, 'delivered': ok},
+                 getattr(request, 'client_ip', ''))
+    return JsonResponse({'success': ok, 'message': msg})
+
+
+@login_required_custom
+@role_required('admin')
+def actions_silence_test_mail(request):
+    """Send a preview of the silence alert to the recipient configured in
+    Settings → Actions → API Silence Alert. Ignores threshold / cooldown
+    gates so admins can verify the template + SMTP path even when every
+    integration is currently talking."""
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'message': 'POST required.'}, status=405)
+    recipient = (request.POST.get('email', '').strip()
+                 or (SettingsCache.get('actions.silence_alert_email', '') or '').strip())
+    if not recipient:
+        return JsonResponse({'success': False, 'message': 'Recipient e-mail is empty. Save an address first, or enter one in the form.'})
+    from apps.settings_app.alert_service import send_silence_test_mail
+    ok, msg = send_silence_test_mail(recipient)
+    from apps.settings_app.models import ActivityLog
+    ActivityLog.log(request.user, 'actions.silence_alert_test', 'Setting',
+                 'actions.silence_alert_email',
                  {'recipient': recipient, 'delivered': ok},
                  getattr(request, 'client_ip', ''))
     return JsonResponse({'success': ok, 'message': msg})
