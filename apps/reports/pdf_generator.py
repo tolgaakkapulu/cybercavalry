@@ -1322,11 +1322,11 @@ def _timeline_drawing(timeline, w, h):
     # Manual legend (top-left) — three series, evenly spaced.
     ly = h - 9
     d.add(Rect(30, ly, 8, 8, fillColor=HexColor('#D3737A'), strokeColor=None))
-    d.add(String(42, ly + 1, 'IP Blacklist', fontName='Helvetica', fontSize=7, fillColor=_C.TEXT))
+    d.add(String(42, ly + 1, 'IP', fontName='Helvetica', fontSize=7, fillColor=_C.TEXT))
     d.add(Rect(120, ly, 8, 8, fillColor=HexColor('#9AB5C4'), strokeColor=None))
-    d.add(String(132, ly + 1, 'Hash Blacklist', fontName='Helvetica', fontSize=7, fillColor=_C.TEXT))
+    d.add(String(132, ly + 1, 'Hash', fontName='Helvetica', fontSize=7, fillColor=_C.TEXT))
     d.add(Rect(215, ly, 8, 8, fillColor=HexColor('#B49CC4'), strokeColor=None))
-    d.add(String(227, ly + 1, 'URL Blacklist', fontName='Helvetica', fontSize=7, fillColor=_C.TEXT))
+    d.add(String(227, ly + 1, 'URL', fontName='Helvetica', fontSize=7, fillColor=_C.TEXT))
     return d
 
 

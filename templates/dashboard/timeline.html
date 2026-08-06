@@ -117,7 +117,7 @@ The context variables / api view in views.py are harmless if left in place.
         labels: data.labels,
         datasets: [
           {
-            label: 'IP Blacklist',
+            label: 'IP',
             data: data.ip,
             borderColor: IP_COLOR,
             backgroundColor: 'rgba(211,115,122,.12)',
@@ -126,7 +126,7 @@ The context variables / api view in views.py are harmless if left in place.
             pointBackgroundColor: IP_COLOR
           },
           {
-            label: 'Hash Blacklist',
+            label: 'Hash',
             data: data.hash,
             borderColor: HASH_COLOR,
             backgroundColor: 'rgba(154,181,196,.12)',
@@ -135,7 +135,7 @@ The context variables / api view in views.py are harmless if left in place.
             pointBackgroundColor: HASH_COLOR
           },
           {
-            label: 'URL Blacklist',
+            label: 'URL',
             data: data.url,
             borderColor: URL_COLOR,
             backgroundColor: 'rgba(180,156,196,.12)',
