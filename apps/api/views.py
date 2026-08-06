@@ -792,7 +792,10 @@ def report_url(request):
     if not url_input:
         return json_error("'url' field is required.")
 
-    from apps.urllist.models import URLEntry, is_valid_url, normalize_url, url_sha256, _split_bare
+    from apps.urllist.models import (
+        URLEntry, is_valid_url, normalize_url, url_sha256, _split_bare,
+        registrable_domain,
+    )
     from urllib.parse import urlparse
     if not is_valid_url(url_input):
         return json_error(
@@ -806,9 +809,14 @@ def report_url(request):
     # Bare-domain inputs keep their non-scheme form -- urlparse().hostname
     # returns None for them, so use _split_bare() to pull the host out.
     if url_value.lower().startswith(('http://', 'https://')):
-        hostname = (urlparse(url_value).hostname or '')[:253]
+        fqdn = urlparse(url_value).hostname or ''
     else:
-        hostname = _split_bare(url_value)[0][:253]
+        fqdn, _ = _split_bare(url_value)
+    # Store the eTLD+1 (registrable domain) so many subdomains under the
+    # same phishing operation collapse to a single row in the hostname
+    # column — matches what URLEntry.save() does for the manual/import
+    # paths, so the two entry points stay consistent.
+    hostname = registrable_domain(fqdn)[:253]
     client_ip = get_client_ip(request)
 
     entry, created = URLEntry.objects.get_or_create(

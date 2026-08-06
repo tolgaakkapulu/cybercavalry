@@ -3,6 +3,12 @@ ldap3==2.9.1
 django-environ==0.11.2
 cryptography>=44.0.1
 abuseipdb-wrapper==0.1.6
+# Public Suffix List parser — used to derive the registrable domain (eTLD+1)
+# from a URL/hostname so the URL blacklist "Hostname" column groups by the
+# actual registered domain instead of the full FQDN (login.example.co.uk →
+# example.co.uk, phishing.example → example). Ships a bundled PSL snapshot
+# so airgapped deploys keep working; no online lookup needed at import time.
+tldextract>=5,<6
 APScheduler==3.10.4
 redis>=4.6
 reportlab>=4.2

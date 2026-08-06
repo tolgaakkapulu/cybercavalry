@@ -1,9 +1,61 @@
 import hashlib
+import logging
 import re
 from urllib.parse import urlparse, urlunparse
 
 from django.db import models
 from django.contrib.auth.models import User
+
+logger = logging.getLogger(__name__)
+
+# ── Registrable-domain extractor ───────────────────────────────────────────
+# `tldextract` uses the Mozilla Public Suffix List to correctly split any
+# hostname into subdomain / registered-domain / suffix. Without it we'd get
+# `co.uk` back for `example.co.uk`, or `com.tr` for `foo.com.tr`, because a
+# naive last-two-labels split can't know which suffixes are "public" (owned
+# by a registry rather than a registrant).
+#
+# The library is a hard requirement (see requirements.txt), but we still
+# guard the import so a fresh checkout that hasn't run `pip install -r`
+# doesn't 500 on every URL save — the fallback keeps the old FQDN behaviour
+# and logs a warning. Configured with `suffix_list_urls=()` +
+# `fallback_to_snapshot=True` so airgapped deploys never make a network
+# call at first use; the bundled PSL snapshot is authoritative.
+try:
+    import tldextract as _tldextract
+    _TLD_EXTRACT = _tldextract.TLDExtract(suffix_list_urls=(), fallback_to_snapshot=True)
+except Exception:                                            # pragma: no cover
+    _TLD_EXTRACT = None
+    logger.warning(
+        "tldextract is not installed — URL hostnames will fall back to the "
+        "full FQDN. Run `pip install -r requirements.txt` to enable PSL-based "
+        "registrable-domain extraction."
+    )
+
+
+def registrable_domain(host):
+    """Return the registrable domain (eTLD+1) for a hostname.
+
+    Examples:
+      shtedsa.qrbyw.xyz   -> qrbyw.xyz
+      login.example.co.uk -> example.co.uk
+      example.com         -> example.com
+      qrbyw.xyz           -> qrbyw.xyz
+
+    Returns the input unchanged when the PSL library is missing or the host
+    doesn't parse cleanly (e.g. an IP address, a punycoded oddity, or a
+    single-label internal name that has no public suffix)."""
+    host = (host or '').strip().lower()
+    if not host or _TLD_EXTRACT is None:
+        return host
+    try:
+        parts = _TLD_EXTRACT(host)
+    except Exception:                                        # pragma: no cover
+        return host
+    # `registered_domain` is empty when the input is an IP, a bare TLD, or
+    # otherwise has no valid "domain + suffix" pair — return the original
+    # host in that case so we never write an empty hostname to the DB.
+    return parts.registered_domain or host
 
 
 # Max stored URL length. RFC leaves this open-ended, but browsers commonly
@@ -254,10 +306,15 @@ class URLEntry(models.Model):
                 # Bare-domain inputs stay bare, so urlparse().hostname returns
                 # None; fall back to splitting on the first slash.
                 if normalized.lower().startswith(('http://', 'https://')):
-                    host = urlparse(normalized).hostname or ''
+                    fqdn = urlparse(normalized).hostname or ''
                 else:
-                    host, _ = _split_bare(normalized)
-                self.hostname = host[:253]
+                    fqdn, _ = _split_bare(normalized)
+                # Store the REGISTRABLE DOMAIN (eTLD+1) rather than the full
+                # FQDN so `shtedsa.qrbyw.xyz`, `login.qrbyw.xyz`, and
+                # `verify.qrbyw.xyz` all collapse to `qrbyw.xyz` — that's the
+                # unit an analyst filters and groups by when hunting for a
+                # phishing operation reusing many subdomains under one name.
+                self.hostname = registrable_domain(fqdn)[:253]
             except ValueError:
                 pass
         super().save(*args, **kwargs)
