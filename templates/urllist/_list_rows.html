@@ -66,23 +66,34 @@
   <td class="text-muted text-sm" style="text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default;"
       {% if entry.reason %}data-reason-tip="{{ entry.reason }}"{% endif %}>{{ entry.reason|default:"—" }}</td>
   <td style="text-align:center;white-space:nowrap;" id="vt-score-cell-{{ entry.pk }}">
-    {% if entry.vt_checked_at %}
+    {% comment %}
+    Precedence for the score cell:
+      1. vt_not_found  → "Not in VT" (VT answered 404 — URL is not indexed at all)
+      2. vt_unavailable → "N/A" (VT was unreachable — retry later)
+      3. vt_checked_at + real score → red/green X/Y badge
+      4. otherwise    → em-dash (never scored yet)
+    {% endcomment %}
+    {% if entry.vt_not_found %}
+    <span class="badge badge-muted" style="font-size:11px;" title="VirusTotal has no record of this URL — never scanned or submitted. Excluded from the downstream /api/v1/urllist/ feed until VT eventually indexes and scores it.">Not in VT</span>
+    {% elif entry.vt_unavailable %}
+    <span class="badge badge-yellow" style="font-size:11px;" title="VirusTotal was queried but did not respond (timeout, quota, or network error). Hidden from /api/v1/urllist/ until a real score arrives.">N/A</span>
+    {% elif entry.vt_checked_at and entry.vt_malicious is not None %}
       {% if entry.vt_malicious >= vt_threshold %}
       <span class="badge badge-red" style="font-size:11px;" title="{{ entry.vt_malicious }}/{{ entry.vt_total }} engines detected as malicious">{{ entry.vt_malicious }}/{{ entry.vt_total }}</span>
       {% else %}
       <span class="badge badge-green" style="font-size:11px;" title="{{ entry.vt_malicious }}/{{ entry.vt_total }} engines detected as malicious">{{ entry.vt_malicious }}/{{ entry.vt_total }}</span>
       {% endif %}
-    {% elif entry.vt_unavailable %}
-    <span class="badge badge-yellow" style="font-size:11px;" title="VirusTotal was queried but did not respond (timeout, quota, or network error). Hidden from /api/v1/urllist/ until a real score arrives.">N/A</span>
     {% else %}
     <span class="text-muted" style="font-size:11px;">—</span>
     {% endif %}
   </td>
   <td style="text-align:center;white-space:nowrap;" id="vt-checked-cell-{{ entry.pk }}">
-    {% if entry.vt_checked_at %}
-      <span class="badge {% if entry.vt_malicious >= vt_threshold %}badge-red{% else %}badge-green{% endif %}" style="font-size:11px;">{{ entry.vt_checked_at|date:"Y-m-d H:i" }}</span>
+    {% if entry.vt_not_found %}
+      <span class="badge badge-muted" style="font-size:11px;" title="VirusTotal has no record of this URL.">{{ entry.vt_checked_at|date:"Y-m-d H:i" }}</span>
     {% elif entry.vt_unavailable %}
       <span class="badge badge-yellow" style="font-size:11px;" title="VirusTotal was queried but did not respond.">N/A</span>
+    {% elif entry.vt_checked_at and entry.vt_malicious is not None %}
+      <span class="badge {% if entry.vt_malicious >= vt_threshold %}badge-red{% else %}badge-green{% endif %}" style="font-size:11px;">{{ entry.vt_checked_at|date:"Y-m-d H:i" }}</span>
     {% else %}<span class="text-muted" style="font-size:11px;">—</span>{% endif %}
   </td>
   <td style="text-align:center;white-space:nowrap;" class="text-muted text-sm">

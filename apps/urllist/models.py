@@ -286,6 +286,19 @@ class URLEntry(models.Model):
             "downstream /api/v1/urllist/ feed until a valid score arrives."
         ),
     )
+    vt_not_found = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text=(
+            "True when VirusTotal responded 404 for this URL/domain — the URL "
+            "is not indexed by VT at all (never scanned, never submitted). "
+            "Distinct from vt_unavailable (transient reachability failure) and "
+            "from a legitimate 0/N score (VT scanned it and found nothing). "
+            "Entries with this flag show a 'Not in VT' badge instead of the "
+            "misleading 0/0 score and are deactivated (excluded from the "
+            "downstream feed) until VT eventually indexes and scores them."
+        ),
+    )
     # VirusTotal enrichment metadata (shown in the URL tooltip)
     vt_threat_label     = models.CharField(max_length=255, blank=True, default='')
     vt_categories       = models.CharField(max_length=255, blank=True, default='',

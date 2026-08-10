@@ -242,30 +242,31 @@ def _vt_request(api_key, url_value):
         raise
 
 
-def fetch_url_data(url_value):
-    """
-    Query VirusTotal for a single URL and return the data.attributes dict.
+def fetch_url_data_ex(url_value):
+    """Extended fetch: returns `(attrs, status)`.
 
-    Iterates configured API keys in rotation order: a key that returns HTTP
-    429 is flagged as exhausted for the rest of the UTC day and the next key
-    is tried. Returns:
-      - dict (possibly with enrichment fields) on success
-      - {} when the hash is not found (404) — treated as "unknown/clean"
-      - None on disabled / all keys failed / unrecoverable error
+    Status disambiguates the three outcomes callers care about:
+      * 'ok'          → attrs is the VT attributes dict (may have malicious=0
+                        but the record exists in VT's DB)
+      * 'not_found'   → VT responded 404; the URL is not indexed at all.
+                        attrs is {} — caller should surface this as "not
+                        in VT" rather than storing a misleading 0/0 score.
+      * 'unavailable' → no key succeeded (all rate-limited / exhausted /
+                        network errors / timeout). attrs is {} — caller
+                        should mark the entry vt_unavailable and leave the
+                        prior score alone.
+      * 'disabled'    → integration off or no keys configured. attrs is {}.
+
+    Iterates configured API keys, flagging exhausted / rate-limited keys as
+    it goes so subsequent calls skip them.
     """
     keys = _get_api_keys()
     if not keys:
-        return None
-    # Only try keys that aren't already flagged as rate-limited or exhausted.
-    # `_get_api_keys()` returns them in [fresh, rate_limited, exhausted] order
-    # for callers that want a best-effort attempt, but blindly iterating the
-    # tail tiers here is the classic amplification bug: a bulk refresh over N
-    # hashes turns into N × K real HTTP calls to VT for keys we already know
-    # are throttled or done for the day.
+        return {}, 'disabled'
     keys = [k for k in keys if not _vt_is_rate_limited(k) and not _vt_is_exhausted(k)]
     if not keys:
         logger.info("VirusTotal: no fresh keys available for %s — skipping lookup", url_value[:60])
-        return None
+        return {}, 'unavailable'
     last_err = None
     for api_key in keys:
         try:
@@ -287,14 +288,26 @@ def fetch_url_data(url_value):
             last_err = e
             continue
         if status == 'not_found':
-            logger.info("VirusTotal: URL %s not found (404)", url_value[:60])
-            return {}
-        return attrs
+            logger.info("VirusTotal: URL %s not indexed by VT (404)", url_value[:60])
+            return {}, 'not_found'
+        return attrs, 'ok'
     logger.warning(
         "VirusTotal: all %d configured key(s) failed for %s: %s",
         len(keys), url_value[:60], last_err
     )
-    return None
+    return {}, 'unavailable'
+
+
+def fetch_url_data(url_value):
+    """Backward-compatible thin wrapper around `fetch_url_data_ex()`.
+
+    Returns just the attrs dict (or None) so older callers that don't care
+    about the 404 vs unavailable distinction keep working. Prefer
+    `fetch_url_data_ex()` when the caller needs to react to `not_found`."""
+    attrs, status = fetch_url_data_ex(url_value)
+    if status in ('disabled', 'unavailable'):
+        return None
+    return attrs  # {} for not_found, dict for ok
 
 
 def _stats_from_attrs(attrs):
@@ -348,6 +361,23 @@ def fetch_url_data_with_timeout(url_value, timeout=30):
         except Exception as e:
             logger.warning("VirusTotal query error for %s: %s", url_value[:60], e)
             return None
+
+
+def fetch_url_data_ex_with_timeout(url_value, timeout=30):
+    """Like `fetch_url_data_ex` but with a hard wall-clock timeout. On
+    timeout / unhandled exception returns `({}, 'unavailable')` so the
+    caller falls into the same code path as any other reachability failure.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(fetch_url_data_ex, url_value)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            logger.warning("VirusTotal query timed out after %ds for %s", timeout, url_value[:60])
+            return {}, 'unavailable'
+        except Exception as e:
+            logger.warning("VirusTotal query error for %s: %s", url_value[:60], e)
+            return {}, 'unavailable'
 
 
 def _epoch_to_dt(value):
@@ -528,6 +558,49 @@ def _get_threshold():
         return 5
 
 
+def _mark_not_found(entry, now):
+    """Save the 'VT has no record of this URL' state onto an entry.
+
+    Clears the score (`vt_malicious/vt_total = None` — no misleading 0/0),
+    raises the `vt_not_found` flag so the UI can render a dedicated badge,
+    and deactivates the entry unless it's pinned. Existing enrichment
+    columns are left as-is — they'd all be blank anyway, and future scans
+    that DO get a hit will refresh them via `_store_vt_metadata()`.
+    """
+    update_fields = ['vt_checked_at', 'vt_not_found']
+    entry.vt_checked_at = now
+    if not entry.vt_not_found:
+        entry.vt_not_found = True
+
+    # `vt_unavailable` is a different state (VT was unreachable). A definitive
+    # 404 answers "is it in VT?" with no, so clear the reachability marker.
+    if entry.vt_unavailable:
+        entry.vt_unavailable = False
+        update_fields.append('vt_unavailable')
+
+    # Blank out the score so the UI doesn't show a misleading 0/0. Nullable
+    # columns already; explicit None is the "no data" signal downstream.
+    if entry.vt_malicious is not None or entry.vt_total is not None:
+        entry.vt_malicious = None
+        entry.vt_total = None
+        update_fields += ['vt_malicious', 'vt_total']
+
+    if not entry.is_pinned and entry.is_active:
+        entry.is_active = False
+        update_fields.append('is_active')
+        logger.info(
+            "VirusTotal: %s not indexed → deactivated",
+            entry.url_value[:60],
+        )
+    elif entry.is_pinned:
+        logger.info(
+            "VirusTotal: %s not indexed but pinned — leaving active",
+            entry.url_value[:60],
+        )
+
+    entry.save(update_fields=update_fields)
+
+
 def _apply_score_to_entry(entry, malicious, total, now, meta=None):
     """
     Save VT score to a URLEntry and apply threshold-based activation/deactivation.
@@ -548,6 +621,10 @@ def _apply_score_to_entry(entry, malicious, total, now, meta=None):
     if entry.vt_unavailable:
         entry.vt_unavailable = False
         update_fields.append('vt_unavailable')
+    # And clear the "not indexed" marker — a real score means VT knows the URL.
+    if entry.vt_not_found:
+        entry.vt_not_found = False
+        update_fields.append('vt_not_found')
 
     score_changed = (entry.vt_malicious != malicious or entry.vt_total != total)
     if score_changed:
@@ -585,13 +662,19 @@ def _apply_score_to_entry(entry, malicious, total, now, meta=None):
 def update_entry_score(entry):
     """
     Query VirusTotal for a single URLEntry and save the result.
-    Returns (malicious, total) or None.
+    Returns (malicious, total) or None. A 404 (not indexed) returns (None,
+    None) after tagging the entry — the caller distinguishes it from a
+    legitimate 0/N score by checking `entry.vt_not_found` afterwards.
     """
-    attrs = fetch_url_data(entry.url_value)
-    if attrs is None:
+    attrs, status = fetch_url_data_ex(entry.url_value)
+    if status in ('disabled', 'unavailable'):
         return None
+    now = timezone.now()
+    if status == 'not_found':
+        _mark_not_found(entry, now)
+        return (None, None)
     malicious, total = _stats_from_attrs(attrs)
-    _apply_score_to_entry(entry, malicious, total, timezone.now(), meta=attrs)
+    _apply_score_to_entry(entry, malicious, total, now, meta=attrs)
     return malicious, total
 
 
@@ -654,16 +737,23 @@ def bulk_refresh(only_unchecked=False):
 
     pinned_count = URLEntry.objects.filter(is_active=True, list_type=URLEntry.LIST_BLACK, is_pinned=True).count()
 
-    checked = failed = 0
+    checked = failed = not_found = 0
     skipped = pinned_count
     for entry in qs:
-        attrs = fetch_url_data_with_timeout(entry.url_value, timeout=30)
-        if attrs is None:
+        attrs, status = fetch_url_data_ex_with_timeout(entry.url_value, timeout=30)
+        if status in ('unavailable', 'disabled'):
             failed += 1
-        else:
-            malicious, total = _stats_from_attrs(attrs)
-            _apply_score_to_entry(entry, malicious, total, now, meta=attrs)
-            checked += 1
+            continue
+        if status == 'not_found':
+            _mark_not_found(entry, now)
+            not_found += 1
+            continue
+        malicious, total = _stats_from_attrs(attrs)
+        _apply_score_to_entry(entry, malicious, total, now, meta=attrs)
+        checked += 1
+
+    if not_found:
+        logger.info("VirusTotal bulk refresh: %d entries not indexed by VT (deactivated)", not_found)
 
     logger.info(
         "VirusTotal bulk refresh: checked=%d skipped=%d failed=%d",

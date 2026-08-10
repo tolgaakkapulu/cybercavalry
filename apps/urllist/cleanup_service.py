@@ -60,6 +60,7 @@ def _snapshot(entry):
         'vt_first_seen': entry.vt_first_seen.isoformat() if entry.vt_first_seen else None,
         'vt_last_analysis': entry.vt_last_analysis.isoformat() if entry.vt_last_analysis else None,
         'vt_checked_at': entry.vt_checked_at.isoformat() if entry.vt_checked_at else None,
+        'vt_not_found':  entry.vt_not_found,
         # Extended VT enrichment (0003 migration)
         'vt_reputation': entry.vt_reputation,
         'vt_votes_harmless': entry.vt_votes_harmless,
