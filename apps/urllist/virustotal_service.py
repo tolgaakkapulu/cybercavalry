@@ -216,8 +216,12 @@ def _vt_request(api_key, url_value):
     if _is_bare_domain(url_value):
         vt_url = _VT_DOMAIN.format(urllib.parse.quote(url_value.strip().lower(), safe=''))
     else:
-        from apps.urllist.models import url_sha256
-        vt_url = _VT_URL.format(url_sha256(url_value))
+        # Use the VT-canonical hash (adds scheme + trailing slash) so we hit
+        # the object VT actually stores. `url_sha256` — the DB dedup hash —
+        # is intentionally different: it hashes the stored form verbatim so
+        # different schemes stay as distinct rows.
+        from apps.urllist.models import url_vt_id
+        vt_url = _VT_URL.format(url_vt_id(url_value))
     req = urllib.request.Request(
         vt_url,
         headers={'x-apikey': api_key, 'Accept': 'application/json'},

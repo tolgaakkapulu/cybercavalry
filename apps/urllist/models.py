@@ -1,4 +1,5 @@
 import hashlib
+import ipaddress
 import logging
 import re
 from urllib.parse import urlparse, urlunparse
@@ -84,10 +85,43 @@ def _split_bare(value):
     return value[:slash], value[slash:]
 
 
+def _is_valid_host(host):
+    """True when `host` is a DNS label OR an IPv4/IPv6 address. `host` may
+    include a `:port` suffix on IPv4/DNS forms; strip it before validating.
+    IPv6 addresses arrive with square brackets when they came through a
+    scheme-form URL (`[::1]`); those brackets are stripped so
+    `ipaddress.ip_address()` accepts them."""
+    if not host:
+        return False
+    h = host
+    # Strip a trailing port from `host:port` — but only when we can be
+    # confident it IS a port, not an IPv6 chunk. IPv6 without brackets is
+    # ambiguous here, so require the brackets on the caller side.
+    if h.startswith('[') and ']' in h:
+        # `[::1]:8080` → host=`::1`
+        end = h.index(']')
+        h = h[1:end]
+    elif h.count(':') == 1:
+        # `example.com:8080` or `1.2.3.4:8080`
+        h_no_port, _, port = h.rpartition(':')
+        if port.isdigit():
+            h = h_no_port
+    if _DOMAIN_RE.match(h):
+        return True
+    try:
+        ipaddress.ip_address(h)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 def is_valid_url(value):
-    """Accept full URLs (http:// or https://) AND bare hostnames with an
-    optional path — the URL blacklist is consumed by firewalls / proxies /
-    secure web gateways, most of which take either form. Rejects garbage
+    """Accept full URLs (http:// or https://) AND bare hosts with an optional
+    path — the URL blacklist is consumed by firewalls / proxies / secure web
+    gateways, most of which take either form. Bare IPv4/IPv6 addresses are
+    accepted too, because after scheme-strip normalisation an input like
+    `http://1.2.3.4/admin` becomes `1.2.3.4/admin` and still needs to
+    re-validate on subsequent `normalize_url()` calls. Rejects garbage
     (empty, over-length, no dot in the host, etc.)."""
     if not value:
         return False
@@ -101,92 +135,107 @@ def is_valid_url(value):
         except (ValueError, TypeError):
             return False
         return p.scheme in ('http', 'https') and bool(p.netloc)
-    # Bare host [+ optional path] path -- extract host and validate it
+    # Bare host [+ optional path] — extract host and validate it
     host, _path = _split_bare(v)
-    return bool(_DOMAIN_RE.match(host))
+    return _is_valid_host(host)
 
 
 def normalize_url(value):
-    """Return the canonical form used for de-dup and VirusTotal lookup.
+    """Return the canonical BARE form used for de-dup and VirusTotal lookup.
 
     Rules:
       * strip surrounding whitespace
-      * scheme + host lowercased (if a scheme was provided)
-      * strip default port (:80 for http, :443 for https)
+      * `http://` and `https://` schemes are STRIPPED — everything ends up
+        in the same shape a firewall / proxy would filter on. `http://x.com`
+        and `https://x.com` and bare `x.com` are one stored value: `x.com`.
+      * host lowercased (case-insensitive per RFC)
+      * default port stripped (:80 for schemes we can identify, :443 for
+        https)
       * collapse duplicate slashes in path
       * drop trailing slash on empty/root path
-      * drop fragment (# ...) — never routed anyway
-      * bare-domain inputs stay bare (no scheme is invented) — firewalls that
-        block by host want the stored form to match what they filter on
+      * drop userinfo (`user:pass@`) and fragment (`#…`) — never routed
+      * query string preserved verbatim (some sites route on it)
 
-    Query string casing and order are preserved — some sites route on them.
+    Bare IP addresses (IPv4/IPv6) pass through, so `http://1.2.3.4/admin`
+    becomes `1.2.3.4/admin` and stays valid on subsequent normalisations.
     """
     if not is_valid_url(value):
         raise ValueError(f"Invalid URL: {value}")
     v = value.strip()
 
-    # Bare-domain path: normalize case on host, collapse slashes in path,
-    # drop trailing slash. No scheme is added.
-    if not v.lower().startswith(('http://', 'https://')):
-        host, path = _split_bare(v)
-        host = host.lower()
-        if path:
-            path = re.sub(r'/{2,}', '/', path)
-            if path == '/':
-                path = ''
-        return host + path
+    # Scheme-carrying input: parse, drop scheme + userinfo + fragment, keep
+    # host [+ non-default port] + path + query. Everything flows into the
+    # same shape as bare-domain input below.
+    if v.lower().startswith(('http://', 'https://')):
+        p = urlparse(v)
+        scheme = p.scheme.lower()
+        host = (p.hostname or '').lower()
+        port = p.port
+        if (scheme == 'http' and port == 80) or (scheme == 'https' and port == 443):
+            netloc = host
+        elif port:
+            netloc = f'{host}:{port}'
+        else:
+            netloc = host
+        path = re.sub(r'/{2,}', '/', p.path or '')
+        if path == '/':
+            path = ''
+        result = netloc + path
+        if p.query:
+            result += '?' + p.query
+        return result
 
-    p = urlparse(v)
-    scheme = p.scheme.lower()
-    host = (p.hostname or '').lower()
-    port = p.port
-    if (scheme == 'http' and port == 80) or (scheme == 'https' and port == 443):
-        netloc = host
-    elif port:
-        netloc = f'{host}:{port}'
-    else:
-        netloc = host
-    # Preserve userinfo if any -- rare but valid
-    if p.username:
-        cred = p.username
-        if p.password:
-            cred += f':{p.password}'
-        netloc = f'{cred}@{netloc}'
-    path = re.sub(r'/{2,}', '/', p.path or '')
-    if path == '/':
-        path = ''
-    return urlunparse((scheme, netloc, path, p.params, p.query, ''))
+    # Bare-domain input: just clean casing / duplicate slashes.
+    host, path = _split_bare(v)
+    host = host.lower()
+    if path:
+        path = re.sub(r'/{2,}', '/', path)
+        if path == '/':
+            path = ''
+    return host + path
 
 
 def url_sha256(value):
+    """SHA-256 of the URL used as the DEDUP identifier on URLEntry rows.
+
+    Hashes the URL **exactly as it will be stored** — i.e. the output of
+    `normalize_url(value)`. That means:
+
+      * `example.com`         → hash of `example.com`         (bare)
+      * `http://example.com`  → hash of `http://example.com`  (http scheme)
+      * `https://example.com` → hash of `https://example.com` (https scheme)
+
+    Three inputs, three distinct rows — matches the user's stored view
+    ("what I sent is what I see"). An earlier version of this function
+    canonicalised bare + https:// to the same hash so it doubled as the
+    VirusTotal lookup ID; that made bare and https:// collide in the DB,
+    where whichever was inserted first won and later attempts silently
+    returned the earlier row. VT lookups now use `url_vt_id()` below.
+    """
+    return hashlib.sha256(normalize_url(value).encode('utf-8')).hexdigest()
+
+
+def url_vt_id(value):
     """SHA-256 of the URL used for the VirusTotal `/api/v3/urls/{id}` lookup.
 
     VT's URL identifier is the SHA-256 of the URL string **exactly as VT
     stores it**. Two rules matter here that our storage-side normalizer
-    doesn't apply:
+    doesn't apply — they exist purely to make the VT query hit the right
+    object and never touch `url_value`:
 
-      1. Every URL VT knows about has a scheme -- bare domains need
+      1. Every URL VT knows about has a scheme; bare domains get
          `https://` prepended before hashing.
-      2. VT stores root-path URLs with a trailing slash:
-         `https://example.com/` -- not `https://example.com`. Our
-         `normalize_url()` strips that slash for storage cleanliness,
-         so we have to put it back for the VT lookup, otherwise VT
-         returns 404 and the entry gets a bogus 0/0 score instead of
-         the real one.
-
-    Neither transformation touches what's stored in `url_value`; both
-    exist purely so the query hits the right VT object.
+      2. VT stores root-path URLs with a trailing slash (`https://x.com/`
+         not `https://x.com`). Our `normalize_url()` strips that slash for
+         storage cleanliness, so we put it back here — otherwise VT would
+         404 and the entry would land with a bogus 0/0 score.
     """
     from urllib.parse import urlparse
     normalized = normalize_url(value)
     if not normalized.lower().startswith(('http://', 'https://')):
-        # Bare domain -- probe VT with the https:// form of its root URL.
         normalized = 'https://' + normalized
     p = urlparse(normalized)
     if not p.path:
-        # Root path with no trailing slash -- add one so we match VT's
-        # canonicalized identifier. Paths that already have a value
-        # (`/foo`, `/foo/`, etc.) are left alone.
         normalized = normalized + '/'
     return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
 
