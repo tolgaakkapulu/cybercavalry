@@ -1,26 +1,19 @@
-"""API silence detector for integrated products (firewall, XDR, SIEM).
+"""Global API-silence detector.
 
-The idea: any partner that talks to the platform on a schedule (typically
-GET /api/v1/blacklist/ every minute or every hour) should keep talking. If
-a well-established caller suddenly falls silent, something is wrong on their
-side — dead cron, revoked token, network split, wrong URL after DNS change.
-Better an e-mail than finding out days later.
+Watches the whole API request stream (not any single caller) and answers
+"was there any traffic in the last N minutes?" — with the definition of
+"any traffic" driven by two settings-tab checkboxes:
 
-`find_silent_callers()` returns the list of monitored callers whose most
-recent API request is older than `silence_threshold_minutes`. A caller is
-"monitored" once they have produced at least `silence_baseline_min_hits`
-API requests during the last 24h — this filters one-off scripts, port
-scans and admins poking the endpoint from a browser, while still catching
-new integrations after their first stable day.
+  * `actions.silence_track_get`  → count GET-shaped endpoints
+    (`api.blacklist`, `api.hashlist`, `api.urllist`, `api.status`)
+  * `actions.silence_track_post` → count POST-shaped endpoints
+    (`api.report`, `api.report.skipped`, `api.hash_report`, `api.url_report`)
 
-Returned entries:
-    {
-      'caller':         'ip:10.34.36.254 (anonymous)' | 'firewall.svc',
-      'user_id':        None | 42,
-      'last_seen':      datetime,
-      'silent_minutes': 12,
-      'baseline_hits':  1440,   # how many hits in last 24h
-    }
+Either can be enabled independently. If BOTH are enabled, a request from
+either group resets the silence timer — the platform stays "not silent"
+as long as any tracked kind of request keeps arriving. If ONLY GET is
+enabled, POST activity is ignored (and vice versa). If neither is
+enabled, the alert is effectively disabled.
 
 Uses the same ActivityLog rows the rate-limit monitor reads, so no extra
 storage or middleware is needed.
@@ -38,17 +31,24 @@ from apps.settings_app.cache import SettingsCache
 logger = logging.getLogger(__name__)
 
 
-# Same action set as the rate-limit monitor -- both watch the same request
-# stream, they just answer different questions about it.
-_API_ACTIONS = (
-    'api.report', 'api.report.skipped',
-    'api.hash_report',
-    'api.blacklist', 'api.hashlist',
+# Endpoint families that count as "the platform is being talked to". Grouped
+# by HTTP verb because that's how the UI exposes them to the operator.
+#
+# `api.rate_limit` / `api.rate_limit_rpm` are deliberately excluded — they're
+# internal signals emitted when the platform blocks a caller for exceeding
+# quota, not client-verb requests we want to treat as evidence of life.
+GET_ACTIONS = (
+    'api.blacklist',
+    'api.hashlist',
+    'api.urllist',
     'api.status',
-    'api.rate_limit',
 )
-
-_BASELINE_HOURS = 24  # hard-coded window for "regular caller" detection
+POST_ACTIONS = (
+    'api.report',
+    'api.report.skipped',
+    'api.hash_report',
+    'api.url_report',
+)
 
 
 def _read_int(key: str, default: int) -> int:
@@ -58,98 +58,132 @@ def _read_int(key: str, default: int) -> int:
         return default
 
 
-def find_silent_callers() -> tuple[list[dict], int, int]:
-    """Return `(silent, threshold_minutes, baseline_min_hits)`.
+def _read_bool(key: str, default: bool) -> bool:
+    val = SettingsCache.get(key, default)
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(val)
 
-    A caller shows up in `silent` when:
-      1. Baseline: they generated >= baseline_min_hits API requests in the
-         last 24h (so we know they're a regular integration, not a one-off).
-      2. Silence: they have made zero API requests in the last
-         `threshold_minutes`.
+
+def _tracked_actions() -> tuple[list[str], list[str]]:
+    """Return `(tracked_actions, tracked_labels)` based on the two checkbox
+    settings. Empty list on both sides means "nothing to watch" — the caller
+    should treat that as feature-disabled rather than "always silent"."""
+    track_get  = _read_bool('actions.silence_track_get',  True)
+    track_post = _read_bool('actions.silence_track_post', True)
+    actions, labels = [], []
+    if track_get:
+        actions.extend(GET_ACTIONS)
+        labels.append('GET')
+    if track_post:
+        actions.extend(POST_ACTIONS)
+        labels.append('POST')
+    return actions, labels
+
+
+def check_global_silence() -> dict:
+    """Evaluate the platform's API traffic against the silence threshold.
+
+    Returns a dict the alert service + test-mail preview both consume:
+      enabled            bool  — at least one method group is being tracked
+      tracked_actions    list  — ActivityLog action names in scope
+      tracked_labels     list  — human labels for the tracked groups ('GET', 'POST')
+      threshold_minutes  int   — silence window length
+      window_start       dt    — `now - threshold_minutes`
+      last_activity_at   dt|None — most recent qualifying request across all callers
+      window_hits        int   — count of qualifying requests inside the window
+      silent             bool  — True when `window_hits == 0` and monitoring is on
+      silent_reason      str   — one-line diagnostic for logs / e-mail body
     """
     from apps.settings_app.models import ActivityLog
 
     threshold_minutes = max(1, _read_int('actions.silence_threshold_minutes', 5))
-    baseline_min_hits = max(1, _read_int('actions.silence_baseline_min_hits', 30))
+    tracked_actions, tracked_labels = _tracked_actions()
+    now = timezone.now()
+    window_start = now - timedelta(minutes=threshold_minutes)
 
-    now      = timezone.now()
-    baseline = now - timedelta(hours=_BASELINE_HOURS)
-    silence  = now - timedelta(minutes=threshold_minutes)
+    if not tracked_actions:
+        return {
+            'enabled':           False,
+            'tracked_actions':   [],
+            'tracked_labels':    [],
+            'threshold_minutes': threshold_minutes,
+            'window_start':      window_start,
+            'last_activity_at':  None,
+            'window_hits':       0,
+            'silent':            False,
+            'silent_reason':     'no method groups selected — monitoring is disabled',
+        }
 
-    # Baseline: for each caller, count 24h hits and record the most-recent one.
-    # `values(...).annotate(...)` gives us GROUP BY (user_id, ip_address) with
-    # both the hit count and the last-seen timestamp in a single query.
-    rows = (
-        ActivityLog.objects
-        .filter(timestamp__gte=baseline, action__in=_API_ACTIONS)
-        .values('user_id', 'user__username', 'ip_address')
-        .annotate(hits=Count('id'), last_seen=Max('timestamp'))
-        .filter(hits__gte=baseline_min_hits)
+    # A single aggregate query is cheaper than two round-trips; grab both the
+    # last-seen timestamp (across all time) and the in-window hit count.
+    agg = ActivityLog.objects.filter(action__in=tracked_actions).aggregate(
+        last_seen=Max('timestamp'),
     )
+    last_activity = agg.get('last_seen')
+    window_hits = ActivityLog.objects.filter(
+        action__in=tracked_actions, timestamp__gte=window_start,
+    ).count()
 
-    silent: list[dict] = []
-    for r in rows:
-        if r['last_seen'] and r['last_seen'] > silence:
-            continue  # still active within the silence window
-        uid = r.get('user_id')
-        if uid:
-            caller  = r.get('user__username') or f'user #{uid}'
-            key     = f'user:{uid}'
+    silent = (window_hits == 0)
+    if silent:
+        if last_activity is None:
+            reason = f'no {"/".join(tracked_labels)} API activity has ever been recorded'
         else:
-            ip      = (r.get('ip_address') or '').strip() or 'unknown'
-            caller  = f'{ip} (anonymous)'
-            key     = f'ip:{ip}'
-        silent_delta = now - r['last_seen'] if r['last_seen'] else timedelta(hours=999)
-        silent.append({
-            'caller':          caller,
-            'caller_key':      key,
-            'user_id':         uid,
-            'last_seen':       r['last_seen'],
-            'silent_minutes':  int(silent_delta.total_seconds() // 60),
-            'baseline_hits':   r['hits'],
-        })
+            silent_min = int((now - last_activity).total_seconds() // 60)
+            reason = (
+                f'no {"/".join(tracked_labels)} API activity in the last '
+                f'{threshold_minutes} minute(s) (last seen {silent_min} min ago)'
+            )
+    else:
+        reason = f'{window_hits} {"/".join(tracked_labels)} request(s) in the last {threshold_minutes} minute(s)'
 
-    # Longest-silent first so downstream truncation keeps the worst offender.
-    silent.sort(key=lambda r: r['silent_minutes'], reverse=True)
-    return silent, threshold_minutes, baseline_min_hits
+    return {
+        'enabled':           True,
+        'tracked_actions':   list(tracked_actions),
+        'tracked_labels':    tracked_labels,
+        'threshold_minutes': threshold_minutes,
+        'window_start':      window_start,
+        'last_activity_at':  last_activity,
+        'window_hits':       window_hits,
+        'silent':            silent,
+        'silent_reason':     reason,
+    }
 
 
-def sample_recent_callers() -> list[dict]:
-    """Same shape as `find_silent_callers()` but returns every monitored caller
-    with their current silence duration -- used by the "Send Test Mail" preview
-    so the operator sees the live picture (silent + still-talking together)."""
+def sample_recent_activity(lookback_hours: int = 24) -> list[dict]:
+    """Per-action snapshot for the test-mail preview — one row per tracked
+    action name with the count of hits in the last `lookback_hours` and the
+    most recent timestamp. Groups that aren't currently tracked don't appear
+    (mirrors what the alert would evaluate on)."""
     from apps.settings_app.models import ActivityLog
 
-    baseline_min_hits = max(1, _read_int('actions.silence_baseline_min_hits', 30))
-    now      = timezone.now()
-    baseline = now - timedelta(hours=_BASELINE_HOURS)
+    tracked_actions, _labels = _tracked_actions()
+    if not tracked_actions:
+        return []
 
+    since = timezone.now() - timedelta(hours=lookback_hours)
     rows = (
         ActivityLog.objects
-        .filter(timestamp__gte=baseline, action__in=_API_ACTIONS)
-        .values('user_id', 'user__username', 'ip_address')
+        .filter(action__in=tracked_actions, timestamp__gte=since)
+        .values('action')
         .annotate(hits=Count('id'), last_seen=Max('timestamp'))
-        .filter(hits__gte=baseline_min_hits)
     )
+    seen_map = {r['action']: r for r in rows}
 
-    out: list[dict] = []
-    for r in rows:
-        uid = r.get('user_id')
-        if uid:
-            caller = r.get('user__username') or f'user #{uid}'
-            key    = f'user:{uid}'
-        else:
-            ip = (r.get('ip_address') or '').strip() or 'unknown'
-            caller = f'{ip} (anonymous)'
-            key    = f'ip:{ip}'
-        silent_delta = now - r['last_seen'] if r['last_seen'] else timedelta(hours=999)
+    # Emit one row per tracked action, so an action with zero recent hits
+    # still shows up in the preview as "0 hits — never".
+    out = []
+    for action in tracked_actions:
+        row = seen_map.get(action)
+        label = 'GET' if action in GET_ACTIONS else 'POST'
         out.append({
-            'caller':          caller,
-            'caller_key':      key,
-            'user_id':         uid,
-            'last_seen':       r['last_seen'],
-            'silent_minutes':  int(silent_delta.total_seconds() // 60),
-            'baseline_hits':   r['hits'],
+            'action':    action,
+            'label':     label,
+            'hits':      row['hits'] if row else 0,
+            'last_seen': row['last_seen'] if row else None,
         })
-    out.sort(key=lambda r: r['silent_minutes'], reverse=True)
+    out.sort(key=lambda r: (-r['hits'], r['action']))
     return out

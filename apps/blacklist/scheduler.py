@@ -313,16 +313,17 @@ def _run_rate_limit_alert():
 
 
 def _run_silence_alert():
-    """Actions → API Silence Alert scheduler entry — scans the last 24h of
-    API events for monitored callers (baseline hits >= configured) and mails
-    the recipient when any of them have gone silent past the threshold. Decision
-    logic in `alert_service.run_silence_alert_check`."""
+    """Actions → API Silence Alert scheduler entry — checks whether the
+    platform has received any tracked API traffic (GET-list and/or POST-report
+    endpoints, per the two Track-* checkboxes) inside the configured window,
+    and mails the recipient when the whole tracked surface is silent.
+    Decision logic in `alert_service.run_silence_alert_check`."""
     try:
         from apps.settings_app.alert_service import run_silence_alert_check
         result = run_silence_alert_check(actor=None, ip='')
         if result.get('sent'):
-            logger.info("Silence alert e-mail sent to %s for %s.",
-                        result.get('recipient'), ', '.join(result.get('callers', [])))
+            logger.info("Silence alert e-mail sent to %s (%s).",
+                        result.get('recipient'), result.get('reason', ''))
     except Exception as exc:
         logger.error("Silence alert check crashed: %s", exc, exc_info=True)
 
