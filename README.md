@@ -44,7 +44,7 @@ Everything runs behind a clean web UI with role-based access, activity auditing,
 - **Hit tracking** with rolling report count per IP
 - **Automatic promotion** — repeat offenders escalated from 24 h → 30 d based on configurable threshold within an N-day window
 - **Pinned entries** — admin overrides that survive automatic re-evaluation
-- **Rich filters** — search + group + source + pinned + count / AbuseIPDB score ranges on IP Blacklist; search + pinned on Hash Blacklist
+- **Rich filters** — search + group + source + pinned + count / AbuseIPDB score ranges on IP Blacklist; search + pinned on URL & Hash Blacklist. Search covers every tooltip-visible enrichment column (ISP, ASN, country, threat label, categories, tags, registrar…) with true case-insensitive matching across Turkish and other non-ASCII text.
 - **Bulk actions** — activate / deactivate / delete / pin / unpin / score across every selection
 
 </td>
@@ -136,6 +136,14 @@ Every active IP with its group (24 h / 30 d / no-group), AbuseIPDB score, source
 
 ---
 
+### URL Blacklist
+
+Malicious / phishing URLs scored by VirusTotal. Any input form — bare domain, `http://…`, `https://…` — collapses to a single canonical row so the same target never lands three times, and the **Hostname column groups by registrable domain** (eTLD+1 via the Public Suffix List) so many subdomains under one phishing operation cluster together. Hovering a row surfaces every enriched field VT returns: threat label, categories, tags, community reputation & votes, page title, resolved serving IP, redirect chain, registrar, domain creation date, popularity rank. URLs VT has never indexed get a **"Not in VT"** badge and land in the Inactive tab instead of showing a misleading 0/0 score. Auto-scored on ingest, re-scored on the schedule you configure.
+
+![URL Blacklist](images/url_blacklist.png)
+
+---
+
 ### Hash Blacklist
 
 Hash IOCs (MD5, SHA-1, SHA-256, SHA-512) with the malicious-engine count returned by VirusTotal. New hashes are scored automatically on ingest; the whole set is re-scored on the schedule you configure.
@@ -169,6 +177,7 @@ CYBERCavalry/
 │   ├── api/              # Public HTTP API (report + consume endpoints)
 │   ├── blacklist/        # IP entries, AbuseIPDB service, promotion logic
 │   ├── hashlist/         # Hash entries, VirusTotal service
+│   ├── urllist/          # URL entries, VirusTotal service (URL + domain endpoints)
 │   ├── whitelist/        # CIDR / IP allowlist with overlap detection
 │   ├── dashboard/        # Landing page, charts, quick actions
 │   ├── reports/          # PDF generator, activity exports
