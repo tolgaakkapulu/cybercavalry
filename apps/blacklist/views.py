@@ -151,19 +151,47 @@ def blacklist_list(request):
             Q(is_active=False) | Q(is_active=True, expires_at__lt=now)
         )
 
-    # Count column sorts by the LENGTH of `recent_hit_timestamps` — the stored
-    # rolling-window list — instead of the lifetime `hit_count`, so the sort
-    # order matches the number displayed in the badge. Function name differs
-    # across backends: SQLite `json_array_length`, PostgreSQL `jsonb_array_length`.
+    # The Count badge shows `entry.count_recent_hits_within(promotion_window_days)`
+    # — how many timestamps in `recent_hit_timestamps` fall inside the configured
+    # rolling window. Earlier this sort annotation used `json_array_length()`
+    # which counted the WHOLE list up to the 30-day storage horizon, so sort-
+    # by-count and filter-by-count both disagreed with the badge whenever a
+    # row had entries older than the display window (a row could show `0` but
+    # still sort high because the raw array had 176 stale entries in it).
+    # Now we count only entries whose ISO timestamp falls inside the window,
+    # using DB-native JSON iteration. ISO 8601 strings sort correctly under
+    # lex comparison because all timestamps are aware UTC (`+00:00`) — see
+    # BlacklistEntry.record_recent_hit().
+    from apps.settings_app.cache import SettingsCache
+    try:
+        promotion_window_days = int(
+            SettingsCache.get('threat_intel.abuseipdb_promotion_window_days', 7) or 7
+        )
+    except (TypeError, ValueError):
+        promotion_window_days = 7
+    promotion_window_days = max(1, min(30, promotion_window_days))
+    cutoff_iso = (timezone.now() - timedelta(days=promotion_window_days)).isoformat()
+
     from django.db import connection as _db_connection
     from django.db.models.expressions import RawSQL
-    _json_len_fn = 'jsonb_array_length' if _db_connection.vendor == 'postgresql' else 'json_array_length'
+    from django.db.models import IntegerField
+    if _db_connection.vendor == 'postgresql':
+        _recent_len_sql = (
+            '(SELECT COUNT(*) FROM jsonb_array_elements_text(recent_hit_timestamps) e '
+            'WHERE e >= %s)'
+        )
+    else:
+        # SQLite (and MySQL 5.7+) json_each iterates JSON array elements.
+        _recent_len_sql = (
+            '(SELECT COUNT(*) FROM json_each(recent_hit_timestamps) '
+            'WHERE json_each.value >= %s)'
+        )
     entries = entries.annotate(
-        _recent_len=RawSQL(f'{_json_len_fn}(recent_hit_timestamps)', [])
+        _recent_len=RawSQL(_recent_len_sql, [cutoff_iso], output_field=IntegerField())
     )
-    # Hit-count range filter uses the same JSON length as the sort key and the
-    # `Count` column badge -- so a "Count >= N" filter returns exactly the
-    # entries whose visible count matches. Applied AFTER the annotation.
+    # Hit-count range filter uses the same windowed count as the sort key
+    # and the badge — so "Count ≥ N" returns exactly the rows whose visible
+    # number matches.
     if hit_min is not None:
         entries = entries.filter(_recent_len__gte=hit_min)
     if hit_max is not None:
@@ -197,7 +225,6 @@ def blacklist_list(request):
     groups = BlacklistGroup.objects.all()
     total_count = entries.count()
 
-    from apps.settings_app.cache import SettingsCache
     try:
         score_30d = int(SettingsCache.get('threat_intel.abuseipdb_threshold_30d', 80))
     except (TypeError, ValueError):
@@ -215,16 +242,14 @@ def blacklist_list(request):
         promotion_threshold = int(SettingsCache.get('threat_intel.abuseipdb_promotion_threshold', 0) or 0)
     except (TypeError, ValueError):
         promotion_threshold = 0
-    try:
-        promotion_window_days = int(SettingsCache.get('threat_intel.abuseipdb_promotion_window_days', 7) or 7)
-    except (TypeError, ValueError):
-        promotion_window_days = 7
-    promotion_window_days = max(1, min(30, promotion_window_days))
+    # `promotion_window_days` was already loaded above where the sort
+    # annotation needed it — reuse the same value here so the badge, the
+    # tooltip and the sort key all reflect the same window.
     # Annotate each entry on this page with the recent-hit count computed
-    # against the currently configured window. Template consumes it as
-    # `entry.recent_hit_count` — reading a plain attribute is cheaper than
-    # re-invoking the model method per template access and it keeps the
-    # tooltip's window value in sync with the number in the badge.
+    # against that window. Template consumes it as `entry.recent_hit_count`
+    # — reading a plain attribute is cheaper than re-invoking the model
+    # method per template access and it keeps the tooltip's window value
+    # in sync with the number in the badge.
     for _e in entries_page:
         _e.recent_hit_count = _e.count_recent_hits_within(promotion_window_days)
     ctx = {
@@ -523,7 +548,19 @@ def blacklist_import_csv(request):
         REASON_COLS = ['reason', 'description', 'note', 'comment']
 
         groups_cache = {g.name: g for g in BlacklistGroup.objects.all()}
-        default_group = groups_cache.get('30d') or groups_cache.get('24h') or next(iter(groups_cache.values()), None)
+        # Rows without an explicit `group` column land in 24h — the safer
+        # short-term bucket. AbuseIPDB auto-check (when enabled) escalates
+        # them to 30d based on the score, and the promotion rule further
+        # escalates persistent 24h offenders. Previous default was '30d',
+        # which silently dumped every unscored import straight into the
+        # long-term published feed and produced the "count=0, score=None,
+        # group=30d" rows admins were finding.
+        default_group = (
+            groups_cache.get('24h')
+            or groups_cache.get('no_group')
+            or groups_cache.get('30d')
+            or next(iter(groups_cache.values()), None)
+        )
         added = skipped = errors = whitelisted = bl_overlaps = cidr_blocks = 0
         added_cidrs = []
         skipped_cidrs = []

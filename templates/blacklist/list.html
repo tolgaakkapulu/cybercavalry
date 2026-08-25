@@ -144,7 +144,7 @@ whether the advanced pane starts expanded.
           <p>Accepted column names (case-insensitive):</p>
           <p><strong style="color:var(--text-primary)">IP</strong> — required per row, must be a single IP address<br>
           <span class="tip-label">cidr · ip · ip_address · address · network · subnet</span></p>
-          <p><strong style="color:var(--text-primary)">Group</strong> — optional, defaults to <em>30d</em><br>
+          <p><strong style="color:var(--text-primary)">Group</strong> — optional, defaults to <em>24h</em> (safer bucket; AbuseIPDB auto-check + promotion rule escalate to 30d when the score / hit count warrant it)<br>
           <span class="tip-label">group · group_name · list &nbsp;|&nbsp; values: 24h · 30d</span></p>
           <p><strong style="color:var(--text-primary)">Reason</strong> — optional<br>
           <span class="tip-label">reason · description · note · comment</span></p>

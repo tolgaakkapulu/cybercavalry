@@ -312,13 +312,34 @@ def _apply_score_to_entry(entry, score, now, meta=None):
             f"AbuseIPDB: {entry.ip_address} score={score} — pinned, skipping group/status changes"
         )
     elif score < t24h:
-        # Below minimum threshold — deactivate and exclude from published lists
+        # Below minimum threshold — deactivate and exclude from published
+        # lists. ALSO demote the group to 24h so the row doesn't show up as
+        # a stale "30d entry with score=0" when someone filters by group
+        # or scans the group column. `is_active=False` alone is enough for
+        # the API feed, but keeping the historical 30d label is confusing.
         if entry.is_active:
             entry.is_active = False
             update_fields.append('is_active')
             logger.info(
                 f"AbuseIPDB: {entry.ip_address} score={score} < {t24h} → deactivated"
             )
+        if entry.group_id:
+            from apps.blacklist.models import BlacklistGroup as _BLG
+            group_24h = _BLG.objects.filter(name='24h').first()
+            if group_24h and entry.group_id != group_24h.pk:
+                # Only demote if no duplicate 24h row already exists for this
+                # CIDR — the unique_together on (cidr, group) would raise.
+                from apps.blacklist.models import BlacklistEntry as _BLE
+                if not _BLE.objects.filter(
+                    cidr=entry.cidr, group=group_24h
+                ).exclude(pk=entry.pk).exists():
+                    old_group = entry.group.name if entry.group_id else '?'
+                    entry.group = group_24h
+                    update_fields.append('group')
+                    logger.info(
+                        f"AbuseIPDB: {entry.ip_address} score={score} < {t24h} "
+                        f"→ group demoted '{old_group}' → '24h'"
+                    )
     else:
         target_group = _resolve_group_by_score(score)
         # Promotion override: a 24h verdict from the score check can be
