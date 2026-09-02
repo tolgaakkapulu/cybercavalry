@@ -1,19 +1,17 @@
-"""Global API-silence detector.
+"""Per-endpoint API-silence detector.
 
-Watches the whole API request stream (not any single caller) and answers
-"was there any traffic in the last N minutes?" — with the definition of
-"any traffic" driven by two settings-tab checkboxes:
+Watches each configurable API endpoint independently and answers "did THIS
+endpoint receive any traffic in the last N minutes?". Each endpoint has its
+own on/off checkbox in Settings → Actions → API Silence Alert. The alarm
+fires whenever a TRACKED endpoint's window is empty — even if other
+endpoints are noisy.
 
-  * `actions.silence_track_get`  → count GET-shaped endpoints
-    (`api.blacklist`, `api.hashlist`, `api.urllist`, `api.status`)
-  * `actions.silence_track_post` → count POST-shaped endpoints
-    (`api.report`, `api.report.skipped`, `api.hash_report`, `api.url_report`)
-
-Either can be enabled independently. If BOTH are enabled, a request from
-either group resets the silence timer — the platform stays "not silent"
-as long as any tracked kind of request keeps arriving. If ONLY GET is
-enabled, POST activity is ignored (and vice versa). If neither is
-enabled, the alert is effectively disabled.
+Motivation: the earlier "GET vs POST group" design used union semantics
+(any hit from any tracked endpoint reset the timer). In production that
+hid a legitimate incident — POST /api/v1/report/url/ was silent for two
+days while POST /api/v1/report/ip/ stayed busy, so the union never went
+quiet and no alarm fired. Per-endpoint tracking surfaces exactly that
+case.
 
 Uses the same ActivityLog rows the rate-limit monitor reads, so no extra
 storage or middleware is needed.
@@ -23,7 +21,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
-from django.db.models import Max, Count
+from django.db.models import Max
 from django.utils import timezone
 
 from apps.settings_app.cache import SettingsCache
@@ -31,24 +29,20 @@ from apps.settings_app.cache import SettingsCache
 logger = logging.getLogger(__name__)
 
 
-# Endpoint families that count as "the platform is being talked to". Grouped
-# by HTTP verb because that's how the UI exposes them to the operator.
+# Ordered by user-facing category (IP → Hash → URL → misc) so the settings
+# tab, the alert e-mail table and the test-mail preview all present the
+# endpoints in the same intuitive grouping.
 #
-# `api.rate_limit` / `api.rate_limit_rpm` are deliberately excluded — they're
-# internal signals emitted when the platform blocks a caller for exceeding
-# quota, not client-verb requests we want to treat as evidence of life.
-GET_ACTIONS = (
-    'api.blacklist',
-    'api.hashlist',
-    'api.urllist',
-    'api.status',
-)
-POST_ACTIONS = (
-    'api.report',
-    'api.report.skipped',
-    'api.hash_report',
-    'api.url_report',
-)
+# Each row: (settings_key, activitylog_action, http_method, url_path, label)
+ENDPOINT_MAP = [
+    ('actions.silence_ep_report_ip',   'api.report',      'POST', '/report/ip/',   'Report IP'),
+    ('actions.silence_ep_blacklist',   'api.blacklist',   'GET',  '/blacklist/',   'IP Blacklist'),
+    ('actions.silence_ep_report_hash', 'api.hash_report', 'POST', '/report/hash/', 'Report Hash'),
+    ('actions.silence_ep_hashlist',    'api.hashlist',    'GET',  '/hashlist/',    'Hash Blacklist'),
+    ('actions.silence_ep_report_url',  'api.url_report',  'POST', '/report/url/',  'Report URL'),
+    ('actions.silence_ep_urllist',     'api.urllist',     'GET',  '/urllist/',     'URL Blacklist'),
+    ('actions.silence_ep_status',      'api.status',      'GET',  '/status/',      'Status'),
+]
 
 
 def _read_int(key: str, default: int) -> int:
@@ -67,123 +61,101 @@ def _read_bool(key: str, default: bool) -> bool:
     return bool(val)
 
 
-def _tracked_actions() -> tuple[list[str], list[str]]:
-    """Return `(tracked_actions, tracked_labels)` based on the two checkbox
-    settings. Empty list on both sides means "nothing to watch" — the caller
-    should treat that as feature-disabled rather than "always silent"."""
-    track_get  = _read_bool('actions.silence_track_get',  True)
-    track_post = _read_bool('actions.silence_track_post', True)
-    actions, labels = [], []
-    if track_get:
-        actions.extend(GET_ACTIONS)
-        labels.append('GET')
-    if track_post:
-        actions.extend(POST_ACTIONS)
-        labels.append('POST')
-    return actions, labels
-
-
-def check_global_silence() -> dict:
-    """Evaluate the platform's API traffic against the silence threshold.
+def find_silent_endpoints() -> dict:
+    """Evaluate every configured endpoint against the silence window.
 
     Returns a dict the alert service + test-mail preview both consume:
-      enabled            bool  — at least one method group is being tracked
-      tracked_actions    list  — ActivityLog action names in scope
-      tracked_labels     list  — human labels for the tracked groups ('GET', 'POST')
-      threshold_minutes  int   — silence window length
+      threshold_minutes  int   — length of the silence window
       window_start       dt    — `now - threshold_minutes`
-      last_activity_at   dt|None — most recent qualifying request across all callers
-      window_hits        int   — count of qualifying requests inside the window
-      silent             bool  — True when `window_hits == 0` and monitoring is on
-      silent_reason      str   — one-line diagnostic for logs / e-mail body
+      endpoints          list  — one entry per row in ENDPOINT_MAP with
+                                 `tracked`, `window_hits`, `last_activity_at`,
+                                 `silent` and `silent_minutes` populated.
+                                 Untracked endpoints appear too so the
+                                 preview can show what's off; only tracked
+                                 ones drive the alarm.
+      tracked_count      int
+      silent_endpoints   list  — subset of `endpoints` where silent=True
+      has_silent         bool  — True → the alarm should fire (subject to
+                                 recipient config and cooldown)
     """
     from apps.settings_app.models import ActivityLog
 
     threshold_minutes = max(1, _read_int('actions.silence_threshold_minutes', 5))
-    tracked_actions, tracked_labels = _tracked_actions()
     now = timezone.now()
     window_start = now - timedelta(minutes=threshold_minutes)
 
-    if not tracked_actions:
-        return {
-            'enabled':           False,
-            'tracked_actions':   [],
-            'tracked_labels':    [],
-            'threshold_minutes': threshold_minutes,
-            'window_start':      window_start,
-            'last_activity_at':  None,
-            'window_hits':       0,
-            'silent':            False,
-            'silent_reason':     'no method groups selected — monitoring is disabled',
-        }
-
-    # A single aggregate query is cheaper than two round-trips; grab both the
-    # last-seen timestamp (across all time) and the in-window hit count.
-    agg = ActivityLog.objects.filter(action__in=tracked_actions).aggregate(
-        last_seen=Max('timestamp'),
-    )
-    last_activity = agg.get('last_seen')
-    window_hits = ActivityLog.objects.filter(
-        action__in=tracked_actions, timestamp__gte=window_start,
-    ).count()
-
-    silent = (window_hits == 0)
-    if silent:
-        if last_activity is None:
-            reason = f'no {"/".join(tracked_labels)} API activity has ever been recorded'
-        else:
-            silent_min = int((now - last_activity).total_seconds() // 60)
-            reason = (
-                f'no {"/".join(tracked_labels)} API activity in the last '
-                f'{threshold_minutes} minute(s) (last seen {silent_min} min ago)'
+    endpoints, silent_list = [], []
+    tracked_count = 0
+    for key, action, method, path, label in ENDPOINT_MAP:
+        tracked = _read_bool(key, True)
+        window_hits = 0
+        last_activity = None
+        if tracked:
+            tracked_count += 1
+            agg = ActivityLog.objects.filter(action=action).aggregate(
+                last_seen=Max('timestamp'),
             )
-    else:
-        reason = f'{window_hits} {"/".join(tracked_labels)} request(s) in the last {threshold_minutes} minute(s)'
+            last_activity = agg.get('last_seen')
+            window_hits = ActivityLog.objects.filter(
+                action=action, timestamp__gte=window_start,
+            ).count()
+        silent = bool(tracked and window_hits == 0)
+        silent_minutes = None
+        if last_activity is not None:
+            silent_minutes = int((now - last_activity).total_seconds() // 60)
+        row = {
+            'settings_key':     key,
+            'action':           action,
+            'method':           method,
+            'path':             path,
+            'label':            label,
+            'tracked':          tracked,
+            'window_hits':      window_hits,
+            'last_activity_at': last_activity,
+            'silent':           silent,
+            'silent_minutes':   silent_minutes,
+        }
+        endpoints.append(row)
+        if silent:
+            silent_list.append(row)
 
     return {
-        'enabled':           True,
-        'tracked_actions':   list(tracked_actions),
-        'tracked_labels':    tracked_labels,
         'threshold_minutes': threshold_minutes,
         'window_start':      window_start,
-        'last_activity_at':  last_activity,
-        'window_hits':       window_hits,
-        'silent':            silent,
-        'silent_reason':     reason,
+        'endpoints':         endpoints,
+        'tracked_count':     tracked_count,
+        'silent_endpoints':  silent_list,
+        'has_silent':        bool(silent_list),
     }
 
 
-def sample_recent_activity(lookback_hours: int = 24) -> list[dict]:
-    """Per-action snapshot for the test-mail preview — one row per tracked
-    action name with the count of hits in the last `lookback_hours` and the
-    most recent timestamp. Groups that aren't currently tracked don't appear
-    (mirrors what the alert would evaluate on)."""
+def sample_endpoint_activity(lookback_hours: int = 24) -> list[dict]:
+    """Per-endpoint 24-hour snapshot for the test-mail preview.
+
+    Emits one row per configured endpoint (tracked and untracked) so the
+    operator can sanity-check which endpoints are being watched and what
+    their last-24h traffic looks like. Uses one query per endpoint — the
+    row count is fixed at len(ENDPOINT_MAP) so the fan-out is bounded."""
     from apps.settings_app.models import ActivityLog
 
-    tracked_actions, _labels = _tracked_actions()
-    if not tracked_actions:
-        return []
-
     since = timezone.now() - timedelta(hours=lookback_hours)
-    rows = (
-        ActivityLog.objects
-        .filter(action__in=tracked_actions, timestamp__gte=since)
-        .values('action')
-        .annotate(hits=Count('id'), last_seen=Max('timestamp'))
-    )
-    seen_map = {r['action']: r for r in rows}
-
-    # Emit one row per tracked action, so an action with zero recent hits
-    # still shows up in the preview as "0 hits — never".
     out = []
-    for action in tracked_actions:
-        row = seen_map.get(action)
-        label = 'GET' if action in GET_ACTIONS else 'POST'
+    for key, action, method, path, label in ENDPOINT_MAP:
+        tracked = _read_bool(key, True)
+        agg = ActivityLog.objects.filter(action=action).aggregate(
+            last_seen=Max('timestamp'),
+        )
+        hits = ActivityLog.objects.filter(
+            action=action, timestamp__gte=since,
+        ).count()
         out.append({
-            'action':    action,
-            'label':     label,
-            'hits':      row['hits'] if row else 0,
-            'last_seen': row['last_seen'] if row else None,
+            'settings_key': key,
+            'action':       action,
+            'method':       method,
+            'path':         path,
+            'label':        label,
+            'tracked':      tracked,
+            'hits':         hits,
+            'last_seen':    agg.get('last_seen'),
         })
-    out.sort(key=lambda r: (-r['hits'], r['action']))
     return out

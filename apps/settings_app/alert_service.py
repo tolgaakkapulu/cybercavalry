@@ -435,32 +435,37 @@ def run_quota_alert_check(actor=None, ip: str = '') -> dict:
 
 # ── API Silence Alert ────────────────────────────────────────────────────────
 
-def _build_silence_context(status: dict, recent_activity: list[dict],
-                           is_test: bool = False) -> dict:
-    """Feed the silence-alert templates with brand + traffic snapshot.
+def _fmt_local(dt):
+    if not dt:
+        return 'never'
+    return timezone.localtime(dt).strftime('%Y-%m-%d %H:%M:%S')
 
-    `status` comes from `silence_monitor.check_global_silence()` and holds
-    all the numbers the templates render (tracked methods, window hits,
-    last activity). `recent_activity` is the per-action breakdown for the
-    24h test-mail preview (empty in the live-alert path)."""
+
+def _build_silence_context(status: dict, recent_activity: list[dict],
+                           silent_to_notify: list[dict] | None = None,
+                           is_test: bool = False) -> dict:
+    """Feed the silence-alert templates with brand + per-endpoint snapshot.
+
+    `status` comes from `silence_monitor.find_silent_endpoints()`.
+    `recent_activity` is the per-endpoint 24h breakdown (test-mail only).
+    `silent_to_notify` is the subset of silent endpoints that passed
+    cooldown — the e-mail highlights these. On the test path it's just
+    `status['silent_endpoints']` so the preview mirrors real content."""
     primary = SettingsCache.get('general.platform_name', 'CYBER') or 'CYBER'
     suffix  = SettingsCache.get('general.platform_name_suffix', 'Cavalry') or 'Cavalry'
     email   = SettingsCache.get('general.platform_email', '') or ''
     brand   = (SettingsCache.get('general.brand_color', '#ee5356') or '#ee5356').strip()
     cooldown = SettingsCache.get('actions.silence_alert_cooldown_hours', 6) or 6
 
-    # Local-timestamp any datetimes the template will render.
-    last_local = 'never'
-    silent_minutes = None
-    if status.get('last_activity_at'):
-        last_local = timezone.localtime(status['last_activity_at']).strftime('%Y-%m-%d %H:%M:%S')
-        silent_minutes = int((timezone.now() - status['last_activity_at']).total_seconds() // 60)
-
+    # Local-format timestamps on every row consumed by the templates.
+    for row in status.get('endpoints', []):
+        row['last_activity_local'] = _fmt_local(row.get('last_activity_at'))
+    if silent_to_notify is None:
+        silent_to_notify = list(status.get('silent_endpoints', []))
+    for row in silent_to_notify:
+        row['last_activity_local'] = _fmt_local(row.get('last_activity_at'))
     for row in recent_activity:
-        if row.get('last_seen'):
-            row['last_seen_local'] = timezone.localtime(row['last_seen']).strftime('%Y-%m-%d %H:%M:%S')
-        else:
-            row['last_seen_local'] = 'never'
+        row['last_seen_local'] = _fmt_local(row.get('last_seen'))
 
     return {
         'platform_name':          f'{primary}{suffix}',
@@ -468,18 +473,16 @@ def _build_silence_context(status: dict, recent_activity: list[dict],
         'platform_name_suffix':   suffix,
         'platform_email':         email,
         'brand_color':            brand,
-        'tracked_labels':         status.get('tracked_labels') or [],
-        'tracked_labels_display': ' + '.join(status.get('tracked_labels') or []) or '(none)',
         'threshold_minutes':      status.get('threshold_minutes', 0),
-        'window_hits':            status.get('window_hits', 0),
-        'last_activity_local':    last_local,
-        'silent_minutes':         silent_minutes,
-        'silent_reason':          status.get('silent_reason', ''),
+        'tracked_count':          status.get('tracked_count', 0),
+        'endpoints':              status.get('endpoints', []),
+        'silent_endpoints':       silent_to_notify,
+        'silent_count':           len(silent_to_notify),
         'recent_activity':        recent_activity,
         'checked_at':             timezone.localtime(timezone.now()).strftime('%Y-%m-%d %H:%M %Z'),
         'cooldown_hours':         cooldown,
         'is_test':                is_test,
-        'is_silent':              bool(status.get('silent')),
+        'has_silent':             bool(status.get('has_silent')),
     }
 
 
@@ -506,50 +509,40 @@ def _send_silence_mail(recipients, subject: str, ctx: dict) -> bool:
 
 
 def send_silence_test_mail(recipient: str) -> tuple[bool, str]:
-    """Deliver the silence-alert preview with the live global-silence status
-    and 24h per-action breakdown. Fired by the Settings → Actions → API
-    Silence Alert "Send Test Mail" button."""
+    """Deliver the silence-alert preview with the live per-endpoint status
+    and 24h breakdown. Triggered by the Settings → Actions → API Silence
+    Alert "Send Test Mail" button."""
     if not recipient:
         return False, 'Recipient e-mail is empty.'
-    from apps.settings_app.silence_monitor import check_global_silence, sample_recent_activity
+    from apps.settings_app.silence_monitor import find_silent_endpoints, sample_endpoint_activity
 
-    status  = check_global_silence()
-    recent  = sample_recent_activity(lookback_hours=24)
+    status  = find_silent_endpoints()
+    recent  = sample_endpoint_activity(lookback_hours=24)
     ctx     = _build_silence_context(status, recent, is_test=True)
     subject = f'[{ctx["platform_name"]}] API silence alert test'
     ok = _send_silence_mail(recipient, subject, ctx)
     return ok, ('Test e-mail sent.' if ok else 'Sending failed — check the server log for details.')
 
 
-def _get_silence_last_sent() -> object:
-    """Return the ISO string of the last silence alert (or empty)."""
-    from apps.settings_app.models import Setting
-    row = Setting.objects.filter(key=_SILENCE_LAST_SENT_KEY).first()
-    return (row.value or '').strip() if row else ''
+def _get_silence_last_sent_map() -> dict:
+    """Load the per-endpoint last-sent JSON map (`{action: iso, ...}`)."""
+    return _get_last_sent(_SILENCE_LAST_SENT_KEY)
 
 
-def _set_silence_last_sent(iso: str) -> None:
-    """Persist the global last-sent ISO timestamp so cooldown survives restarts."""
-    from apps.settings_app.models import Setting
-    Setting.objects.update_or_create(
-        key=_SILENCE_LAST_SENT_KEY,
-        defaults={
-            'value':       iso,
-            'value_type':  'str',
-            'category':    'actions',
-            'description': 'Timestamp of the most recent silence alert e-mail (managed internally).',
-            'is_secret':   False,
-        },
+def _set_silence_last_sent_map(mapping: dict) -> None:
+    _set_last_sent(
+        mapping, key=_SILENCE_LAST_SENT_KEY,
+        desc='Per-endpoint timestamps of the most recent silence alert e-mails (managed internally).',
     )
 
 
 def run_silence_alert_check(actor=None, ip: str = '') -> dict:
-    """Scheduler entry point. Fires an e-mail when no tracked API activity
-    (GET and/or POST endpoints per the two checkboxes) has been observed in
-    the configured silence window. Uses a single global cooldown timestamp
-    so the alert doesn't spam once it starts firing."""
+    """Scheduler entry point. For every tracked endpoint whose activity
+    window is empty AND whose per-endpoint cooldown has elapsed, include
+    that endpoint in one alert e-mail. Cooldown is per endpoint so a
+    permanently-silent one doesn't drown out fresh incidents on others."""
     from apps.settings_app.models import ActivityLog
-    from apps.settings_app.silence_monitor import check_global_silence
+    from apps.settings_app.silence_monitor import find_silent_endpoints
 
     if not SettingsCache.get('actions.silence_alert_enabled', False):
         return {'skipped': 'disabled'}
@@ -557,34 +550,48 @@ def run_silence_alert_check(actor=None, ip: str = '') -> dict:
     if not recipient:
         return {'skipped': 'no_recipient'}
 
-    status = check_global_silence()
-    if not status['enabled']:
-        return {'skipped': 'no_tracked_methods'}
-    if not status['silent']:
-        return {'skipped': 'not_silent',
-                'window_hits': status['window_hits'],
-                'tracked':     status['tracked_labels']}
+    status = find_silent_endpoints()
+    if status['tracked_count'] == 0:
+        return {'skipped': 'no_tracked_endpoints'}
+    if not status['has_silent']:
+        return {'skipped':       'not_silent',
+                'tracked_count': status['tracked_count']}
 
     cooldown_h = int(SettingsCache.get('actions.silence_alert_cooldown_hours', 6) or 6)
     now = timezone.now()
-    last_iso = _get_silence_last_sent()
-    if last_iso:
-        try:
-            last_dt = timezone.datetime.fromisoformat(last_iso)
-            if now - last_dt < timedelta(hours=cooldown_h):
-                return {'skipped':       'cooldown_active',
-                        'reason':        status['silent_reason'],
-                        'last_alert_at': last_iso}
-        except Exception:
-            pass
+    last_sent = _get_silence_last_sent_map()
 
-    ctx = _build_silence_context(status, recent_activity=[], is_test=False)
+    to_notify = []
+    suppressed = []
+    for row in status['silent_endpoints']:
+        last_iso = last_sent.get(row['action'])
+        if last_iso:
+            try:
+                last_dt = timezone.datetime.fromisoformat(last_iso)
+                if now - last_dt < timedelta(hours=cooldown_h):
+                    suppressed.append(row['action'])
+                    continue
+            except Exception:
+                pass
+        to_notify.append(row)
+
+    if not to_notify:
+        return {'skipped':    'cooldown_active',
+                'suppressed': suppressed,
+                'silent':     [r['action'] for r in status['silent_endpoints']]}
+
+    ctx = _build_silence_context(
+        status, recent_activity=[], silent_to_notify=to_notify, is_test=False,
+    )
+    label_bits = ', '.join(f"{r['method']} {r['path']}" for r in to_notify)
     subject = (f'[{ctx["platform_name"]}] API silence alert — '
-               f'no {"/".join(status["tracked_labels"])} activity ≥ {status["threshold_minutes"]}m')
+               f'{len(to_notify)} endpoint(s) silent ≥ {status["threshold_minutes"]}m: {label_bits}')
     ok = _send_silence_mail(recipient, subject, ctx)
 
     if ok:
-        _set_silence_last_sent(now.isoformat())
+        for row in to_notify:
+            last_sent[row['action']] = now.isoformat()
+        _set_silence_last_sent_map(last_sent)
 
     ActivityLog.log(
         user=actor, action='actions.silence_alert_sent',
@@ -592,13 +599,20 @@ def run_silence_alert_check(actor=None, ip: str = '') -> dict:
         detail={
             'recipient':          recipient,
             'threshold_minutes':  status['threshold_minutes'],
-            'tracked_labels':     status['tracked_labels'],
-            'silent_reason':      status['silent_reason'],
-            'window_hits':        status['window_hits'],
-            'last_activity_at':   status['last_activity_at'].isoformat() if status['last_activity_at'] else None,
+            'tracked_count':      status['tracked_count'],
+            'notified':           [
+                {'action':          r['action'],
+                 'method':          r['method'],
+                 'path':            r['path'],
+                 'silent_minutes':  r['silent_minutes'],
+                 'last_activity':   r['last_activity_at'].isoformat() if r['last_activity_at'] else None}
+                for r in to_notify
+            ],
+            'suppressed':         suppressed,
             'delivered':          ok,
         },
         ip_address=ip,
     )
     return {'sent': ok, 'recipient': recipient,
-            'reason': status['silent_reason']}
+            'notified': [r['action'] for r in to_notify],
+            'suppressed': suppressed}

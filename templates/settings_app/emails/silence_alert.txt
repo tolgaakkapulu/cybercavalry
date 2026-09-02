@@ -1,20 +1,24 @@
 {{ platform_name }} — API SILENCE ALERT
-{% if is_test %}(TEST MESSAGE — global silence check, no actual outage){% endif %}
+{% if is_test %}(TEST MESSAGE — per-endpoint silence preview, no actual outage){% endif %}
 
-{% if is_test %}Preview of the alert that fires when the platform receives zero tracked API traffic for {{ threshold_minutes }} minute(s). The snapshot below shows the last 24h of activity per endpoint so you can sanity-check what counts as "traffic".{% else %}The platform has not received any tracked API traffic for at least {{ threshold_minutes }} minute(s). Check the caller side — cron job dead, token revoked, firewall / XDR / SIEM collector down, or a network path change.{% endif %}
+{% if is_test %}Preview of the per-endpoint silence alert. Each tracked endpoint is watched independently — the alert fires as soon as ANY tracked endpoint receives zero requests inside its {{ threshold_minutes }} minute window, even when the others are noisy. Snapshot below reflects live 24h traffic per endpoint.{% else %}{{ silent_count }} tracked API endpoint(s) received zero requests during the last {{ threshold_minutes }} minute(s). Check the caller side — cron dead, token revoked, firewall / XDR / SIEM collector down, or a network path change.{% endif %}
 
-{{ silent_reason }}
+Silence window:  {{ threshold_minutes }} minute(s) per endpoint
+Endpoints watched: {{ tracked_count }}
+Silent right now:  {{ silent_count }}
+Checked at:      {{ checked_at }}
+Cooldown:        {{ cooldown_hours }} hour(s) per endpoint
 
-Tracked methods:  {{ tracked_labels_display }}
-Threshold:        no request for ≥ {{ threshold_minutes }} minute(s)
-Window hits:      {{ window_hits }} request(s) inside the silence window
-Last activity:    {{ last_activity_local }}{% if silent_minutes is not None %} ({{ silent_minutes }} min ago){% endif %}
-Checked at:       {{ checked_at }}
-Cooldown:         {{ cooldown_hours }} hour(s) after each alert
+Silent endpoints:
+{% for row in silent_endpoints %}  [{{ row.method }}] {{ row.path }} ({{ row.label }}) — last seen {{ row.last_activity_local }}{% if row.silent_minutes is not None %} ({{ row.silent_minutes }} min ago){% else %} (never){% endif %}
+{% empty %}  (no tracked endpoints are currently silent){% endfor %}
+{% if is_test and endpoints %}
+All configured endpoints:
+{% for row in endpoints %}  {% if row.tracked %}[on] {% else %}[off]{% endif %} [{{ row.method }}] {{ row.path }} ({{ row.label }}) — window hits: {{ row.window_hits }}{% if row.silent %}  ← SILENT{% endif %}
+{% endfor %}{% endif %}
 {% if is_test and recent_activity %}
-Last 24h per tracked endpoint:
-{% for row in recent_activity %}  [{{ row.label }}] {{ row.action }} — {{ row.hits }} hit(s); last seen {{ row.last_seen_local }}
-{% endfor %}
-{% endif %}
+Last 24h per endpoint:
+{% for row in recent_activity %}  {% if row.tracked %}[on] {% else %}[off]{% endif %} [{{ row.method }}] {{ row.path }} — {{ row.hits }} hit(s); last seen {{ row.last_seen_local }}
+{% endfor %}{% endif %}
 Manage this alert: Settings → Actions → API Silence Alert
 {% if platform_email %}Contact: {{ platform_email }}{% endif %}
