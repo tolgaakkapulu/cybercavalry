@@ -129,10 +129,15 @@ def urllist_list(request):
         entries = entries.filter(is_active=False)
 
     _HL_SORT = {
-        'url': 'url_value', 'source': 'source',
+        'url': 'url_value', 'hostname': 'hostname', 'source': 'source',
         'score': 'vt_malicious', 'checked': 'vt_checked_at',
         'added_by': 'added_by__username', 'added': 'added_at',
     }
+    # NULL bucket — VT columns are literally NULL before the first scan and
+    # `added_by__username` is NULL after user deletion, so we need
+    # `nulls_last` on those to keep blanks predictable. `hostname` is a
+    # non-nullable CharField with default='' — its empty strings sort at
+    # the front (ASC) / back (DESC) naturally, no F() wrapper needed.
     _HL_NULL = {'vt_malicious', 'vt_checked_at', 'added_by__username'}
     sort = request.GET.get('sort', 'added')
     sort_dir = request.GET.get('dir', 'desc')
