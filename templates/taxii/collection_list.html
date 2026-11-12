@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}TAXII Collections{% endblock %}
+{% block topbar_title %}TAXII Collections{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">TAXII COLLECTIONS</h1>
+    <p class="page-subtitle">Feeds a TAXII 2.0 subscriber can poll from <code>/taxii/&lt;api root&gt;/collections/</code></p>
+  </div>
+  <div class="page-actions">
+    <a href="{% url 'settings_app:index' %}" class="btn btn-ghost">Back to Settings</a>
+    <a href="{% url 'taxii_admin:collection_add' %}" class="btn btn-info">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Add Collection
+    </a>
+  </div>
+</div>
+
+{% if not taxii_enabled %}
+<div class="alert alert-warning" style="margin-bottom:12px;">
+  The TAXII server is currently <b>disabled</b>, so none of these collections are
+  reachable. Turn it on under <a href="{% url 'settings_app:index' %}">Settings → TAXII 2.0 Server</a>.
+</div>
+{% endif %}
+
+<div class="card" style="padding:14px 16px;margin-bottom:12px;font-size:12.5px;color:var(--text-muted);line-height:1.6;">
+  <b style="color:var(--text-primary);">How a subscriber connects</b><br>
+  Give it the discovery URL <code>https://&lt;your-host&gt;/taxii/</code> and have it authenticate with
+  HTTP Basic, where the username is an <b>API User</b> account and the password is that
+  account's <b>API token</b> (mint one under
+  <a href="{% url 'accounts:user_list' %}">Accounts → User Management</a>).
+  The subscriber then discovers the collections below and picks one.
+  <br><br>
+  The UUID is generated once and must stay stable — a subscriber stores it and
+  re-polls that exact id. Pausing a collection keeps the UUID so it can resume
+  without the subscriber re-discovering; deleting it does not.
+</div>
+
+<div class="table-wrapper">
+  <table style="min-width:900px;">
+    <thead>
+      <tr>
+        <th style="width:36px;text-align:center;"></th>
+        <th style="text-align:left;">Title</th>
+        <th style="text-align:left;">API Root</th>
+        <th style="text-align:left;">Feed</th>
+        <th style="text-align:left;">Collection UUID</th>
+        <th style="text-align:center;">Status</th>
+        <th style="text-align:center;white-space:nowrap;">Created</th>
+        <th style="text-align:center;">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in collections %}
+      <tr>
+        <td style="text-align:center;padding:0 2px;">
+          <span class="tbl-row-icon" style="{% if c.is_active %}background:rgba(20,184,166,.15);color:#14b8a6;{% else %}background:var(--bg-elevated);color:var(--text-muted);{% endif %}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M7.76 16.24a6 6 0 0 1 0-8.48"/><path d="M16.24 7.76a6 6 0 0 1 0 8.48"/></svg>
+          </span>
+        </td>
+        <td style="text-align:left;">
+          <div style="font-weight:600;font-size:12.5px;">{{ c.title }}</div>
+          {% if c.description %}<div style="font-size:11px;color:var(--text-muted);">{{ c.description|truncatechars:90 }}</div>{% endif %}
+        </td>
+        <td style="text-align:left;"><code style="font-size:11px;">{{ c.api_root }}</code></td>
+        <td style="text-align:left;"><span class="badge badge-blue" style="font-size:11px;">{{ c.get_feed_display }}</span></td>
+        <td style="text-align:left;">
+          <span class="cidr" style="font-family:var(--font-mono);font-size:11px;">{{ c.uuid_str }}</span>
+          <button type="button" class="copy-btn" data-copy="{{ c.uuid_str }}" title="Copy UUID" style="background:none;border:none;cursor:pointer;padding:0 0 0 5px;color:var(--text-muted);line-height:1;"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        </td>
+        <td style="text-align:center;">
+          {% if c.is_active %}<span class="badge badge-green" style="font-size:11px;">Active</span>
+          {% else %}<span class="badge badge-muted" style="font-size:11px;">Paused</span>{% endif %}
+        </td>
+        <td class="text-muted text-sm" style="text-align:center;white-space:nowrap;">{{ c.created_at|date:"Y-m-d" }}</td>
+        <td style="text-align:center;white-space:nowrap;">
+          <div style="display:flex;gap:4px;justify-content:center;">
+            <a href="{% url 'taxii_admin:collection_edit' c.pk %}" class="btn btn-orange btn-sm" title="Edit title / description">Edit</a>
+            <form method="post" action="{% url 'taxii_admin:collection_toggle' c.pk %}" style="display:inline;">
+              {% csrf_token %}
+              <button type="submit" class="btn {% if c.is_active %}btn-warning{% else %}btn-success{% endif %} btn-sm">
+                {% if c.is_active %}Pause{% else %}Resume{% endif %}
+              </button>
+            </form>
+            <form method="post" action="{% url 'taxii_admin:collection_delete' c.pk %}" style="display:inline;"
+                  data-confirm="Delete &quot;{{ c.title }}&quot;? Any subscriber polling this UUID will get 404 and must re-discover.">
+              {% csrf_token %}
+              <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="8" class="table-empty" style="text-align:center;padding:32px 12px;color:var(--text-muted);">
+          No collections yet. Click <b>Add Collection</b> to publish a feed over TAXII.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

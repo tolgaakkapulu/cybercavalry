@@ -1,0 +1,161 @@
+{% load static %}<!DOCTYPE html>
+{% comment %}
+CSRF failure page — overrides Django's built-in plain-text 403.
+
+Django's `csrf_failure` view looks for a template named exactly
+`403_csrf.html` (django.views.csrf.CSRF_FAILURE_TEMPLATE_NAME) and falls
+back to a hard-coded string only when it is missing. That fallback is what
+operators were seeing: three unstyled sentences, translated into whatever
+language the browser asked for, ending in "More information is available
+with DEBUG=True" — advice nobody can act on in production.
+
+Rendered WITHOUT context processors (`csrf_failure` calls
+`template.render(dict)` with no request), so nothing here may depend on
+them: no `{{ request }}`, no theme flag, no branding beyond a `default`.
+The page therefore renders in the dark palette, like the other error pages.
+
+Context Django provides: `reason`, `no_referer`, `no_cookie`, `DEBUG`.
+Those booleans are the only way to tell the operator WHICH failure mode
+they hit, so the advice block branches on them instead of printing one
+generic paragraph.
+
+The raw `reason` string stays behind DEBUG, as in Django's own template:
+it names internal state. The stable code (CSRF_VERIFICATION_FAILED) is
+always shown, because an operator filing a ticket needs something to quote.
+{% endcomment %}
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>403 Security Check Failed — {{ platform_name|default:"CYBERCavalry" }}</title>
+<link rel="stylesheet" href="{% static 'css/main.css' %}">
+<style>
+  body{min-height:100vh;margin:0;display:flex;align-items:center;justify-content:center;
+    padding:24px;background:var(--bg-base);font-family:var(--font-ui);color:var(--text-primary)}
+  .errcard{width:100%;max-width:600px;background:var(--bg-surface);
+    border:1px solid var(--border);border-radius:var(--radius-lg);padding:34px 34px 30px;
+    box-shadow:0 18px 48px rgba(0,0,0,.38)}
+  .errfig{display:block;width:100%;max-width:360px;height:auto;margin:0 auto 22px}
+  .errfig .box{fill:var(--bg-elevated);stroke:var(--border);stroke-width:1.5}
+  .errfig .lbl{fill:var(--text-secondary);font-family:var(--font-mono);font-size:9px;letter-spacing:1.2px}
+  .errfig .tok{fill:var(--text-primary);font-family:var(--font-mono);font-size:13px}
+  .errfig .gapring{fill:var(--danger-bg);stroke:var(--danger);stroke-width:1.5}
+  .errfig .gapmark{fill:var(--danger);font-family:var(--font-ui);font-size:19px;font-weight:700}
+  .errhead{display:flex;align-items:center;gap:15px;margin-bottom:6px}
+  .errhead .code{font-size:46px;font-weight:800;line-height:1;color:var(--danger)}
+  .errhead h1{margin:0;font-size:21px;font-weight:700;letter-spacing:-.2px}
+  .chip{display:inline-block;margin:0 0 18px;padding:4px 10px;border-radius:var(--radius);
+    background:var(--danger-bg);border:1px solid var(--danger);color:var(--danger);
+    font-family:var(--font-mono);font-size:11.5px;letter-spacing:.6px}
+  .errcard p{margin:0 0 14px;font-size:14px;line-height:1.6;color:var(--text-secondary)}
+  .errcard h2{margin:22px 0 9px;font-size:12px;font-weight:700;letter-spacing:1.3px;
+    text-transform:uppercase;color:var(--text-secondary)}
+  .errcard ul{margin:0;padding-left:20px;font-size:14px;line-height:1.75;color:var(--text-secondary)}
+  .errcard ul strong{color:var(--text-primary);font-weight:600}
+  .errcard code{font-family:var(--font-mono);font-size:13px;color:var(--text-primary)}
+  .acts{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px;padding-top:20px;
+    border-top:1px solid var(--border-subtle)}
+  .dbg{margin-top:20px;padding:12px 14px;border-radius:var(--radius);
+    background:var(--bg-elevated);border:1px solid var(--border)}
+  .dbg div{font-family:var(--font-mono);font-size:9.5px;letter-spacing:1.2px;
+    color:var(--text-secondary);margin-bottom:5px}
+  .dbg code{font-family:var(--font-mono);font-size:12.5px;color:var(--warning);word-break:break-word}
+  @media (max-width:480px){
+    .errcard{padding:26px 20px 24px}
+    .errhead{gap:12px}
+    .errhead .code{font-size:38px}
+    .errhead h1{font-size:18px}
+  }
+</style>
+</head>
+<body>
+<main class="errcard">
+
+  {% comment %}
+  The picture is the mechanism, not decoration: CSRF protection compares the
+  token in the cookie with the token in the submitted form, and this page
+  exists because those two did not match. Naming both halves answers "why am
+  I seeing this" faster than the paragraph below it. The digits are
+  illustrative, not the real tokens — printing those would hand an attacker
+  the value the check exists to protect.
+  {% endcomment %}
+  <svg class="errfig" viewBox="0 0 360 118" role="img"
+       aria-label="The token in the cookie does not match the token in the submitted form.">
+    <rect class="box" x="9" y="30" width="138" height="58" rx="8"/>
+    <text class="lbl" x="24" y="22">COOKIE TOKEN</text>
+    <text class="tok" x="24" y="65">a7f3 &#183;&#183;&#183; 9c21</text>
+
+    <circle class="gapring" cx="180" cy="59" r="20"/>
+    <text class="gapmark" x="180" y="66" text-anchor="middle">&#8800;</text>
+
+    <rect class="box" x="213" y="30" width="138" height="58" rx="8"/>
+    <text class="lbl" x="228" y="22">FORM TOKEN</text>
+    <text class="tok" x="228" y="65">0b4e &#183;&#183;&#183; 77da</text>
+  </svg>
+
+  <div class="errhead">
+    <span class="code">403</span>
+    <h1>Security check failed</h1>
+  </div>
+  <span class="chip">CSRF_VERIFICATION_FAILED</span>
+
+  {% if no_cookie %}
+    <p>The form was submitted without this site's session cookie, so there was
+      nothing to compare the form's security token against. The request was
+      stopped before it reached the application.</p>
+    <h2>What to try</h2>
+    <ul>
+      <li><strong>Allow cookies for this site.</strong> Private-browsing rules,
+        a tracker blocker or a company policy can drop them.</li>
+      <li><strong>Check the clock on your machine.</strong> A date far in the
+        past or future makes the browser treat a fresh cookie as expired.</li>
+      <li>Then open the sign-in page again from the button below.</li>
+    </ul>
+  {% elif no_referer %}
+    <p>The form arrived over HTTPS without a <code>Referer</code> header, which
+      this site requires in order to confirm the request came from its own
+      sign-in page. The request was stopped before it reached the application.</p>
+    <h2>What to try</h2>
+    <ul>
+      <li><strong>Turn off referrer stripping for this site</strong> in your
+        privacy extension or browser settings.</li>
+      <li><strong>Reach the site by its normal address</strong>, not through a
+        redirect service or a shortened link.</li>
+      <li>Then open the sign-in page again from the button below.</li>
+    </ul>
+  {% else %}
+    <p>The sign-in form was submitted with a security token that no longer
+      matches this browser session, so the request was stopped before it
+      reached the application. Nothing was signed in and nothing was changed.</p>
+    <h2>Most likely cause</h2>
+    <ul>
+      <li><strong>The page had been open for a while.</strong> The token is tied
+        to a session that has since been replaced.</li>
+      <li><strong>You came back with the Back button</strong> after signing out,
+        and the form still carried the old token.</li>
+      <li><strong>Two tabs.</strong> Signing in on one tab invalidates the form
+        sitting in the other.</li>
+    </ul>
+    <p>Opening the sign-in page fresh issues a new token and clears this.</p>
+  {% endif %}
+
+  <div class="acts">
+    <a class="btn btn-primary" href="/accounts/login/">Back to sign in</a>
+    <a class="btn btn-secondary" href="/">Go to dashboard</a>
+  </div>
+
+  {% if DEBUG %}
+    {% comment %}
+    DEBUG only, exactly as Django's own template does it: `reason` names
+    internal state and belongs in a developer's console, not on a page a
+    stranger can reach.
+    {% endcomment %}
+    <div class="dbg">
+      <div>REASON &#183; DEBUG ONLY</div>
+      <code>{{ reason }}</code>
+    </div>
+  {% endif %}
+
+</main>
+</body>
+</html>

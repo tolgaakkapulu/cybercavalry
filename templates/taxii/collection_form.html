@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block title %}{% if mode == 'edit' %}Edit{% else %}Add{% endif %} TAXII Collection{% endblock %}
+{% block topbar_title %}{% if mode == 'edit' %}Edit{% else %}Add{% endif %} TAXII Collection{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">{% if mode == 'edit' %}EDIT COLLECTION{% else %}ADD COLLECTION{% endif %}</h1>
+    <p class="page-subtitle">
+      {% if mode == 'edit' %}Title and description are free to change. API root, feed and UUID are fixed.
+      {% else %}One collection is one subscribable feed. The UUID is generated for you.{% endif %}
+    </p>
+  </div>
+  <a href="{% url 'taxii_admin:collection_list' %}" class="btn btn-ghost">Back</a>
+</div>
+
+{% comment %} ─────────────────────────── EDIT MODE ─────────────────────────── {% endcomment %}
+{% if mode == 'edit' %}
+<div class="card" style="max-width:620px;">
+  <div class="card-body">
+
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 16px;align-items:center;
+                padding:12px 14px;margin-bottom:14px;border-radius:var(--radius);
+                background:var(--bg-base);border:1px solid var(--border);font-size:12px;">
+      <span style="color:var(--text-muted);">Collection UUID</span>
+      <code style="font-size:11.5px;">{{ collection.uuid_str }}</code>
+      <span style="color:var(--text-muted);">API Root</span>
+      <code style="font-size:11.5px;">{{ collection.api_root }}</code>
+      <span style="color:var(--text-muted);">Feed</span>
+      <span><span class="badge badge-blue" style="font-size:10.5px;">{{ collection.get_feed_display }}</span></span>
+      <span style="color:var(--text-muted);">Objects endpoint</span>
+      <code style="font-size:11px;word-break:break-all;">/taxii/{{ collection.api_root }}/collections/{{ collection.uuid_str }}/objects/</code>
+    </div>
+
+    <p class="form-help" style="margin:0 0 18px;line-height:1.6;">
+      Those four are locked on purpose — a subscriber stored that address and
+      re-polls it verbatim. Changing one would leave the feed looking healthy
+      here while no data reaches the subscriber. To reshape a collection, delete
+      it and add a new one.
+    </p>
+
+    <form method="post">
+      {% csrf_token %}
+      <div class="form-group">
+        <label class="form-label" for="f-title">Title <span class="required">*</span></label>
+        <input type="text" id="f-title" name="title" class="form-input" required maxlength="255"
+               value="{{ collection.title }}">
+        <div class="form-help">The name subscribers see when they browse this server.</div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="f-desc">Description</label>
+        <textarea id="f-desc" name="description" class="form-textarea" rows="3">{{ collection.description }}</textarea>
+        <div class="form-help">Optional context shown next to the title.</div>
+      </div>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <a href="{% url 'taxii_admin:collection_list' %}" class="btn btn-ghost">Cancel</a>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% comment %} ──────────────────────────── ADD MODE ──────────────────────────── {% endcomment %}
+{% else %}
+{{ form_data|json_script:"taxii-form-data" }}
+
+<div class="card" style="max-width:620px;" x-data="taxiiCollectionForm()" x-init="init()">
+  <div class="card-body">
+    <form method="post">
+      {% csrf_token %}
+
+      {% comment %} API root: an existing grouping, or open a new one {% endcomment %}
+      <div class="form-group">
+        <label class="form-label" for="f-root">API Root <span class="required">*</span></label>
+        <select id="f-root" name="api_root" class="form-select" x-model="rootMode" @change="syncFeed()">
+          {% if known_roots %}
+          <optgroup label="In use">
+            {% for r in known_roots %}
+            <option value="{{ r }}">{{ r }}</option>
+            {% endfor %}
+          </optgroup>
+          {% endif %}
+          {% if suggested_roots %}
+          <optgroup label="Suggested">
+            {% for r in suggested_roots %}
+            <option value="{{ r }}">{{ r }}</option>
+            {% endfor %}
+          </optgroup>
+          {% endif %}
+          <option value="{{ new_root_sentinel }}">+ New API root…</option>
+        </select>
+        <div class="form-help">
+          An administrative grouping, served at <code>/taxii/&lt;api root&gt;/</code>.
+          Normally all three feeds share <b>one</b> root — a subscriber discovers it
+          once and then picks from its collection list. Use a second root only if
+          different subscribers must not even see each other's collections.
+        </div>
+
+        <div x-show="isNewRoot" x-cloak style="margin-top:10px;">
+          {% comment %}
+          @input re-derives the feed as the name is typed, so a hand-typed
+          `blacklist` behaves exactly like picking it from the dropdown.
+          {% endcomment %}
+          <input type="text" name="api_root_new" class="form-input font-mono"
+                 x-model="newRoot" @input="syncFeed()"
+                 placeholder="e.g. default, urllist, partner-a"
+                 pattern="[-a-zA-Z0-9_]+" autocomplete="off">
+          <div class="form-help">
+            Letters, numbers, hyphens and underscores only — it becomes a URL
+            segment. Stored lower-case.
+          </div>
+          <div class="form-error" x-show="newRoot.trim() !== '' && !rootValid" x-cloak>
+            Not usable in a URL. Remove spaces, slashes and dots.
+          </div>
+        </div>
+      </div>
+
+      {% comment %} Feed: only the ones still free in the chosen root {% endcomment %}
+      <div class="form-group">
+        <label class="form-label" for="f-feed">Feed <span class="required">*</span></label>
+        {% comment %}
+        Options are rendered server-side rather than by `x-for`. A
+        `<template x-for>` here would leave the dropdown completely EMPTY
+        whenever the Alpine component fails to start — which is exactly what
+        happened when this script tag was missing its CSP nonce. Server-rendered
+        options degrade to a usable form instead, and the duplicate check in
+        collection_add() is the real guard either way.
+        {% endcomment %}
+        <select id="f-feed" name="feed" class="form-select" x-model="feed"
+                @change="titleTouched = false; descTouched = false; applyDefaults()"
+                :disabled="rootIsFull">
+          {% for f in feeds %}
+          <option value="{{ f.value }}"{% if f.value == selected_feed %} selected{% endif %}
+                  :disabled="isTaken('{{ f.value }}')"
+                  :hidden="isTaken('{{ f.value }}')">{{ f.label }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-help">
+          Which platform blacklist this collection publishes. One collection per
+          feed per API root, so feeds already published under the selected root
+          are left out of this list.
+        </div>
+        <div class="alert alert-warning" x-show="rootIsFull" x-cloak style="margin-top:10px;">
+          <div>
+            API root <code x-text="root"></code> already publishes every available
+            feed. Pick <b>+ New API root…</b> above, or edit the existing
+            collection instead of adding a second one.
+          </div>
+        </div>
+      </div>
+
+      {% comment %} Title / description, pre-filled from the chosen feed {% endcomment %}
+      <div class="form-group">
+        <label class="form-label" for="f-title">Title <span class="required">*</span></label>
+        <input type="text" id="f-title" name="title" class="form-input" required maxlength="255"
+               value="{{ selected_title }}"
+               x-model="title" @input="titleTouched = true">
+        <div class="form-help">
+          Filled in from the feed you pick; overwrite it freely. This is the name
+          subscribers see when they browse this server.
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="f-desc">Description</label>
+        <textarea id="f-desc" name="description" class="form-textarea" rows="3"
+                  x-model="description" @input="descTouched = true">{{ selected_description }}</textarea>
+        <div class="form-help">Optional context shown next to the title.</div>
+      </div>
+
+      {% comment %} What the subscriber will end up polling {% endcomment %}
+      <div style="padding:11px 13px;margin-bottom:18px;border-radius:var(--radius);
+                  background:var(--bg-base);border:1px solid var(--border);">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:5px;">
+          Subscribers will reach this collection at
+        </div>
+        <code style="font-size:11px;word-break:break-all;color:var(--text-secondary);">{{ request.scheme }}://{{ request.get_host }}/taxii/<span x-text="root || '&lt;api root&gt;'"></span>/collections/<span style="color:var(--text-muted);">&lt;generated UUID&gt;</span>/objects/</code>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5;">
+          You only hand out <code style="font-size:10.5px;">/taxii/</code> — the
+          subscriber discovers the rest itself.
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <a href="{% url 'taxii_admin:collection_list' %}" class="btn btn-ghost">Cancel</a>
+        <button type="submit" class="btn btn-primary" :disabled="!canSubmit">Create Collection</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% comment %}
+The nonce is mandatory: security_middleware drops 'unsafe-inline' from
+script-src, so a bare <script> tag is silently refused by the browser and
+every x-* binding on the card above dies with it.
+{% endcomment %}
+<script nonce="{{ csp_nonce }}">
+function taxiiCollectionForm() {
+  const d = JSON.parse(document.getElementById('taxii-form-data').textContent);
+  return {
+    // {api_root: [feed, …]} — the pairs unique_together would reject.
+    taken: d.taken,
+    // {api_root: feed} — the feed a root's name implies.
+    hints: d.hints,
+    feeds: d.feeds,
+    NEW: d.newRootSentinel,
+
+    rootMode: d.rootMode,
+    newRoot: d.newRoot,
+    feed: d.feed,
+    title: d.title,
+    description: d.description,
+    // The server decides these: a value the operator typed (a re-render after
+    // a validation error) is touched and must survive a feed change; one the
+    // server pre-filled from the feed is not, and gets refreshed.
+    titleTouched: d.titleTouched,
+    descTouched: d.descTouched,
+
+    init() { this.syncFeed(); },
+
+    get isNewRoot() { return this.rootMode === this.NEW; },
+
+    get root() {
+      const raw = this.isNewRoot ? this.newRoot : this.rootMode;
+      return (raw || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase();
+    },
+    get rootValid() { return /^[-a-zA-Z0-9_]+$/.test(this.root); },
+
+    // Already published under the selected root, so unique_together would
+    // reject it. Drives each option's disabled/hidden binding.
+    isTaken(feed) {
+      return (this.taken[this.root] || []).indexOf(feed) !== -1;
+    },
+
+    get availableFeeds() {
+      const used = this.taken[this.root] || [];
+      return this.feeds.filter(f => used.indexOf(f.value) === -1);
+    },
+    get rootIsFull() { return this.rootValid && this.availableFeeds.length === 0; },
+
+    get canSubmit() {
+      return this.rootValid && this.feed !== '' && this.title.trim() !== '';
+    },
+
+    /* Picking a root re-derives the feed:
+         - the root's name wins when it names a feed that is still free
+           (urllist → URL, blacklist → IP, hashlist → Hash);
+         - otherwise keep the current feed if it is legal here;
+         - otherwise fall back to the first one still free, because the
+           alternative is leaving the form on a pair the server rejects.
+       Whatever it lands on is only a starting point — changing the Feed
+       dropdown afterwards overrides it. */
+    syncFeed() {
+      const avail = this.availableFeeds;
+      const hinted = this.hints[this.root];
+      if (hinted && avail.some(f => f.value === hinted)) {
+        this.feed = hinted;
+      } else if (!avail.some(f => f.value === this.feed)) {
+        this.feed = avail.length ? avail[0].value : '';
+      }
+      this.applyDefaults();
+    },
+
+    applyDefaults() {
+      const f = this.feeds.find(x => x.value === this.feed);
+      if (!f) return;
+      if (!this.titleTouched) this.title = f.title;
+      if (!this.descTouched) this.description = f.description;
+    },
+  };
+}
+</script>
+{% endif %}
+{% endblock %}

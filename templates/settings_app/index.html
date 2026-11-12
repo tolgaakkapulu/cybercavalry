@@ -200,6 +200,9 @@ x-init="testLdap(); checkAbuseKey(); checkVtKey(); sendSmtpTest()">
           {% elif category == 'actions' %}
           <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#CB5B63" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
           <span class="card-title" style="color:#CB5B63;">Actions</span>
+          {% elif category == 'taxii' %}
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="12" cy="12" r="2"/><path d="M4.93 19.07a10 10 0 0 1 0-14.14"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M7.76 16.24a6 6 0 0 1 0-8.48"/><path d="M16.24 7.76a6 6 0 0 1 0 8.48"/></svg>
+          <span class="card-title" style="color:#14b8a6;">TAXII 2.0 Server</span>
           {% else %}
           <span class="card-title">{{ category|upper }}</span>
           {% endif %}
@@ -210,6 +213,15 @@ x-init="testLdap(); checkAbuseKey(); checkVtKey(); sendSmtpTest()">
       </div>
 
       <div @click.stop style="display:flex;align-items:center;gap:8px;">
+        {% if category == 'taxii' %}
+        {% if taxii_active_collections %}
+        <span class="badge badge-green" style="font-size:11px;">{{ taxii_active_collections }} active</span>
+        {% else %}
+        <span class="badge badge-muted" style="font-size:11px;">no active collection</span>
+        {% endif %}
+        <a href="{% url 'taxii_admin:collection_list' %}" class="btn btn-teal btn-sm">Collections</a>
+        {% endif %}
+
         {% if category == 'ldap' %}
         <template x-if="ldapSuccess === true">
           <span class="badge badge-green" style="font-size:11px;">Connected</span>

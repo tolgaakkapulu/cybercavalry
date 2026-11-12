@@ -87,6 +87,13 @@ SETTING_LABELS = {
     'actions.syslog_send_activity':                 ('Forward Activity Logs',     'Ship every entry written to the platform activity log.'),
     'actions.syslog_send_error':                    ('Forward Error Logs',        'Ship Python error/warning log records emitted by the application.'),
     'actions.syslog_send_access':                   ('Forward Access Logs',       'Ship HTTP access-log lines from the request handler.'),
+    # ── TAXII 2.0 server (second delivery channel for the blacklists) ──
+    # Only server-wide knobs live here. Per-feed settings (api root, title,
+    # UUID) are fields on taxii.TaxiiCollection, managed from the TAXII
+    # Collections page; credentials are API tokens on api_user accounts.
+    'taxii.enabled':              ('Enable TAXII 2.0 Server',  'Publish the configured collections as STIX 2.0 indicators at <code>/taxii/</code> so a TAXII 2.0 client — a threat-intelligence manager, XDR, NDR or SIEM platform — can subscribe. The firewall\'s existing <code>GET /api/v1/urllist/</code> feed is unaffected either way. Manage feeds under <b>Settings → TAXII Collections</b>; subscribers authenticate with an <b>API User</b> account\'s token as the HTTP Basic password.'),
+    'taxii.require_source_ip':    ('Also Require Source IP',   'On top of the API token, require the caller to be in Settings → Source IPs. Leave on unless the subscriber connects from a changing address.'),
+    'taxii.page_size_default':    ('Default Page Size',        'Indicators returned when a client sends no HTTP <code>Range</code> header. TAXII 2.0 permits a partial answer, so this caps an unbounded pull.'),
     'threat_intel.abuseipdb_enabled':               ('Enable AbuseIPDB',          'Turn on AbuseIPDB threat intelligence lookups.'),
     'threat_intel.abuseipdb_api_key':               ('API Key',                   'Your AbuseIPDB v2 API key.'),
     'threat_intel.abuseipdb_max_age_days':          ('Max Report Age',            'Only consider abuse reports from this many days back (1–365).'),
@@ -207,6 +214,10 @@ def settings_index(request):
         'threat_intel.virustotal_cleanup_retention_days': ('30',    'int',  'threat_intel', 'Delete eligible VirusTotal hashes older than this many days', False),
         'threat_intel.abuseipdb_promotion_threshold':     ('',      'int',  'threat_intel', 'Auto-promote a 24h entry to 30d group once its recent API report count reaches this value; empty/0 disables', False),
         'threat_intel.abuseipdb_promotion_window_days':   ('7',     'int',  'threat_intel', 'Length of the rolling window (days) evaluated by the promotion threshold; range 1–30', False),
+        # ── TAXII 2.0 server ─────────────────────────────────────────
+        'taxii.enabled':             ('false',  'bool', 'taxii', 'Serve the configured collections over TAXII 2.0 at /taxii/', False),
+        'taxii.require_source_ip':   ('true',   'bool', 'taxii', 'Also require the caller to be in Settings → Source IPs', False),
+        'taxii.page_size_default':   ('500',    'int',  'taxii', 'Indicators returned when no HTTP Range header is sent', False),
     }
     for key, (val, vtype, cat, desc, secret) in _ENSURE.items():
         Setting.objects.get_or_create(
@@ -336,6 +347,9 @@ def settings_index(request):
             'actions.syslog_send_activity':              34,
             'actions.syslog_send_error':                 35,
             'actions.syslog_send_access':                36,
+            'taxii.enabled':            0,
+            'taxii.require_source_ip':  1,
+            'taxii.page_size_default':  2,
         }
         # Sort: explicit order first, then enabled toggles, then schedule group, then alphabetical
         items.sort(key=lambda s: (
@@ -350,7 +364,7 @@ def settings_index(request):
     # Explicit category order for the Settings page. Anything not listed here
     # falls in at the end so a future category stays visible until someone
     # decides where it belongs.
-    _CATEGORY_ORDER = ('general', 'ldap', 'threat_intel', 'actions', 'password_policy', 'security', 'backup' )
+    _CATEGORY_ORDER = ('general', 'ldap', 'threat_intel', 'taxii', 'actions', 'password_policy', 'security', 'backup' )
     ordered = {cat: result[cat] for cat in _CATEGORY_ORDER if cat in result}
     for cat, items in result.items():
         if cat not in ordered:
@@ -437,8 +451,19 @@ def settings_index(request):
     except Exception:
         pass
 
+    # Active-collection count for the TAXII category header. A feed with no
+    # active collection is configured but publishing nothing, and that is worth
+    # seeing without opening the Collections page. Guarded because settings must
+    # still render if the taxii app is ever removed from INSTALLED_APPS.
+    try:
+        from apps.taxii.models import TaxiiCollection
+        taxii_active_collections = TaxiiCollection.objects.filter(is_active=True).count()
+    except Exception:
+        taxii_active_collections = 0
+
     return render(request, 'settings_app/index.html', {
         'settings_by_category': result,
+        'taxii_active_collections': taxii_active_collections,
         'scheduler_status': scheduler_status,
         'last_scheduled_run': last_scheduled_run,
         'vt_scheduler_status': vt_scheduler_status,

@@ -7,8 +7,16 @@
   <div>
     <h1 class="page-title">API REFERENCE</h1>
   </div>
-  <div class="page-actions" style="display:flex;align-items:center;gap:10px;">
-    <span class="badge badge-blue" style="font-size:12px;padding:6px 12px;">Base URL: https://&lt;host&gt;:8443/api/v1</span>
+  {% comment %}
+  One badge per base URL (accounts.api_docs.BASE_URLS). There is more than one
+  because the TAXII surface sits outside /api/v1 — TAXII 2.0 fixes discovery
+  at /taxii/ — so a single "Base URL: /api/v1" badge would be wrong for the
+  TAXII tab.
+  {% endcomment %}
+  <div class="page-actions" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+    {% for label, url in base_urls %}
+    <span class="badge badge-blue" style="font-size:12px;padding:6px 12px;">{{ label }}: {{ url }}</span>
+    {% endfor %}
   </div>
 </div>
 

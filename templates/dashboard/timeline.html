@@ -1,21 +1,84 @@
 {% load static %}
 {% comment %}
-Dashboard timeline — IP + hash blacklist additions over a selectable window
-(Chart.js line chart, bundled locally at static/js/chart.umd.min.js for offline).
+Dashboard timelines — two Chart.js line charts side by side, half the screen
+each (Chart.js bundled locally at static/js/chart.umd.min.js for offline use):
 
-The range (7 days … 12 months) and granularity (daily / monthly) are chosen in
-the card header; changing either fetches dashboard:timeline_api?days=&bucket=
-and redraws. The first paint uses the json_script payload (timeline_init from
-dashboard.views.index, default 30 days daily) so there is no load-time flash.
+  Blacklist Timeline — IP / Hash / URL blacklist ADDITIONS over the window.
+                       What the platform took in.
+  Request Timeline   — incoming API requests over the same kind of window,
+                       grouped into feed pulls / reports / rate-limited /
+                       other. What clients asked of the platform.
+
+Both open on "Last 24 hours · Hourly" (dashboard.views._TIMELINE_DEFAULT_*),
+and each card's range + granularity controls are independent so the two can be
+compared at different scales. The first paint uses the json_script payloads
+(timeline_init / request_timeline_init from dashboard.views.index) so there is
+no load-time flash; every later change fetches its own API endpoint.
+
+Both charts share one control implementation (makeTimeline below) — the only
+differences between them are the endpoint, the element ids and the series.
+
+The two cards are built to present an IDENTICAL frame regardless of what is
+in them, so the plot areas read as one row: a title row of its own, a fixed
+plot box, a fixed-height HTML legend (not Chart.js's in-canvas one) and a
+y-axis pinned to a constant width. See the style block for why each of those
+is needed.
 
 TO REMOVE THIS SECTION ENTIRELY: delete the single timeline include line
 (include "dashboard/timeline.html") in dashboard/index.html.
-The context variables / api view in views.py are harmless if left in place.
+The context variables / api views in views.py are harmless if left in place.
 {% endcomment %}
 <style>
-.db-tl-card { margin-top:24px; }
-.db-tl-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
-.db-tl-controls { display:inline-flex; gap:8px; align-items:center; }
+/* `minmax(0,1fr)` rather than `1fr` so a long legend or card title cannot
+   push one column wider than the other — the two charts stay exactly half
+   and half. The header keeps its title and its controls on ONE row, which
+   needs roughly 630px of card width for the blacklist card (the wider of the
+   two), so the grid drops to a single column before a half-width card gets
+   that tight rather than letting the title start truncating. */
+.db-tl-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
+              gap:16px; margin-top:24px; }
+@media (max-width:1440px) { .db-tl-grid { grid-template-columns:minmax(0,1fr); } }
+
+/* ── Identical frames ──────────────────────────────────────────────────────
+   The two cards must present the same box whatever is inside them, so the
+   plot areas line up as one row. Three separate things would otherwise move
+   a chart off its neighbour:
+
+   1. Header height. The cards carry a different number of controls (only the
+      blacklist card has the measure select), so a header left free to wrap
+      wraps in one card and not in the other, dropping one body a line lower
+      than its neighbour. The header is therefore a single row that CANNOT
+      wrap — title on the left, controls hard right — with a fixed
+      min-height. The title row is the only part allowed to shrink, so if a
+      card does get narrow the title ellipsises instead of the controls
+      falling onto a second line and taking the alignment with them.
+   2. The legend. Chart.js draws its own legend INSIDE the canvas and takes
+      the room from the plot, so 4 long labels (request) leave a shorter plot
+      than 3 short ones (blacklist). It is rendered as fixed-height HTML
+      below the canvas instead — the same reason analytics.html renders its
+      pie legends as HTML.
+   3. The y-axis label width. "1396" is wider than "5", which pushes the plot
+      area right by a few pixels and misaligns the two horizontally. The axis
+      is pinned to a fixed width in JS (`afterFit`). */
+.db-tl-grid .card { display:flex; flex-direction:column; }
+.db-tl-head { display:flex; flex-direction:row; align-items:center;
+              justify-content:space-between; flex-wrap:nowrap; gap:10px;
+              min-height:31px; }
+/* The one flexible item in the header: it may shrink, so that the controls
+   never have to move off the title's line. The clipping is on the title TEXT
+   and not on this row, because the row contains the info-tip, whose tooltip
+   is an absolutely positioned pseudo-element — an `overflow:hidden` here
+   would cut the tooltip down to the width of the title. */
+.db-tl-titlerow { display:flex; align-items:center; gap:6px;
+                  flex:0 1 auto; min-width:0; }
+.db-tl-titlerow .card-title { min-width:0; overflow:hidden;
+                              text-overflow:ellipsis; white-space:nowrap; }
+.db-tl-titlerow .info-tip { flex-shrink:0; }
+/* Hard right, and rigid: margin-left:auto pins the block to the right edge
+   even when the title is short, and nowrap + flex-shrink:0 keeps the controls
+   at their natural size on the title's row. */
+.db-tl-controls { display:flex; gap:8px; align-items:center; flex-wrap:nowrap;
+                  flex-shrink:0; margin-left:auto; }
 .db-tl-select {
   font-size:12px; padding:5px 9px; border-radius:var(--radius);
   background:var(--bg-surface); color:var(--text-primary);
@@ -33,245 +96,403 @@ The context variables / api view in views.py are harmless if left in place.
 .db-tl-seg button.active:hover { color:var(--brand-suffix); }
 [data-theme="dark"] .db-tl-seg button.active { color:color-mix(in srgb, var(--brand-suffix) 55%, white); }
 [data-theme="dark"] .db-tl-seg button.active:hover { color:color-mix(in srgb, var(--brand-suffix) 55%, white); }
+/* Fixed, so the plot box is the same in both cards. The legend sits outside
+   it and has its own fixed height, so neither the number of series nor the
+   length of their labels can eat into the plot. */
 .db-tl-canvas { position:relative; height:240px; }
 @media (max-width:680px) { .db-tl-canvas { height:200px; } }
+/* Centred under the plot. `justify-content` only moves the entries within
+   the row — the row's own height stays fixed, so centring cannot affect the
+   alignment of the two cards. */
+.db-tl-legend { display:flex; flex-wrap:wrap; align-items:center;
+                justify-content:center; gap:5px 14px; height:20px;
+                overflow:hidden; margin-top:10px; }
+.db-tl-leg { display:inline-flex; align-items:center; gap:5px; font-size:11px;
+             color:var(--text-secondary); white-space:nowrap; }
+.db-tl-leg i { width:10px; height:10px; border-radius:2px; flex-shrink:0; }
+/* Click to hide a line, as the Chart.js legend used to allow. */
+.db-tl-leg[data-s] { cursor:pointer; user-select:none; }
+.db-tl-leg[data-s]:hover { color:var(--text-primary); }
+.db-tl-leg.is-off { opacity:.42; text-decoration:line-through; }
 </style>
 
-<div class="card db-tl-card">
-  <div class="card-header db-tl-head">
-    <span class="card-title">Blacklist Timeline</span>
-    <div class="db-tl-controls">
-      <select id="tl-range" class="db-tl-select" aria-label="Time range">
-        <option value="60min" selected>Last 60 minutes</option>
-        <option value="1">Last 24 hours</option>
-        <option value="7">Last 7 days</option>
-        <option value="30">Last 30 days</option>
-        <option value="90">Last 90 days</option>
-        <option value="180">Last 6 months</option>
-        <option value="365">Last 12 months</option>
-      </select>
-      <div class="db-tl-seg" id="tl-bucket">
-        <button type="button" data-bucket="minute" class="active">Minutely</button>
-        <button type="button" data-bucket="hour">Hourly</button>
-        <button type="button" data-bucket="day">Daily</button>
-        <button type="button" data-bucket="month">Monthly</button>
+<div class="db-tl-grid">
+
+  {% comment %} ── Blacklist additions ── {% endcomment %}
+  <div class="card">
+    <div class="card-header db-tl-head">
+      <span class="db-tl-titlerow">
+        <span class="card-title">Blacklist Timeline</span>
+        <span class="info-tip" data-tip="One line per list (IP / Hash / URL). What each point counts:&#10;&#10;• Activity — everything that happened to the list in that bucket: entries added, activated, edited, and repeat reports that bumped an existing entry's hit count&#10;• New only — entries added, and nothing else; isolates real ingestion from re-activating entries you already had&#10;• Total — how many entries the list held at the end of the bucket (the live list, matching the stat cards above)&#10;&#10;Activity and New only report history, so they ignore whether an entry is active today. Total reports the list as it stands.">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        </span>
+      </span>
+      <div class="db-tl-controls">
+        <select id="tl-mode" class="db-tl-select" aria-label="Blacklist timeline measure">
+          <option value="activity" selected>Activity</option>
+          <option value="new">New only</option>
+          <option value="total">Total</option>
+        </select>
+        <select id="tl-range" class="db-tl-select" aria-label="Blacklist timeline range">
+          <option value="60min">Last 60 minutes</option>
+          <option value="1" selected>Last 24 hours</option>
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="180">Last 6 months</option>
+          <option value="365">Last 12 months</option>
+        </select>
+        <div class="db-tl-seg" id="tl-bucket">
+          <button type="button" data-bucket="minute">Minutely</button>
+          <button type="button" data-bucket="hour" class="active">Hourly</button>
+          <button type="button" data-bucket="day">Daily</button>
+          <button type="button" data-bucket="month">Monthly</button>
+        </div>
       </div>
     </div>
+    <div class="card-body">
+      <div class="db-tl-canvas"><canvas id="ch-timeline"></canvas></div>
+      {% comment %}
+      Static legend: the series are fixed for this card, so rendering it here
+      keeps its height constant and keeps it out of the canvas, where it would
+      shrink the plot area.
+      {% endcomment %}
+      <div class="db-tl-legend" id="tl-legend">
+        <span class="db-tl-leg" data-s="0"><i style="background:#D3737A;"></i>IP</span>
+        <span class="db-tl-leg" data-s="1"><i style="background:#9AB5C4;"></i>Hash</span>
+        <span class="db-tl-leg" data-s="2"><i style="background:#B49CC4;"></i>URL</span>
+      </div>
+      {{ timeline_init|json_script:"d-timeline" }}
+    </div>
   </div>
-  <div class="card-body">
-    <div class="db-tl-canvas"><canvas id="ch-timeline"></canvas></div>
-    {{ timeline_init|json_script:"d-timeline" }}
+
+  {% comment %} ── Incoming API requests ── {% endcomment %}
+  <div class="card">
+    <div class="card-header db-tl-head">
+      <span class="db-tl-titlerow">
+        <span class="card-title">Request Timeline</span>
+        <span class="info-tip" data-tip="Incoming API requests, by what the caller was doing:&#10;• Feed pulls — a firewall / SIEM fetching a published list (/api/v1/ or TAXII)&#10;• Reports — a client submitting an IOC to the platform&#10;• Rejected — a caller turned away: throttled, or refused by TAXII auth&#10;• Other — every remaining logged API call (discovery, status, skipped reports)">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        </span>
+      </span>
+      <div class="db-tl-controls">
+        <select id="rq-range" class="db-tl-select" aria-label="Request timeline range">
+          <option value="60min">Last 60 minutes</option>
+          <option value="1" selected>Last 24 hours</option>
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="180">Last 6 months</option>
+          <option value="365">Last 12 months</option>
+        </select>
+        <div class="db-tl-seg" id="rq-bucket">
+          <button type="button" data-bucket="minute">Minutely</button>
+          <button type="button" data-bucket="hour" class="active">Hourly</button>
+          <button type="button" data-bucket="day">Daily</button>
+          <button type="button" data-bucket="month">Monthly</button>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="db-tl-canvas"><canvas id="ch-requests"></canvas></div>
+      <div class="db-tl-legend" id="rq-legend">
+        <span class="db-tl-leg" data-s="0"><i style="background:#8FB8B4;"></i>Feed pulls</span>
+        <span class="db-tl-leg" data-s="1"><i style="background:#A8C896;"></i>Reports</span>
+        <span class="db-tl-leg" data-s="2"><i style="background:#D3737A;"></i>Rejected</span>
+        <span class="db-tl-leg" data-s="3"><i style="background:var(--text-muted);"></i>Other</span>
+      </div>
+      {{ request_timeline_init|json_script:"d-requests" }}
+    </div>
   </div>
+
 </div>
 
 <script src="{% static 'js/chart.umd.min.js' %}" nonce="{{ csp_nonce }}"></script>
+{% comment %}
+The nonce is mandatory: security_middleware drops 'unsafe-inline' from
+script-src, so an inline script tag without it is silently refused by the
+browser and both charts stay blank.
+{% endcomment %}
 <script nonce="{{ csp_nonce }}">
 (function () {
   if (typeof Chart === 'undefined') return;
   window.__dbCharts = window.__dbCharts || {};
 
-  var API_URL    = '{% url "dashboard:timeline_api" %}';
-  var IP_COLOR   = '#D3737A';   // warm rose — IP Blacklist series
-  var HASH_COLOR = '#9AB5C4';   // soft steel blue — Hash Blacklist series
-  var URL_COLOR  = '#B49CC4';   // muted lavender — URL Blacklist series
-
-  // Current selection (kept in sync with the controls; used by auto-refresh).
-  // curDays drives hour/day/month buckets; curMinutes drives the minute bucket.
-  // The range <select> uses the sentinel string "60min" for the minutely option.
-  // Defaults mirror the markup above (Minutely / Last 60 minutes).
-  var curDays = 30, curBucket = 'minute', curMinutes = 60;
+  // Pinned width of the y-axis gutter, in px. Wide enough for a 5-digit tick
+  // at the axis font size; both charts reserve it whether they need it or not,
+  // which is what keeps their plot areas horizontally aligned.
+  var Y_AXIS_WIDTH = 46;
 
   function cssVar(name, fallback) {
     var v = (getComputedStyle(document.documentElement).getPropertyValue(name) || '').trim();
     return v || fallback;
   }
 
-  // Public: (re)draw the timeline from a {labels, ip, hash} payload. Called on
-  // load, after each fetch, and on theme switch (axis/grid colours re-read).
-  window.dbRenderTimeline = function (data) {
-    if (!data || !data.labels) return;
-    window.__dbTimelineData = data;
-    var cv = document.getElementById('ch-timeline');
-    if (!cv) return;
+  /* Build one timeline card: draw it, wire its controls, fetch on change.
+     `cfg` = {
+       key        unique name, used for the Chart instance registry
+       apiUrl     JSON endpoint; takes ?bucket= plus ?days= or ?minutes=
+       canvasId   canvas element
+       dataId     json_script element holding the first-paint payload
+       rangeId    range <select>
+       segId      granularity segmented control
+       modeId     optional measure <select>; omitted for a chart whose
+                  numbers only make sense one way (the request timeline)
+       legendId   the HTML legend container; its entries toggle series
+       series     [{ field, label, color | cssVar, rgba }]
+                  `field` is the key in the payload; `cssVar` resolves at draw
+                  time so a muted series tracks the active theme.
+       onRender   optional; called with each payload (used to keep the PDF
+                  export pointed at the blacklist chart's selection)
+     } */
+  function makeTimeline(cfg) {
+    // Current selection, kept in sync with the controls so auto-refresh and
+    // the PDF export both see what the user is actually looking at. curDays
+    // drives hour/day/month buckets, curMinutes drives the minute bucket; the
+    // range <select> uses the sentinel string "60min" for the minutely option.
+    // Defaults mirror the markup above (Hourly / Last 24 hours).
+    var curDays = 1, curBucket = 'hour', curMinutes = 60, curMode = 'activity';
+    var rangeSel = document.getElementById(cfg.rangeId);
+    var seg = document.getElementById(cfg.segId);
+    var modeSel = cfg.modeId ? document.getElementById(cfg.modeId) : null;
+    var legendEl = cfg.legendId ? document.getElementById(cfg.legendId) : null;
+    var lastData = null;
+    // Series the viewer has clicked off in the HTML legend. Kept out here
+    // because every redraw destroys and rebuilds the chart, and a toggle has
+    // to survive a refresh or a range change.
+    var hidden = {};
 
-    var tick = cssVar('--text-muted', '#888');
-    var grid = cssVar('--border', 'rgba(128,128,128,.2)');
-    var legendClr = cssVar('--text-secondary', '#bbb');
+    function render(data) {
+      if (!data || !data.labels) return;
+      lastData = data;
+      if (cfg.onRender) cfg.onRender(data);
+      var cv = document.getElementById(cfg.canvasId);
+      if (!cv) return;
 
-    // Y-axis headroom so the peak line doesn't kiss the chart's top edge.
-    // ~10% padding above the highest point, with a +1 floor so even peaks of
-    // 1–2 leave a visible gap; ticks stay integers via `precision: 0` below.
-    var peak = 0;
-    [data.ip, data.hash, data.url].forEach(function (arr) {
-      (arr || []).forEach(function (v) {
-        if (typeof v === 'number' && v > peak) peak = v;
+      var tick = cssVar('--text-muted', '#888');
+      var grid = cssVar('--border', 'rgba(128,128,128,.2)');
+
+      // Y-axis headroom so the peak line does not kiss the chart's top edge.
+      // ~10% padding above the highest point, with a +1 floor so even peaks of
+      // 1-2 leave a visible gap; ticks stay integers via `precision: 0` below.
+      var peak = 0;
+      cfg.series.forEach(function (s, i) {
+        if (hidden[i]) return;        // a hidden line must not hold the axis up
+        (data[s.field] || []).forEach(function (v) {
+          if (typeof v === 'number' && v > peak) peak = v;
+        });
       });
-    });
-    var suggestedMax = peak > 0 ? Math.ceil(peak * 1.1) + 1 : 5;
+      var suggestedMax = peak > 0 ? Math.ceil(peak * 1.1) + 1 : 5;
 
-    if (window.__dbCharts.timeline) { window.__dbCharts.timeline.destroy(); }
+      if (window.__dbCharts[cfg.key]) { window.__dbCharts[cfg.key].destroy(); }
 
-    window.__dbCharts.timeline = new Chart(cv, {
-      type: 'line',
-      data: {
-        labels: data.labels,
-        datasets: [
-          {
-            label: 'IP',
-            data: data.ip,
-            borderColor: IP_COLOR,
-            backgroundColor: 'rgba(211,115,122,.12)',
-            borderWidth: 2, tension: 0.3, fill: true,
-            pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 8,
-            pointBackgroundColor: IP_COLOR
-          },
-          {
-            label: 'Hash',
-            data: data.hash,
-            borderColor: HASH_COLOR,
-            backgroundColor: 'rgba(154,181,196,.12)',
-            borderWidth: 2, tension: 0.3, fill: true,
-            pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 8,
-            pointBackgroundColor: HASH_COLOR
-          },
-          {
-            label: 'URL',
-            data: data.url,
-            borderColor: URL_COLOR,
-            backgroundColor: 'rgba(180,156,196,.12)',
-            borderWidth: 2, tension: 0.3, fill: true,
-            pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 8,
-            pointBackgroundColor: URL_COLOR
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: { duration: 250 },
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: { display: true, position: 'top',
-                    labels: { color: legendClr, boxWidth: 12, boxHeight: 12,
-                              usePointStyle: true, padding: 16 } }
+      window.__dbCharts[cfg.key] = new Chart(cv, {
+        type: 'line',
+        data: {
+          labels: data.labels,
+          datasets: cfg.series.map(function (s, i) {
+            var clr = s.cssVar ? cssVar(s.cssVar, s.color) : s.color;
+            return {
+              label: s.label,
+              hidden: !!hidden[i],
+              data: data[s.field] || [],
+              borderColor: clr,
+              backgroundColor: s.rgba || 'transparent',
+              borderWidth: 2, tension: 0.3, fill: !!s.rgba,
+              pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 8,
+              pointBackgroundColor: clr
+            };
+          })
         },
-        scales: {
-          x: { grid: { color: grid }, ticks: { color: tick, maxRotation: 0,
-                 autoSkip: true, maxTicksLimit: 12 } },
-          y: { beginAtZero: true, suggestedMax: suggestedMax,
-               grid: { color: grid },
-               ticks: { color: tick, precision: 0 } }
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 250 },
+          interaction: { mode: 'index', intersect: false },
+          // The legend is static HTML under the canvas (see the template), so
+          // the plot box is the full canvas in every card: neither the number
+          // of series nor the width of their labels can shrink it.
+          plugins: { legend: { display: false } },
+          // Fixed padding + a pinned y-axis width keep the plot area at the
+          // same pixel offsets in both charts, so a 4-digit tick cannot shift
+          // one chart's plot right of its neighbour's.
+          layout: { padding: { top: 6, right: 10, bottom: 0, left: 0 } },
+          scales: {
+            x: { grid: { color: grid }, ticks: { color: tick, maxRotation: 0,
+                   autoSkip: true, maxTicksLimit: 12 } },
+            y: { beginAtZero: true, suggestedMax: suggestedMax,
+                 grid: { color: grid },
+                 ticks: { color: tick, precision: 0 },
+                 afterFit: function (scale) { scale.width = Y_AXIS_WIDTH; } }
+          }
         }
-      }
-    });
-  };
-
-  // Fetch the timeline for the current selection and redraw.
-  function loadTimeline() {
-    var url;
-    if (curBucket === 'minute') {
-      url = API_URL + '?bucket=minute&minutes=' + encodeURIComponent(curMinutes);
-    } else {
-      url = API_URL + '?days=' + encodeURIComponent(curDays) + '&bucket=' + encodeURIComponent(curBucket);
-    }
-    fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-      .then(function (r) { return r.json(); })
-      .then(function (data) { window.dbRenderTimeline(data); })
-      .catch(function () {});
-  }
-  // Exposed so the dashboard auto-refresh redraws with the current selection.
-  window.dbRefreshTimeline = loadTimeline;
-
-  // ── Controls ──
-  var rangeSel = document.getElementById('tl-range');
-  var seg = document.getElementById('tl-bucket');
-
-  function setBucket(b) {
-    curBucket = b;
-    if (seg) {
-      seg.querySelectorAll('button').forEach(function (btn) {
-        btn.classList.toggle('active', btn.dataset.bucket === b);
       });
     }
-  }
-  function setRange(value) {
-    // Accepts either an int (days) or the literal string "60min" for the
-    // minutely window. Keeps the <select> visually in sync.
-    if (value === '60min') {
-      curMinutes = 60;
-      if (rangeSel) rangeSel.value = '60min';
-    } else {
-      curDays = parseInt(value, 10) || 1;
-      if (rangeSel) rangeSel.value = String(curDays);
-    }
-  }
 
-  // Each range selects a sensible default granularity (user can still override):
-  //   60min → Minutely,  24h → Hourly,  7d/30d → Daily,  90d/6mo/12mo → Monthly.
-  function bucketForRange(rangeValue) {
-    if (rangeValue === '60min') return 'minute';
-    var d = parseInt(rangeValue, 10) || 1;
-    if (d <= 1)  return 'hour';
-    if (d >= 90) return 'month';
-    return 'day';
-  }
-
-  if (rangeSel) {
-    rangeSel.addEventListener('change', function () {
-      var v = rangeSel.value;
-      if (v === '60min') {
-        curMinutes = 60;
+    function load() {
+      var url;
+      if (curBucket === 'minute') {
+        url = cfg.apiUrl + '?bucket=minute&minutes=' + encodeURIComponent(curMinutes);
       } else {
-        curDays = parseInt(v, 10) || 1;
+        url = cfg.apiUrl + '?days=' + encodeURIComponent(curDays) +
+              '&bucket=' + encodeURIComponent(curBucket);
       }
-      setBucket(bucketForRange(v));
-      loadTimeline();
-    });
-  }
-  if (seg) {
-    seg.addEventListener('click', function (e) {
-      var btn = e.target.closest('button[data-bucket]');
-      if (!btn || btn.dataset.bucket === curBucket) return;
-      var b = btn.dataset.bucket;
-      setBucket(b);
-      // Each bucket switch picks a sensible default window for that granularity
-      // so the user isn't left looking at an inappropriate range (e.g. Minutely
-      // with a 30-day window). The user can still override via the select.
-      if (b === 'minute') {
-        setRange('60min');      // Minutely ⇒ Last 60 minutes
-      } else if (b === 'hour') {
-        setRange(1);            // Hourly  ⇒ Last 24 hours
-      } else if (b === 'month') {
-        setRange(180);          // Monthly ⇒ Last 6 months
-      } else if (curDays === 1 || rangeSel.value === '60min') {
-        setRange(30);           // Daily   ⇒ Last 30 days (only when leaving a sub-day window)
-      }
-      loadTimeline();
-    });
-  }
+      // Harmless on an endpoint that has no modes; only sent when this card
+      // actually offers the control.
+      if (modeSel) { url += '&mode=' + encodeURIComponent(curMode); }
+      fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (r) { return r.json(); })
+        .then(function (data) { render(data); })
+        .catch(function () {});
+    }
 
-  // Initial paint from the json_script payload (default 24h hourly — see
-  // dashboard.views.index). For the minute bucket the payload carries `minutes`
-  // and we set the range select to its sentinel "60min" value.
-  var ds = document.getElementById('d-timeline');
-  if (ds) {
-    try {
-      var init = JSON.parse(ds.textContent);
-      setBucket(init.bucket || 'day');
-      if (init.bucket === 'minute') {
-        curMinutes = init.minutes || 60;
+    function setBucket(b) {
+      curBucket = b;
+      if (seg) {
+        seg.querySelectorAll('button').forEach(function (btn) {
+          btn.classList.toggle('active', btn.dataset.bucket === b);
+        });
+      }
+    }
+
+    function setRange(value) {
+      // Accepts either an int (days) or the literal string "60min" for the
+      // minutely window. Keeps the <select> visually in sync.
+      if (value === '60min') {
+        curMinutes = 60;
         if (rangeSel) rangeSel.value = '60min';
       } else {
-        setRange(init.days || 30);
+        curDays = parseInt(value, 10) || 1;
+        if (rangeSel) rangeSel.value = String(curDays);
       }
-      window.dbRenderTimeline(init);
-    } catch (e) {}
+    }
+
+    // Each range selects a sensible default granularity (user can still override):
+    //   60min → Minutely,  24h → Hourly,  7d/30d → Daily,  90d/6mo/12mo → Monthly.
+    function bucketForRange(rangeValue) {
+      if (rangeValue === '60min') return 'minute';
+      var d = parseInt(rangeValue, 10) || 1;
+      if (d <= 1)  return 'hour';
+      if (d >= 90) return 'month';
+      return 'day';
+    }
+
+    // Clicking a legend entry hides that line, the way the Chart.js legend
+    // did before it was moved out of the canvas. Redrawing rather than
+    // toggling in place so the y-axis rescales to what is left visible.
+    if (legendEl) {
+      legendEl.addEventListener('click', function (e) {
+        var item = e.target.closest('.db-tl-leg[data-s]');
+        if (!item) return;
+        var i = parseInt(item.dataset.s, 10);
+        if (isNaN(i)) return;
+        hidden[i] = !hidden[i];
+        item.classList.toggle('is-off', !!hidden[i]);
+        if (lastData) render(lastData);
+      });
+    }
+    if (modeSel) {
+      modeSel.addEventListener('change', function () {
+        curMode = modeSel.value;
+        load();
+      });
+    }
+    if (rangeSel) {
+      rangeSel.addEventListener('change', function () {
+        var v = rangeSel.value;
+        if (v === '60min') { curMinutes = 60; } else { curDays = parseInt(v, 10) || 1; }
+        setBucket(bucketForRange(v));
+        load();
+      });
+    }
+    if (seg) {
+      seg.addEventListener('click', function (e) {
+        var btn = e.target.closest('button[data-bucket]');
+        if (!btn || btn.dataset.bucket === curBucket) return;
+        var b = btn.dataset.bucket;
+        setBucket(b);
+        // Each bucket switch picks a sensible default window for that granularity
+        // so the user is not left looking at an inappropriate range (e.g. Minutely
+        // with a 30-day window). The user can still override via the select.
+        if (b === 'minute') {
+          setRange('60min');      // Minutely ⇒ Last 60 minutes
+        } else if (b === 'hour') {
+          setRange(1);            // Hourly  ⇒ Last 24 hours
+        } else if (b === 'month') {
+          setRange(180);          // Monthly ⇒ Last 6 months
+        } else if (curDays === 1 || (rangeSel && rangeSel.value === '60min')) {
+          setRange(30);           // Daily   ⇒ Last 30 days (only when leaving a sub-day window)
+        }
+        load();
+      });
+    }
+
+    // Initial paint from the json_script payload (Last 24 hours / Hourly — see
+    // dashboard.views.index). For the minute bucket the payload carries
+    // `minutes` and the range select takes its sentinel "60min" value.
+    var ds = document.getElementById(cfg.dataId);
+    if (ds) {
+      try {
+        var init = JSON.parse(ds.textContent);
+        if (modeSel && init.mode) { curMode = init.mode; modeSel.value = init.mode; }
+        setBucket(init.bucket || 'hour');
+        if (init.bucket === 'minute') {
+          curMinutes = init.minutes || 60;
+          if (rangeSel) rangeSel.value = '60min';
+        } else {
+          setRange(init.days || 1);
+        }
+        render(init);
+      } catch (e) {}
+    }
+
+    return {
+      load: load,
+      render: render,
+      redraw: function () { if (lastData) render(lastData); }
+    };
   }
 
-  // Redraw on theme switch so axis/grid colours match the new theme.
+  var blacklistTl = makeTimeline({
+    key: 'timeline',
+    apiUrl: '{% url "dashboard:timeline_api" %}',
+    canvasId: 'ch-timeline', dataId: 'd-timeline',
+    rangeId: 'tl-range', segId: 'tl-bucket', modeId: 'tl-mode',
+    legendId: 'tl-legend',
+    series: [
+      { field: 'ip',   label: 'IP',   color: '#D3737A', rgba: 'rgba(211,115,122,.12)' },  // warm rose
+      { field: 'hash', label: 'Hash', color: '#9AB5C4', rgba: 'rgba(154,181,196,.12)' },  // soft steel blue
+      { field: 'url',  label: 'URL',  color: '#B49CC4', rgba: 'rgba(180,156,196,.12)' }   // muted lavender
+    ],
+    // The PDF export mirrors the user's selection on THIS chart, so keep the
+    // payload it reads pointed here.
+    onRender: function (data) { window.__dbTimelineData = data; }
+  });
+
+  var requestTl = makeTimeline({
+    key: 'requests',
+    apiUrl: '{% url "dashboard:request_timeline_api" %}',
+    canvasId: 'ch-requests', dataId: 'd-requests',
+    rangeId: 'rq-range', segId: 'rq-bucket', legendId: 'rq-legend',
+    series: [
+      { field: 'pull',    label: 'Feed pulls',   color: '#8FB8B4', rgba: 'rgba(143,184,180,.12)' }, // teal
+      { field: 'report',  label: 'Reports',      color: '#A8C896', rgba: 'rgba(168,200,150,.12)' }, // green
+      { field: 'rejected', label: 'Rejected',   color: '#D3737A', rgba: 'rgba(211,115,122,.12)' }, // warm rose
+      // Unfilled and theme-muted: a catch-all series should read as background,
+      // not compete with the three that carry meaning.
+      { field: 'other',   label: 'Other',        cssVar: '--text-muted', color: '#888' }
+    ]
+  });
+
+  // Exposed for the dashboard auto-refresh (index.html) — redraws both cards
+  // with whatever each one currently has selected.
+  window.dbRefreshTimeline = function () { blacklistTl.load(); requestTl.load(); };
+
+  // Redraw on theme switch so axis/grid/muted colours match the new theme.
   if (window.MutationObserver) {
     new MutationObserver(function () {
-      if (window.__dbTimelineData) window.dbRenderTimeline(window.__dbTimelineData);
+      blacklistTl.redraw();
+      requestTl.redraw();
     }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   }
 })();

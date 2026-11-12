@@ -18,19 +18,28 @@ def role_required(*roles):
             if request.user.is_superuser:
                 return view_func(request, *args, **kwargs)
 
+            # Resolve the role inside the try, but call the view OUTSIDE it.
+            # Previously `view_func(...)` sat inside this block, so ANY
+            # exception raised by the view itself — a template error, a DB
+            # error, anything — was swallowed and re-raised as
+            # PermissionDenied. A genuine 500 then surfaced to the operator
+            # as a misleading "Access denied" with no traceback.
+            allowed = False
             try:
                 profile = request.user.profile
-                if profile.role and profile.role.name in roles:
-                    return view_func(request, *args, **kwargs)
-                logger.debug(
-                    f"Access denied: user={request.user.username} "
-                    f"role={getattr(profile.role, 'name', None)} "
-                    f"required={roles}"
-                )
+                role_name = getattr(profile.role, 'name', None)
+                allowed = bool(profile.role and role_name in roles)
+                if not allowed:
+                    logger.debug(
+                        f"Access denied: user={request.user.username} "
+                        f"role={role_name} required={roles}"
+                    )
             except Exception as e:
                 logger.warning(f"role_required check error for {request.user.username}: {e}")
 
-            raise PermissionDenied
+            if not allowed:
+                raise PermissionDenied
+            return view_func(request, *args, **kwargs)
         return wrapper
     return decorator
 

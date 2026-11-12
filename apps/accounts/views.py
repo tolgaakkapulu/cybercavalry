@@ -144,13 +144,14 @@ def logout_view(request):
 def api_reference(request):
     """GET /accounts/api-reference/ — API documentation page."""
     from django.core.exceptions import PermissionDenied
-    from apps.accounts.api_docs import get_endpoints
+    from apps.accounts.api_docs import BASE_URLS, get_endpoints
     profile = request.user.profile
     if profile.role is None or not profile.role.can_use_api:
         raise PermissionDenied
     return render(request, 'accounts/api_reference.html', {
         'profile':   profile,
         'endpoints': get_endpoints(),
+        'base_urls': BASE_URLS,
     })
 
 

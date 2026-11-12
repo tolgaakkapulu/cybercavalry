@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     'apps.whitelist',
     'apps.hashlist',
     'apps.urllist',
+    'apps.taxii',
     'apps.dashboard',
     'apps.api',
     'apps.settings_app',

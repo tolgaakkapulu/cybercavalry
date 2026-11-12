@@ -54,6 +54,17 @@ urlpatterns = [
     path('urllist/',  include('apps.urllist.urls')),
     path('dashboard/', include('apps.dashboard.urls')),
     path('api/v1/', include('apps.api.urls')),
+    # TAXII 2.0 server — publishes the URL Blacklist as STIX 2.0 indicators.
+    # Separate prefix from /api/v1/ so the firewall's GET feed and the TAXII
+    # subscribers never share a route, an auth path, or a serializer.
+    path('taxii/', include('apps.taxii.urls')),
+    # Collection management UI. Mounted at the root rather than nested inside
+    # settings_app's urlconf: that urlconf declares app_name='settings_app',
+    # so an include() there would have produced the nested namespace
+    # `settings_app:taxii_admin:` instead of a plain `taxii_admin:`. The URL
+    # still reads /settings/taxii/collections/, and this line MUST precede
+    # the `settings/` include so the more specific prefix wins.
+    path('settings/taxii/collections/', include('apps.taxii.urls_admin')),
     path('settings/', include('apps.settings_app.urls')),
     # Serve uploaded branding media (public; logo/favicon/background appear pre-auth).
     re_path(r'^media/(?P<path>.*)$', _media_serve, {'document_root': settings.MEDIA_ROOT}),

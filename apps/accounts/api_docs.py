@@ -34,6 +34,28 @@ _AUTH_IP_PDF = (
     'The requesting IP must be in the allowed list (Settings → Source IPs). '
     'Allows firewalls and SIEM systems to pull data without managing API credentials.'
 )
+# TAXII 2.0 CS01 §1.4.6 makes HTTP Basic mandatory-to-implement, so Basic is
+# what a subscriber speaks. What goes in the password field is our choice, and
+# it is the account's API token — see apps/taxii/auth.py for why not its
+# login password.
+_AUTH_BASIC_HTML = (
+    '<strong>HTTP Basic</strong> — the scheme TAXII 2.0 mandates. The username is an '
+    '<strong>API User</strong> account and the password is that account\'s '
+    '<strong>API token</strong>, <em>not</em> its login password. '
+    'When <em>Also Require Source IP</em> is on (the default), the caller\'s IP must '
+    'additionally be in the allowed list (Settings → Source IPs). '
+    'The server must be enabled under <strong>Settings → TAXII 2.0 Server</strong>; '
+    'while it is off every path below answers <code style="font-family:var(--font-mono);'
+    'color:var(--accent);">404</code>.'
+)
+_AUTH_BASIC_PDF = (
+    '<b>HTTP Basic</b> — the scheme TAXII 2.0 mandates. The username is an '
+    '<b>API User</b> account and the password is that account\'s <b>API token</b>, '
+    '<i>not</i> its login password. When <i>Also Require Source IP</i> is on (the '
+    'default), the caller\'s IP must additionally be in the allowed list '
+    '(Settings → Source IPs). The server must be enabled under Settings → '
+    'TAXII 2.0 Server; while it is off every path below answers 404.'
+)
 
 
 # ── Section helpers ───────────────────────────────────────────────────────
@@ -75,6 +97,18 @@ def _params(label, col_name, rows, badge_col=False):
         'rows':      processed,
         'badge_col': badge_col,
     }
+
+
+# ── Base URLs ────────────────────────────────────────────────────
+# Shown as badges on the page and as rows in the PDF's base-URL box. There
+# are two, because the TAXII surface deliberately sits OUTSIDE /api/v1 --
+# TAXII 2.0 fixes discovery at /taxii/ (see apps/taxii/urls.py), so a single
+# "Base URL: /api/v1" badge would be wrong for the TAXII tab.
+
+BASE_URLS = [
+    ('REST API',  'https://<host>:8443/api/v1'),
+    ('TAXII 2.0', 'https://<host>:8443/taxii/'),
+]
 
 
 # ── Endpoint definitions ──────────────────────────────────────────────────
@@ -516,6 +550,165 @@ ENDPOINTS = [
             ),
         ],
     },
+    # ── 8. GET /taxii/ — the TAXII 2.0 surface ────────────────────────────
+    # One tab for all seven paths rather than seven tabs: a subscriber is
+    # handed the discovery URL and walks the rest itself, so the endpoints
+    # are more use as a map than as separate pages. Unlike every tab above,
+    # these paths are NOT under /api/v1 — see BASE_URLS.
+    {
+        'tab_id':      'taxii',
+        'tab_label':   'GET /taxii/',
+        'method':      'GET',
+        'path':        '/taxii/',
+        'description': 'TAXII 2.0 discovery — blacklists as STIX 2.0 indicators (read-only)',
+        'auth':        'basic',
+        'auth_html':   _AUTH_BASIC_HTML,
+        'auth_pdf':    _AUTH_BASIC_PDF,
+        'sections': [
+            _code('Credentials',
+                '# username = an API User account, password = that account\'s API token',
+                'Authorization: Basic base64("<api_user-username>:<api_user-token>")',
+                '',
+                '# curl encodes it for you:',
+                'curl -k -u "<api_user-username>:<api_user-token>" https://<host>:8443/taxii/',
+            ),
+            _params('Endpoints', 'Path', [
+                ('/taxii/',
+                 'Discovery — the single URL you paste into the subscriber'),
+                ('/taxii/<root>/',
+                 'API root; advertises versions: ["taxii-2.0"]'),
+                ('/taxii/<root>/collections/',
+                 'Collection list (one collection = one subscribable feed)'),
+                ('/taxii/<root>/collections/<id>/',
+                 'Collection metadata; can_read true, can_write false'),
+                ('/taxii/<root>/collections/<id>/objects/',
+                 'The indicators, as a STIX 2.0 bundle'),
+                ('/taxii/<root>/collections/<id>/objects/<obj-id>/',
+                 'A single indicator by its STIX id'),
+                ('/taxii/<root>/collections/<id>/manifest/',
+                 'Manifest — ids + date_added only, for incremental sync'),
+            ]),
+            _params('Feeds', 'Feed', [
+                ('url',  'URL Blacklist — mirrors GET /api/v1/urllist/'),
+                ('ip',   'IP Blacklist — mirrors GET /api/v1/blacklist/'),
+                ('hash', 'Hash Blacklist — mirrors GET /api/v1/hashlist/'),
+            ]),
+            _code('curl Example — discover, then poll',
+                '# 1. Discovery: returns the api_roots this account may see',
+                'curl -k -u "<api_user-username>:<api_user-token>" \\',
+                '  https://<host>:8443/taxii/',
+                '',
+                '# 2. Collections under an API root (the id is a UUID, generated on creation)',
+                'curl -k -u "<api_user-username>:<api_user-token>" \\',
+                '  https://<host>:8443/taxii/urllist/collections/',
+                '',
+                '# 3. The indicators',
+                'curl -k -u "<api_user-username>:<api_user-token>" \\',
+                '  https://<host>:8443/taxii/urllist/collections/<collection-id>/objects/',
+            ),
+            _params('Query Parameters', 'Parameter', [
+                ('added_after=2026-11-09T00:00:00Z',
+                 'Incremental poll — only entries added strictly after this RFC 3339 '
+                 'timestamp. An unparseable value is a 400, never a silent full pull.'),
+                ('match[type]=indicator',
+                 'Only indicators are ever published, so any other type yields an '
+                 'empty bundle rather than an error (§3.5.1).'),
+                ('match[id]=indicator--<uuid>',
+                 'Comma-separated STIX ids. Ids are uuid5-derived and stable across '
+                 'polls, so a subscriber updates in place instead of duplicating.'),
+            ]),
+            _code('Pagination — Range / Content-Range (TAXII 2.0, not 2.1)',
+                '# 2.0 paginates with HTTP range headers and the `items` unit;',
+                '# 2.1\'s more/next envelope fields do not apply here.',
+                '# Note the SPACE after `items` — that is the spec\'s own form, and',
+                '# RFC 7233\'s `items=0-49` is ignored (served as if unset).',
+                'curl -k -u "<api_user-username>:<api_user-token>" \\',
+                '  -H "Range: items 0-49" \\',
+                '  https://<host>:8443/taxii/urllist/collections/<collection-id>/objects/',
+                '',
+                '# 206 Partial Content',
+                '# Accept-Ranges: items',
+                '# Content-Range: items 0-49/1396          <- inclusive, zero-indexed, /total',
+                '# X-TAXII-Date-Added-First: 2026-11-04T08:12:03.000Z',
+                '# X-TAXII-Date-Added-Last:  2026-11-11T17:15:44.000Z',
+                '',
+                '# Sending no Range at all is also answered 206, capped at the page size',
+                '# in Settings -> TAXII 2.0 Server (default 500) -- a 1396-entry feed is',
+                '# three polls, not one enormous response. A start past the end gives 416.',
+            ),
+            _code('Response — objects (STIX 2.0 bundle)',
+                '# 200 OK / 206 Partial Content',
+                '# Content-Type: application/vnd.oasis.stix+json; version=2.0',
+                '{',
+                '  "type": "bundle",',
+                '  "id": "bundle--<uuid>",',
+                '  "spec_version": "2.0",',
+                '  "objects": [',
+                '    {',
+                '      "type": "indicator",',
+                '      "id": "indicator--<uuid5, stable per entry>",',
+                '      "created": "2026-11-04T08:12:03.000Z",',
+                '      "modified": "2026-11-04T08:12:03.000Z",',
+                '      "valid_from": "2026-11-04T08:12:03.000Z",',
+                '      "labels": ["malicious-activity"],',
+                '      "pattern": "[domain-name:value = \'phishing.example\']",',
+                '      "name": "phishing.example",',
+                '      "description": "..."',
+                '    }',
+                '  ]',
+                '}',
+                '',
+                '# An empty result is an empty bundle, not an error.',
+            ),
+            _code('Response — manifest, and errors',
+                '# 200 OK — manifest: ids and dates only, so a subscriber can tell what',
+                '#          changed without pulling the patterns',
+                '{',
+                '  "objects": [',
+                '    {',
+                '      "id": "indicator--<uuid5>",',
+                '      "date_added": "2026-11-04T08:12:03.000Z",',
+                '      "versions": ["2026-11-04T08:12:03.000Z"],',
+                '      "media_types": ["application/vnd.oasis.stix+json; version=2.0"]',
+                '    }',
+                '  ]',
+                '}',
+                '',
+                '# Errors are TAXII `error` objects (§3.6.1), not the REST API\'s',
+                '# {"error": "..."} shape:',
+                '# Content-Type: application/vnd.oasis.taxii+json; version=2.0',
+                '',
+                '# 401 — no / bad credentials (carries WWW-Authenticate: Basic)',
+                '{"title": "Unauthorized", "http_status": "401", "description": "..."}',
+                '',
+                '# 403 — source IP not allowed   404 — server off, or no such root/collection',
+                '# 400 — bad added_after         416 — Range starts past the end',
+            ),
+            _params('Audit trail', 'Action', [
+                ('api.taxii_discovery',   'Discovery was fetched'),
+                ('api.taxii_api_root',    'An API root was read'),
+                ('api.taxii_collections', 'The collection list was read'),
+                ('api.taxii_collection',  'Collection metadata was read'),
+                ('api.taxii_objects',     'A poll; detail records feed, served, total, partial'),
+                ('api.taxii_object',      'A single indicator was fetched'),
+                ('api.taxii_manifest',    'A manifest poll; same detail as objects'),
+                ('api.taxii_denied',      'A caller was turned away; detail records the reason'),
+            ]),
+            _code('Where those rows show up',
+                '# Every request above writes one activity-log row, the same way the',
+                '# /api/v1/ endpoints do, so a subscriber\'s polls are visible without',
+                '# reading cybercavalry.log:',
+                '#',
+                '#   Activity Log  -> type filter "API"   — the individual requests',
+                '#   Dashboard     -> Request Timeline     — polls over time',
+                '#                    (objects/manifest count as Feed pulls,',
+                '#                     api.taxii_denied as Rejected, the rest as Other)',
+                '#',
+                '# Logging can never break a poll: a failure to write the row is',
+                '# swallowed and the feed still answers.',
+            ),
+        ],
+    },
 ]
 
 
@@ -543,4 +736,8 @@ def get_endpoints():
         for sec in ep.get('sections', []):
             if sec.get('type') == 'code' and sec.get('lines'):
                 sec['lines'] = [ln.replace(_PLATFORM_PLACEHOLDER, name) for ln in sec['lines']]
+                # ...and in the pre-rendered HTML the WEB page uses. Patching
+                # only `lines` left the placeholder visible in the browser.
+                if sec.get('html'):
+                    sec['html'] = sec['html'].replace(_PLATFORM_PLACEHOLDER, name)
     return eps

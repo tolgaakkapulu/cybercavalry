@@ -106,7 +106,7 @@
   </div>
 </div>
 
-{# Dashboard 30-day additions timeline — delete this single line to remove it #}
+{# Dashboard timelines (blacklist additions + API requests, side by side) — delete this single line to remove them #}
 {% include 'dashboard/timeline.html' %}
 
 {# Dashboard analytics charts — delete this single line to remove the section #}
@@ -388,12 +388,80 @@
         <p class="text-xs text-muted mt-12" style="text-align:left;">Add <b><code class="text-mono">?format=txt</code></b> to blacklist/hashlist/urllist endpoints for plain text output.</p>
       </div>
     </div>
+    {% comment %}
+    TAXII belongs in this card because it answers the same question the list
+    above does — what can a client call? — but it gets its own row rather than
+    four more cells, because it shares neither the /api/v1 prefix nor the
+    source-IP-only auth of everything above it. Mixing them in one grid would
+    imply both.
+
+    The status chip is the point of showing it here at all: a disabled server
+    answers 404 on every path below, and a server that is enabled with no
+    active collection answers but has nothing to subscribe to. Neither is
+    visible from a list of paths.
+    {% endcomment %}
+    <div class="db-api-taxii">
+      <div class="db-api-taxii-head">
+        <span class="db-api-taxii-title">TAXII 2.0 &mdash; blacklists published as STIX 2.0 indicators</span>
+        {% if taxii.enabled %}
+          {% if taxii.collections %}
+          <span class="badge badge-green">Enabled &middot; {{ taxii.collections }} collection{{ taxii.collections|pluralize }}</span>
+          {% else %}
+          <span class="badge badge-yellow">Enabled &middot; no active collection</span>
+          {% endif %}
+        {% else %}
+        <span class="badge badge-muted">Disabled</span>
+        {% endif %}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+        <div>
+          <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">Discovery</p>
+          <code class="badge badge-green" style="color:var(--success);">GET</code>
+          <code class="text-mono text-accent"> /taxii/</code>
+        </div>
+        <div>
+          <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">Collections</p>
+          <code class="badge badge-green" style="color:var(--success);">GET</code>
+          <code class="text-mono text-accent"> /taxii/&lt;root&gt;/collections/</code>
+        </div>
+        <div>
+          <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">Indicators (STIX bundle)</p>
+          <code class="badge badge-green" style="color:var(--success);">GET</code>
+          <code class="text-mono text-accent"> /taxii/&lt;root&gt;/collections/&lt;id&gt;/objects/</code>
+        </div>
+        <div>
+          <p class="text-xs text-muted fw-600" style="margin-bottom:6px;">Manifest (incremental sync)</p>
+          <code class="badge badge-green" style="color:var(--success);">GET</code>
+          <code class="text-mono text-accent"> /taxii/&lt;root&gt;/collections/&lt;id&gt;/manifest/</code>
+        </div>
+      </div>
+      <p class="text-xs text-muted db-api-taxii-note">
+        Authentication differs from the endpoints above: <b>HTTP Basic</b>, where the
+        username is an <b>API User</b> account and the password is that account's
+        <b>API token</b> &mdash; not its login password. Paste only the discovery URL
+        into the subscriber; it walks the roots, collections and ids itself.
+        Pagination uses <code class="text-mono">Range: items 0-49</code> (note the
+        space) and <code class="text-mono">?added_after=</code> drives incremental
+        polls.
+      </p>
+    </div>
   </div>
 </div>
 {% endif %}
 {% endwith %}
 
 <style>
+/* ── TAXII block of the API Endpoints card ──
+   Separated by a rule rather than put in the same grid, because it has its
+   own prefix and its own authentication — see the comment at the markup. */
+.db-api-taxii { margin-top:20px; padding-top:16px;
+                border-top:1px solid var(--border-subtle); }
+.db-api-taxii-head { display:flex; align-items:center; gap:10px;
+                     flex-wrap:wrap; margin-bottom:14px; }
+.db-api-taxii-title { font-size:12px; font-weight:600; color:var(--text-primary); }
+.db-api-taxii-head .badge { font-size:10.5px; }
+.db-api-taxii-note { margin-top:14px; line-height:1.7; text-align:left; }
+
 /* ── Stat card label icon (inline, beside the label text) ── */
 .sc-lbl-icon {
   display: inline-flex;
@@ -672,7 +740,7 @@
   function applyData(data) {
     // Refresh the analytics pie charts too (defined in analytics.html).
     if (data.charts && window.dbRenderCharts) window.dbRenderCharts(data.charts);
-    // Refresh the additions timeline with its current range/granularity
+    // Refresh BOTH timelines, each with its own current range/granularity
     // selection (self-fetching; defined in timeline.html).
     if (window.dbRefreshTimeline) window.dbRefreshTimeline();
 
@@ -868,7 +936,8 @@
   /* ── Dashboard PDF download ── */
   document.getElementById('db-pdf-btn').addEventListener('click', function() {
     // Match the timeline section in the PDF to the user's current UI selection
-    // (range + granularity); falls back to view defaults if not yet rendered.
+    // (measure + range + granularity); falls back to view defaults if not yet
+    // rendered.
     // For the minute bucket we send `minutes` so the PDF mirrors the exact
     // window the user is looking at (e.g. "Last 60 minutes · Minutely").
     var pdfUrl = '{% url "dashboard:export_pdf" %}';
@@ -880,6 +949,7 @@
       } else if (t.days != null) {
         params.push('days=' + encodeURIComponent(t.days));
       }
+      if (t.mode) { params.push('mode=' + encodeURIComponent(t.mode)); }
       pdfUrl += '?' + params.join('&');
     }
     window.downloadPdfWithOverlay(pdfUrl, 'db-pdf-loading', 'dashboard.pdf');

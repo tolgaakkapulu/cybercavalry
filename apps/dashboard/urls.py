@@ -7,5 +7,6 @@ urlpatterns = [
     path('', views.index, name='index'),
     path('api/stats/', views.stats_api, name='stats_api'),
     path('api/timeline/', views.timeline_api, name='timeline_api'),
+    path('api/request-timeline/', views.request_timeline_api, name='request_timeline_api'),
     path('export/pdf/', views.dashboard_pdf, name='export_pdf'),
 ]

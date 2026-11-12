@@ -66,7 +66,7 @@ Everything runs behind a clean web UI with role-based access, activity auditing,
 - **E-mail alerts** for quota exhaustion (AbuseIPDB / VirusTotal)
 - **E-mail alerts** for API rate-limit abuse per caller
 - **E-mail alerts** for integration silence — notify when a regular firewall / XDR / SIEM caller stops pulling
-- **Activity log** with old/new diff for every configuration change and every API request (method, path, query, user-agent)
+- **Activity log** with old/new diff for every configuration change and every API request — REST *and* TAXII — recording method, path, query and user-agent
 - **Activity log filter for API requests** so firewall/XDR pull events are one click away
 - **Syslog forwarding** — mirror `cybercavalry.log`, `error.log`, `access.log` streams to a RFC 3164 collector
 - **Configurable cooldowns** so operators aren't paged twice for the same event
@@ -91,6 +91,7 @@ Everything runs behind a clean web UI with role-based access, activity auditing,
 - **Dashboard** with dark / light theme, brand color, custom logo
 - **PDF reports** — activity summary, per-group breakdowns
 - **Charts** for hit trends, group distribution, top reporters
+- **Timelines** for blacklist activity and incoming API requests (REST + TAXII)
 - **Auto-refresh** dashboard with a configurable polling interval
 
 </td>
@@ -123,6 +124,38 @@ Brand-aware sign-in with configurable background, logo and accent color. LDAP or
 ### Dashboard
 
 At-a-glance operational view: 30 d / 24 h / whitelist counts, hit-count trends, top reporters and the most-recent blacklist / hashlist entries. Auto-refreshes at the interval set in Settings → General.
+
+Two timeline widgets sit side by side, half the width each, both opening on **Last 24 hours · Hourly** (below ~1440px of browser width they stack instead, so each keeps its title and controls on one line):
+
+| Widget | Series | Answers |
+| --- | --- | --- |
+| **Blacklist Timeline** | IP / Hash / URL | What happened to each list, and when? |
+| **Request Timeline** | Feed pulls / Reports / Rejected / Other | What did clients ask of it? |
+
+Each card has its own range (60 minutes … 12 months) and granularity (minutely / hourly / daily / monthly) control, so the two can be compared at different scales; picking a range selects a sensible granularity, which you can then override. Both cards are deliberately built to the same frame — one unwrappable header row, a fixed plot box, a fixed-height HTML legend and a pinned y-axis width — so the two plot areas stay aligned whatever numbers are in them. Clicking a legend entry hides that line and rescales the axis to what is left.
+
+The Blacklist Timeline has a third control, the measure:
+
+| Measure | Each point is | Use it to see |
+| --- | --- | --- |
+| **Activity** (default) | every change to the list in that bucket: entries added, activated, edited, plus repeat reports that bumped an existing entry's hit count | what the list has been doing |
+| **New only** | entries added, and nothing else | real ingestion, separated from re-activating entries you already had |
+| **Total** | how many entries the list held at the end of that bucket | the size of each list and how it got there |
+
+An entry row carries only `added_at`, so activating or editing one leaves no per-row trace — **Activity** picks those up from the activity log, weighted by how many entries each action touched (`detail['count']` for a bulk action). Additions always come from `added_at` rather than from log rows, so they are exact and present even for entries imported before the log had any; a report that *created* an entry is therefore skipped when counting repeat reports, or it would be counted twice. Deactivations and deletions are left out on purpose: they are the opposite sign, and folding them in would make 100 additions plus 100 removals read as 200 changes.
+
+**Activity** and **New only** report history, so they count every row regardless of whether it is active today — an entry added on Tuesday was added on Tuesday, and deactivating it on Friday must not rewrite Tuesday. **Total** reports present state instead, so it counts the live list from the very same querysets the stat cards use: a card and the chart beneath it cannot drift apart, and a wide-enough window sums to the number on the card. The Request Timeline reads the activity log, where every incoming API request is recorded under an `api.*` action:
+
+| Series | Actions |
+| --- | --- |
+| Feed pulls | `api.blacklist`, `api.hashlist`, `api.urllist`, `api.taxii_objects`, `api.taxii_object`, `api.taxii_manifest` |
+| Reports | `api.report`, `api.hash_report`, `api.url_report` |
+| Rejected | `api.rate_limit` (throttled), `api.taxii_denied` (bad token, IP off the allowlist) |
+| Other | the remainder — `api.status`, `api.report.skipped`, TAXII discovery and collection browsing |
+
+*Other* is computed as the remainder rather than enumerated, so the four series always add up to the total API traffic in the window and a newly added `api.*` action can never silently vanish from the chart. Both the `/api/v1/` endpoints and the TAXII endpoints write these rows, so the same chart covers firewall pulls and TAXII subscriber polls; the Activity Log page shows the individual rows under its **API** type filter. The chart stays flat at zero until something actually calls the API.
+
+At the foot of the page, the **API Endpoints** card (admin only) lists the callable surface: the `/api/v1/` endpoints, and below them the TAXII paths with a status chip reading *Disabled*, *Enabled · n collections* or *Enabled · no active collection* — the last of those is a server that answers but publishes nothing, which a list of paths alone would not reveal. TAXII sits on its own row rather than in the same grid because it shares neither the `/api/v1/` prefix nor the source-IP-only authentication of the endpoints above it.
 
 ![Dashboard](images/dashboard.png)
 
@@ -413,7 +446,116 @@ curl https://blacklist.example.com/api/blacklist/24h/ \
   | jq -r '.entries[].cidr' > /etc/firewall/deny_24h.txt
 ```
 
-Full endpoint schemas — including request bodies, response shapes and error codes — render live under **Accounts → API Documentation** once you're logged in, and can be exported to PDF from the same page.
+Full endpoint schemas — including request bodies, response shapes and error codes — render live under **Accounts → API Documentation** once you're logged in, and can be exported to PDF from the same page. The TAXII surface described below has its own tab there (paths, filters, pagination, sample bundle), since it does not sit under `/api/v1/`.
+
+---
+
+## 📡 TAXII 2.0 Server (STIX 2.0)
+
+Some enforcement points can't poll a plain JSON endpoint. **Centralised threat-intelligence managers** — the appliances that sit in front of a vendor's breach-detection, sandbox, secure e-mail and web-gateway estate — subscribe to intel over **TAXII** and then redistribute it to the products they manage; **XDR, NDR and SIEM** platforms consume the same way. So the URL Blacklist is published a **second way**, as STIX 2.0 indicators over TAXII 2.0, without disturbing the `GET /api/urllist/` feed the firewall already consumes.
+
+Both channels read the same `URLEntry` rows with the same predicate, so they can never disagree about what is currently blocked:
+
+| | Firewall | TAXII subscriber |
+| --- | --- | --- |
+| Prefix | `/api/urllist/` | `/taxii/…` |
+| Format | JSON (or `?format=txt`) | STIX 2.0 bundle |
+| Auth | Source-IP allowlist | API token over HTTP Basic (+ optional source-IP) |
+| Access | read-only | read-only |
+
+### Endpoints
+
+Built against [OASIS TAXII 2.0 CS01](https://docs.oasis-open.org/cti/taxii/v2.0/cs01/taxii-v2.0-cs01.html). Discovery lives at `/taxii/` — note that's the 2.0 path; TAXII 2.1 moved it to `/taxii2/`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/taxii/` | Discovery — the single URL you paste into the subscriber |
+| `GET` | `/taxii/<root>/` | API root (`versions: ["taxii-2.0"]`) |
+| `GET` | `/taxii/<root>/collections/` | Collection list |
+| `GET` | `/taxii/<root>/collections/<id>/` | Collection metadata |
+| `GET` | `/taxii/<root>/collections/<id>/objects/` | The indicators, as a STIX bundle |
+| `GET` | `/taxii/<root>/collections/<id>/objects/<obj-id>/` | A single indicator |
+| `GET` | `/taxii/<root>/collections/<id>/manifest/` | Manifest, for incremental sync |
+
+Pagination follows TAXII 2.0's `Range: items 0-49` → `206` + `Content-Range: items 0-49/500` contract (2.1's `more`/`next` fields don't apply here), and `added_after` drives incremental polling. Note the **space** after `items`: that is the spec's own form, and the RFC 7233-style `items=0-49` is treated as no range at all rather than rejected — a lenient reading that keeps a quirky client working, at the cost of silently serving it the default page instead of the slice it asked for. A request with no `Range` header is answered `206` as well, capped at the page size in Settings → TAXII 2.0 Server (default 500), so a 1 396-entry feed is three polls rather than one enormous response.
+
+### Feeds
+
+All three blacklists are publishable, one *feed* per collection. Each feed's queryset is **deliberately the same predicate** its firewall counterpart under `/api/v1/` uses, so the two consumers can never disagree about what is currently blocked:
+
+| Feed | Source | Mirrors | Published rows |
+| --- | --- | --- | --- |
+| `url` | URL Blacklist | `/api/v1/urllist/` | active, blacklist, VT reachable |
+| `ip` | IP Blacklist | `/api/v1/blacklist/` | active, published group, not expired, not whitelisted |
+| `hash` | Hash Blacklist | `/api/v1/hashlist/` | active, blacklist, VT reachable, algorithm determinable |
+
+### Indicator mapping
+
+A blacklist row becomes one `indicator` SDO. For URLs the pattern depends on whether the row pins a path, which matches how that list is used in practice — mostly whole malicious domains and subdomains:
+
+| Blacklist row | STIX pattern |
+| --- | --- |
+| `phishing.example` | `[domain-name:value = 'phishing.example']` |
+| `sub.phishing.example` | `[domain-name:value = 'sub.phishing.example']` |
+| `bad.example/login.php` | `[url:value = 'https://bad.example/login.php']` |
+| `198.51.100.7/32` | `[ipv4-addr:value = '198.51.100.7']` |
+| `203.0.113.0/24` | `[ipv4-addr:value = '203.0.113.0/24']` |
+| `2001:db8::1/128` | `[ipv6-addr:value = '2001:db8::1']` |
+| SHA-256 hash | `[file:hashes.'SHA-256' = '…']` |
+
+A full-length IP prefix ships as a bare address because that is what consumers match most reliably; a real CIDR block keeps its prefix. Hash algorithm names come from STIX 2.0's `hash-algorithm-ov` (`MD5`, `SHA-1`, `SHA-256`, `SHA-512`); a row whose algorithm cannot be determined from either its stored type or its hex length is **left out of the feed** rather than published under a guess, since a wrong algorithm name yields an indicator that silently matches nothing. Be aware that consumers differ in which algorithms they accept — suspicious-object lists on breach-detection appliances are commonly limited to SHA-1 and SHA-256. MD5 and SHA-512 indicators are valid STIX and are published regardless; a consumer that will not ingest them filters them on its own side, which is the right place for that decision.
+
+Indicator IDs are `uuid5` of a per-feed identity (the URL feed's is its `url_hash`, the IP feed's its CIDR, the hash feed's its hash value), so they stay stable across polls and a subscriber updates in place instead of accumulating duplicates. Every indicator carries `labels: ["malicious-activity"]` — the one value that is both valid in STIX 2.0's required `labels` field and survives the label filtering consumers apply. Breach-detection appliances in particular tend to drop `anomalous-activity`, `anonymization`, `benign` and `compromised` outright, so an indicator labelled with any of those would be accepted by the transport and then silently discarded at the other end.
+
+### Collections
+
+A **collection** is one subscribable feed, managed from the **Collections** button in the **Settings → TAXII 2.0 Server** header — it is TAXII configuration, so it lives with the rest of it rather than in the sidebar. That header also shows how many collections are currently active, so a server that is enabled but publishing nothing is visible without opening the page. TAXII's own model is one API root holding many collections, so that's the axis to grow along — add a row per feed you want a subscriber to be able to pick. A second *API root* is only worth it if different subscribers must not even see each other's collection list.
+
+Each collection's UUID is generated on creation and never typed by hand. It must stay stable, because a subscriber stores the id it discovered and re-polls that exact value — so collections can be **paused** (keeps the UUID, feed goes off the air, resumes without re-discovery) as well as deleted.
+
+Normally all three feeds share **one** API root: the subscriber discovers it once and then picks from its collection list. The *Add Collection* form offers the roots already in use plus the conventional names (`default`, `urllist`, `blacklist`, `hashlist`) and lists only the feeds still free under the root you pick — `unique_together(api_root, feed)` forbids a second collection for the same feed in the same root.
+
+Picking a root whose name matches one of the lists pre-selects that list's feed and its title: `urllist` → URL Blacklist, `blacklist` → IP Blacklist, `hashlist` → Hash Blacklist. It is a starting point, not a constraint — change the Feed dropdown and the title follows, or type your own title and it is left alone from then on. `default` implies nothing, so it just takes the first free feed. If the implied feed is already published under that root the form falls back to one that is still free, since offering a pair the server would reject is a dead end.
+
+Adding a further feed type is a small adapter class in `apps/taxii/stix.py`, two registry entries, and a choice on `TaxiiCollection.FEED_CHOICES` with its `FEED_DEFAULTS` title.
+
+### Authentication
+
+Subscribers use HTTP Basic — the scheme TAXII 2.0 mandates — where the **username is an API User account and the password is that account's API token**, minted under *Accounts → User Management*. Deliberately not the account's login password:
+
+- LDAP-backed accounts have no usable local password at all
+- a token is one indexed lookup; a password is a slow PBKDF2 verification on every poll
+- password-policy rotation would silently kill the feed 90 days in
+- failed attempts would otherwise feed the login lockout counter and could lock a human out
+
+Revoking access is revoking the token — no settings to edit. Giving each subscriber its own service account (e.g. `taxii-subscriber`) keeps the audit trail readable and lets you cut one off alone.
+
+### Audit trail
+
+Every TAXII request writes one activity-log row, exactly as the `/api/v1/` endpoints do — so a subscriber's polls are visible in the console without reading `cybercavalry.log`:
+
+| Action | Written when |
+| --- | --- |
+| `api.taxii_discovery` | discovery was fetched |
+| `api.taxii_api_root` | an API root was read |
+| `api.taxii_collections` | the collection list was read |
+| `api.taxii_collection` | collection metadata was read |
+| `api.taxii_objects` | a poll — `detail` carries the feed, how many indicators were served, the total available and whether the answer was partial |
+| `api.taxii_object` | a single indicator was fetched |
+| `api.taxii_manifest` | a manifest poll, with the same detail as `objects` |
+| `api.taxii_denied` | a caller was turned away — `detail` carries the endpoint, the status and the reason |
+
+Each row also records the method, path, query string, user-agent and source IP, and is attributed to the service account that authenticated — which is the practical argument for giving each subscriber its own account. A denial has no account to attribute, by definition, so it is recorded against the source IP alone. Those rows are what the dashboard's **Request Timeline** draws: `objects` / `object` / `manifest` count as *Feed pulls*, `api.taxii_denied` as *Rejected*, and discovery and collection browsing fall into *Other*. On the **Activity Log** page they are one click away under the **API** type filter.
+
+Writing the row can never break a poll: a logging failure is swallowed and the feed still answers. One consequence worth planning for: the activity log is **not** pruned automatically, and a subscriber polling every minute adds ~1 440 rows a day, so on a long-lived install the table is worth watching.
+
+### Setup
+
+1. **Accounts → User Management** — create a service account with the **API User** role and generate its API token (shown once).
+2. **Settings → Source IPs** — add the subscriber's egress IP (or turn off *Also Require Source IP*).
+3. **Settings → TAXII 2.0 Server** — enable it.
+4. **Settings → TAXII 2.0 Server → Collections** — confirm the seeded URL Blacklist collection, or add your own. *Add Collection* offers the API roots already in use in a dropdown (plus *+ New API root…*), lists only the feeds still free under the root you pick, and pre-fills the title from that feed.
+5. On the subscriber — usually a *Threat Intelligence → Feed Management → Add* screen, or whatever the platform calls its feed subscription list — set the server version to **TAXII 2.0** (not 1.x, and not 2.1), the **Discovery URL** to `https://<host>:8443/taxii/` (note `https` and the trailing slash), and tick the option to supply credentials: the service account's username with its API token as the password. Upload your server certificate if it is self-signed, let the subscriber discover and pick the collection, then set a polling frequency.
 
 ---
 
@@ -453,16 +595,6 @@ backups across updates; the Linux service runs as an unprivileged
 - API-token authentication uses constant-time comparison
 - Secret settings (SMTP password, LDAP bind password, API keys) are encrypted at rest with a key derived from `SECRET_KEY`
 - Please report vulnerabilities privately — do **not** open a public issue
-
----
-
-## 🗺️ Roadmap
-
-- [ ] Prometheus `/metrics` endpoint
-- [ ] Webhook fan-out on new blacklist entries
-- [ ] Multi-tenant workspaces
-- [ ] MISP integration
-- [ ] Additional TI providers (Shodan, GreyNoise)
 
 ---
 

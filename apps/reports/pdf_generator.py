@@ -1339,30 +1339,39 @@ _TIMELINE_BUCKET_LABELS = {
 }
 
 
-def _timeline_window_label(days, bucket, minutes=None):
-    """Human label for the timeline window, e.g. 'Last 30 days · Daily'.
+_TIMELINE_MODE_LABELS = {'activity': 'Activity', 'new': 'New only', 'total': 'Total'}
+
+
+def _timeline_window_label(days, bucket, minutes=None, mode=None):
+    """Human label for the timeline window, e.g. 'Last 30 days · Daily · Total'.
 
     The minute bucket uses the `minutes` argument instead of `days` so the
     label shows the minute window (e.g. 'Last 60 minutes · Minutely') and
     mirrors what the user actually picked on the dashboard.
+
+    `mode` is appended because the two measures produce very different
+    numbers from the same window — cumulative list size vs additions per
+    bucket — and a chart captioned with only the window would be ambiguous.
     """
     if not bucket:
         return ''
     bucket_lbl = _TIMELINE_BUCKET_LABELS.get(bucket, bucket.title())
+    mode_lbl = _TIMELINE_MODE_LABELS.get(mode or '', '')
+    suffix = f' · {mode_lbl}' if mode_lbl else ''
     if bucket == 'minute':
         try:
             m = int(minutes) if minutes else 60
         except (TypeError, ValueError):
             m = 60
-        return f"Last {m} minutes · {bucket_lbl}"
+        return f"Last {m} minutes · {bucket_lbl}{suffix}"
     if not days:
-        return bucket_lbl
+        return bucket_lbl + suffix
     try:
         d = int(days)
     except (TypeError, ValueError):
-        return bucket_lbl
+        return bucket_lbl + suffix
     range_lbl = _TIMELINE_PRESET_LABELS.get(d, f'Last {d} days')
-    return f"{range_lbl} · {bucket_lbl}"
+    return f"{range_lbl} · {bucket_lbl}{suffix}"
 
 
 def generate_dashboard_snapshot(stats, groups, recent_blacklist, recent_whitelist,
@@ -1456,6 +1465,7 @@ def generate_dashboard_snapshot(stats, groups, recent_blacklist, recent_whitelis
         elems.append(Paragraph('Blacklist Timeline', _sect_c))
         _range_label = _timeline_window_label(
             timeline.get('days'), timeline.get('bucket'), timeline.get('minutes'),
+            timeline.get('mode'),
         )
         if _range_label:
             _sub_c = ParagraphStyle('tl_sub', parent=_ST['sub'], alignment=TA_CENTER)
@@ -1701,7 +1711,7 @@ def generate_api_reference(generated_by):
     doc, prefix = _build_doc(buf, A4, (lm, rm, tm, bm), cover_cb, content_cb)
     elems = list(prefix)
 
-    from apps.accounts.api_docs import get_endpoints
+    from apps.accounts.api_docs import BASE_URLS, get_endpoints
     ENDPOINTS = get_endpoints()
 
     def _ps2(name, **kw):
@@ -1779,8 +1789,11 @@ def generate_api_reference(generated_by):
     # ── Base URL kutusu ──────────────────────────────────────────────────
     bu_lbl = _ps2('bu_l', fontName='Helvetica-Bold', fontSize=8, textColor=_C.HDR_MUTED)
     bu_val = _ps2('bu_v', fontName='Courier-Bold', fontSize=9, textColor=_C.HDR_TEXT)
+    # One row per base URL (api_docs.BASE_URLS): the TAXII paths are not
+    # under /api/v1, so a single prefix would misdescribe the TAXII page.
     elems.append(Table(
-        [[Paragraph('BASE URL', bu_lbl), Paragraph('https://&lt;host&gt;:8443/api/v1', bu_val)]],
+        [[Paragraph(_html.escape(lbl).upper(), bu_lbl),
+          Paragraph(_html.escape(url), bu_val)] for lbl, url in BASE_URLS],
         colWidths=[pw * 0.22, pw * 0.78],
         style=TableStyle([
             ('BACKGROUND',    (0, 0), (-1, -1), _C.HDR_BG),
